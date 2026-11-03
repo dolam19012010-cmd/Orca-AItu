@@ -1987,12 +1987,17 @@ class FloatingBubbleService : Service() {
         onConfirm: () -> Unit
     ) {
         val root = bubbleRootView ?: return
+        if (root.findViewWithTag<View>("CONFIRM_MODAL_SCRIM") != null) return
+
         val dm = resources.displayMetrics
         val dialogWidth = (dm.widthPixels * 0.86f).toInt().coerceAtMost(dpToPx(380))
 
         val modalScrim = FrameLayout(this).apply {
+            tag = "CONFIRM_MODAL_SCRIM"
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
             setBackgroundColor(Color.parseColor("#80000000"))
+            elevation = dpToPx(100).toFloat()
+            translationZ = dpToPx(100).toFloat()
             isClickable = true
             isFocusable = true
         }
@@ -2002,7 +2007,8 @@ class FloatingBubbleService : Service() {
             layoutParams = FrameLayout.LayoutParams(dialogWidth, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 gravity = Gravity.CENTER
             }
-            elevation = dpToPx(32).toFloat()
+            elevation = dpToPx(110).toFloat()
+            translationZ = dpToPx(110).toFloat()
             background = GradientDrawable().apply {
                 setColor(Color.parseColor("#F5141418"))
                 cornerRadius = dpToPx(16).toFloat()
@@ -2072,6 +2078,7 @@ class FloatingBubbleService : Service() {
         dialogBox.setOnClickListener { /* consume click */ }
 
         root.addView(modalScrim)
+        modalScrim.bringToFront()
     }
 
     private fun showFloatingTaskConfigDialog(
@@ -2080,6 +2087,8 @@ class FloatingBubbleService : Service() {
         existingAlarm: SmartAlarmEntity?
     ) {
         val root = bubbleRootView ?: return
+        if (root.findViewWithTag<View>("TASK_CONFIG_SCRIM") != null) return
+
         val dm = resources.displayMetrics
         val screenWidth = dm.widthPixels
         val screenHeight = dm.heightPixels
@@ -2101,8 +2110,11 @@ class FloatingBubbleService : Service() {
         var isAlarmEnabled = existingAlarm?.status == SmartAlarmStatus.ACTIVE || task.deadline.isNotBlank()
 
         val modalScrim = FrameLayout(this).apply {
+            tag = "TASK_CONFIG_SCRIM"
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
             setBackgroundColor(Color.parseColor("#99000000"))
+            elevation = dpToPx(100).toFloat()
+            translationZ = dpToPx(100).toFloat()
             isClickable = true
             isFocusable = true
         }
@@ -2112,11 +2124,12 @@ class FloatingBubbleService : Service() {
             layoutParams = FrameLayout.LayoutParams(dialogWidth, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 gravity = Gravity.CENTER
             }
-            elevation = dpToPx(36).toFloat()
+            elevation = dpToPx(110).toFloat()
+            translationZ = dpToPx(110).toFloat()
             background = GradientDrawable().apply {
-                setColor(Color.parseColor("#F50F172A"))
+                setColor(Color.parseColor("#F5141418"))
                 cornerRadius = dpToPx(20).toFloat()
-                setStroke(dpToPx(1), Color.parseColor("#0284C7"))
+                setStroke(dpToPx(1), Color.parseColor("#33FFFFFF"))
             }
             setPadding(dpToPx(16), dpToPx(16), dpToPx(16), dpToPx(16))
             isClickable = true
@@ -2493,6 +2506,7 @@ class FloatingBubbleService : Service() {
         dialogContainer.setOnClickListener { /* prevent closing */ }
 
         root.addView(modalScrim)
+        modalScrim.bringToFront()
     }
 
     private fun updateBubbleContent() {
