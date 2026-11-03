@@ -2581,7 +2581,7 @@ private fun BubbleConfigSection(
                             color = TextPrimaryDark
                         )
                         Text(
-                            text = "Ẩn 100% không vướng màn hình khi xem phim, chơi game. Chỉ cần Chạm đúp (Double-Tap < 500ms) vào cạnh mép màn hình bất kỳ đâu để mở lại Trạng thái 2.",
+                            text = "Ẩn 100% không vướng màn hình. Chỉ cần Lắc nhẹ cổ tay 2 nhịp (Shake to Wake) để mở lại Trạng thái 2. Màn hình thông suốt 100%, không bị che phím nhắn tin hay nút chơi game.",
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSecondaryDark,
                             fontSize = 11.5.sp
@@ -2589,6 +2589,48 @@ private fun BubbleConfigSection(
                     }
                 }
             }
+        }
+
+        val context = LocalContext.current
+        val prefs = remember { UserPreferences.getInstance(context) }
+        var isShakeEnabled by remember { mutableStateOf(prefs.isShakeToWakeEnabled()) }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(SurfaceVariantDark.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                .border(1.dp, CardBorder, RoundedCornerShape(10.dp))
+                .padding(10.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Lắc tay gọi bóng chat (Shake to Wake)",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Bold,
+                    color = TextPrimaryDark
+                )
+                Text(
+                    text = "Lắc nhẹ cổ tay 2 nhịp để gọi bóng khi đang ẩn. Giải phóng 100% cảm ứng mép cho Game và Bàn phím.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = TextSecondaryDark,
+                    fontSize = 11.sp
+                )
+            }
+            Switch(
+                checked = isShakeEnabled,
+                onCheckedChange = {
+                    isShakeEnabled = it
+                    prefs.setShakeToWakeEnabled(it)
+                },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = BackgroundDark,
+                    checkedTrackColor = PrimaryIndigo,
+                    uncheckedTrackColor = SurfaceDark,
+                    uncheckedBorderColor = CardBorder
+                )
+            )
         }
 
         Spacer(modifier = Modifier.height(2.dp))

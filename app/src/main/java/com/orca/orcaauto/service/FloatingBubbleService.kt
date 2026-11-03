@@ -5,8 +5,10 @@ import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -24,11 +26,16 @@ import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.hardware.SensorManager
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.IBinder
 import android.os.Looper
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.provider.Settings
 import android.util.Log
 import android.util.TypedValue
@@ -96,7 +103,7 @@ class FloatingBubbleService : Service() {
     enum class BubbleState {
         STATE_1_ACTIVE,  // Sáng rõ 100%, nhô ra 8dp, scale 1.0f. Tự động sang State 2 sau 1.5s
         STATE_2_DIMMED,  // Mờ sâu 20%, thụt sâu vào mép (chỉ nhô 12dp), scale 0.85f. Tự động sang State 3 sau 4.0s
-        STATE_3_HIDDEN   // Ẩn hoàn toàn ngoài mép màn hình (alpha 0f, bubbleRootView vẫn VISIBLE). Chờ Chạm đúp mép màn hình (<550ms) để mở lại State 2
+        STATE_3_HIDDEN   // Ẩn hoàn toàn ngoài mép màn hình (alpha 0f, 100% màn hình thông suốt). Lắc nhẹ cổ tay (Shake to Wake) để mở lại State 2
     }
 
     private var currentBubbleState = BubbleState.STATE_1_ACTIVE
@@ -118,17 +125,66 @@ class FloatingBubbleService : Service() {
     private var lastCollapsedY = 0
     private var isCollapsing = false
 
-    // State 3: Dual Edge Strip Receptors (full-height strips hugging bezel)
-    private var edgeReceptorLeft: FrameLayout? = null
-    private var edgeReceptorRight: FrameLayout? = null
-    private var edgeParamsLeft: WindowManager.LayoutParams? = null
-    private var edgeParamsRight: WindowManager.LayoutParams? = null
+    // Shake to Wake Sensor (Chỉ bật khi ở State 3 và màn hình sáng, 100% không che màn hình)
+    private var sensorManager: SensorManager? = null
+    private var shakeDetector: ShakeDetector? = null
+    private var sensorThread: HandlerThread? = null
+    private var sensorHandler: Handler? = null
+    private var isScreenOn = true
+    private var screenReceiver: BroadcastReceiver? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+
+        // Setup Shake to Wake Sensor (Chạy trên HandlerThread riêng để bảo vệ 120Hz Main UI)
+        sensorManager = getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+        val st = HandlerThread("OrcaShakeSensorThread").apply { start() }
+        sensorThread = st
+        val sh = Handler(st.looper)
+        sensorHandler = sh
+
+        shakeDetector = ShakeDetector {
+            Handler(Looper.getMainLooper()).post {
+                if (currentBubbleState == BubbleState.STATE_3_HIDDEN) {
+                    val prefs = UserPreferences.getInstance(this@FloatingBubbleService)
+                    if (prefs.isShakeToWakeEnabled()) {
+                        Log.i(TAG, "⚡ Lắc tay thành công! Kích hoạt bong bóng trồi ra State 2.")
+                        triggerHapticFeedback()
+                        transitionToBubbleState(BubbleState.STATE_2_DIMMED, animate = true)
+                    }
+                }
+            }
+        }
+
+        // Lắng nghe sự kiện Bật/Tắt màn hình để ngắt cảm biến triệt để (0% pin khi tắt màn hình)
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_USER_PRESENT)
+        }
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                when (intent?.action) {
+                    Intent.ACTION_SCREEN_OFF -> {
+                        isScreenOn = false
+                        updateShakeDetectorState()
+                    }
+                    Intent.ACTION_SCREEN_ON, Intent.ACTION_USER_PRESENT -> {
+                        isScreenOn = true
+                        updateShakeDetectorState()
+                    }
+                }
+            }
+        }
+        screenReceiver = receiver
+        try {
+            registerReceiver(receiver, filter)
+        } catch (e: Exception) {
+            Log.e(TAG, "Lỗi đăng ký screenReceiver: ${e.message}")
+        }
 
         // 1. Reactive DB Flow: Real-time Alarms & Tasks status sync
         serviceScope.launch {
@@ -235,7 +291,6 @@ class FloatingBubbleService : Service() {
         bubbleRootView = rootLayout
 
         createDismissTargetView()
-        createEdgeReceptors()
         renderCollapsedBubble(rootLayout)
 
         try {
@@ -246,157 +301,41 @@ class FloatingBubbleService : Service() {
         transitionToBubbleState(BubbleState.STATE_1_ACTIVE, animate = false)
     }
 
-    @SuppressLint("ClickableViewAccessibility")
-    private fun createEdgeReceptors() {
-        if (edgeReceptorLeft != null && edgeReceptorRight != null) return
-        val layoutFlag = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        val stripWidth = dpToPx(28) // 28dp bao quát trọn vẹn điểm tiếp xúc ngón tay sát viền
+    private fun updateShakeDetectorState() {
+        val prefs = UserPreferences.getInstance(this)
+        val shouldListen = currentBubbleState == BubbleState.STATE_3_HIDDEN &&
+                isScreenOn &&
+                prefs.isShakeToWakeEnabled()
 
-        fun setupReceptor(isLeft: Boolean): Pair<FrameLayout, WindowManager.LayoutParams> {
-            val dm = resources.displayMetrics
-            val baseFlags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+        val sm = sensorManager ?: return
+        val detector = shakeDetector ?: return
+        val sh = sensorHandler ?: return
 
-            // Ban đầu (State 1 & 2): Set FLAG_NOT_TOUCHABLE để ngón tay chạm xuyên thấu vào app phía dưới
-            val initialFlags = baseFlags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-
-            val params = WindowManager.LayoutParams(
-                stripWidth,
-                WindowManager.LayoutParams.MATCH_PARENT, // Phủ trọn từ đỉnh đến đáy màn hình ("dù bất cứ đâu gần mép")
-                layoutFlag,
-                initialFlags,
-                PixelFormat.TRANSLUCENT
-            ).apply {
-                gravity = (if (isLeft) Gravity.START else Gravity.END) or Gravity.TOP
-                x = 0
-                y = 0
-            }
-
-            var downTime = 0L
-            var downX = 0f
-            var downY = 0f
-            var lastTapTime = 0L
-            var lastTapX = 0f
-            var lastTapY = 0f
-
-            val view = FrameLayout(this).apply {
-                setBackgroundColor(Color.TRANSPARENT)
-                addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
-                    override fun onViewAttachedToWindow(v: View) {
-                        try {
-                            windowManager.updateViewLayout(v, params)
-                        } catch (_: Exception) {}
-                    }
-                    override fun onViewDetachedFromWindow(v: View) {}
-                })
-                setOnTouchListener { v, event ->
-                    if (currentBubbleState != BubbleState.STATE_3_HIDDEN) {
-                        return@setOnTouchListener false
-                    }
-                    when (event.actionMasked) {
-                        MotionEvent.ACTION_DOWN -> {
-                            downX = event.rawX
-                            downY = event.rawY
-                            downTime = System.currentTimeMillis()
-                            true
-                        }
-                        MotionEvent.ACTION_UP -> {
-                            val upTime = System.currentTimeMillis()
-                            val duration = upTime - downTime
-                            val dx = Math.abs(event.rawX - downX)
-                            val dy = Math.abs(event.rawY - downY)
-
-                            // Cú nhấp hợp lệ: Giữ ngón < 400ms và không trượt (> 28dp)
-                            if (duration < 400L && dx < dpToPx(28) && dy < dpToPx(28)) {
-                                val interval = upTime - lastTapTime
-                                val dist = Math.hypot((event.rawX - lastTapX).toDouble(), (event.rawY - lastTapY).toDouble()).toFloat()
-
-                                if (lastTapTime > 0L && interval in 50L..550L && dist < dpToPx(64)) {
-                                    // CHẠM ĐÚP THÀNH CÔNG (< 550ms theo đúng lệnh người dùng)
-                                    lastTapTime = 0L
-
-                                    try {
-                                        v.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
-                                    } catch (_: Throwable) {}
-
-                                    // Cách A (Giữ 100% vị trí cũ):
-                                    // Dù chạm đúp ở mép nào thì bóng cũng trồi ra đúng vị trí cũ đó
-                                    // (lastCollapsedY và isAttachedLeft giữ nguyên 100%).
-                                    transitionToBubbleState(BubbleState.STATE_2_DIMMED, animate = true)
-                                    return@setOnTouchListener true
-                                } else {
-                                    // Ghi nhận cú chạm đầu tiên
-                                    lastTapTime = upTime
-                                    lastTapX = event.rawX
-                                    lastTapY = event.rawY
-                                }
-                            } else {
-                                lastTapTime = 0L
-                            }
-                            true
-                        }
-                        MotionEvent.ACTION_CANCEL -> {
-                            lastTapTime = 0L
-                            false
-                        }
-                        else -> false
-                    }
-                }
-            }
-
-            try {
-                windowManager.addView(view, params)
-            } catch (e: Exception) {
-                Log.e(TAG, "Lỗi tạo edge receptor: ${e.message}")
-            }
-            return Pair(view, params)
+        if (shouldListen) {
+            detector.start(sm, sh)
+        } else {
+            detector.stop(sm)
         }
-
-        val leftPair = setupReceptor(true)
-        edgeReceptorLeft = leftPair.first
-        edgeParamsLeft = leftPair.second
-
-        val rightPair = setupReceptor(false)
-        edgeReceptorRight = rightPair.first
-        edgeParamsRight = rightPair.second
     }
 
-    private fun setEdgeReceptorsActive(active: Boolean) {
-        val baseFlags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
-        val flags = if (active) baseFlags else (baseFlags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
-
-        edgeReceptorLeft?.let { v ->
-            edgeParamsLeft?.let { p ->
-                if (p.flags != flags || !v.isAttachedToWindow) {
-                    p.flags = flags
-                    try {
-                        if (v.isAttachedToWindow) {
-                            windowManager.updateViewLayout(v, p)
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Lỗi update edgeReceptorLeft: ${e.message}")
-                    }
+    private fun triggerHapticFeedback() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val vibratorManager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
+                vibratorManager?.defaultVibrator?.vibrate(
+                    VibrationEffect.createOneShot(45L, VibrationEffect.DEFAULT_AMPLITUDE)
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    vibrator?.vibrate(VibrationEffect.createOneShot(45L, VibrationEffect.DEFAULT_AMPLITUDE))
+                } else {
+                    @Suppress("DEPRECATION")
+                    vibrator?.vibrate(45L)
                 }
             }
-        }
-
-        edgeReceptorRight?.let { v ->
-            edgeParamsRight?.let { p ->
-                if (p.flags != flags || !v.isAttachedToWindow) {
-                    p.flags = flags
-                    try {
-                        if (v.isAttachedToWindow) {
-                            windowManager.updateViewLayout(v, p)
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Lỗi update edgeReceptorRight: ${e.message}")
-                    }
-                }
-            }
-        }
+        } catch (_: Throwable) {}
     }
 
     private fun createDismissTargetView() {
@@ -868,26 +807,26 @@ class FloatingBubbleService : Service() {
 
             when (newState) {
                 BubbleState.STATE_1_ACTIVE -> {
-                    setEdgeReceptorsActive(false)
+                    updateShakeDetectorState()
                     bubbleLifecycleHandler.postDelayed(toState2Runnable, 1500L)
                 }
                 BubbleState.STATE_2_DIMMED -> {
-                    setEdgeReceptorsActive(false)
+                    updateShakeDetectorState()
                     bubbleLifecycleHandler.postDelayed(toState3Runnable, 4000L)
                 }
                 BubbleState.STATE_3_HIDDEN -> {
-                    setEdgeReceptorsActive(true)
+                    updateShakeDetectorState()
                 }
             }
             return
         }
 
         if (oldState == BubbleState.STATE_3_HIDDEN && newState == BubbleState.STATE_2_DIMMED) {
-            // Yêu cầu 3: Không tăng sáng trung gian, đúp cái là set alpha thẳng 20% (0.20f, scale = 0.85f),
+            // Đánh thức từ State 3 (Ẩn) sang State 2: set alpha thẳng 20% (0.20f, scale = 0.85f),
             // trượt nhẹ nhàng từ ngoài mép kính (startX = if (isLeft) -dpToPx(44) else screenWidth)
             // trồi ra đúng vị trí nép của Trạng thái 2 (targetX = if (isLeft) -dpToPx(32) else screenWidth - bubbleSize + dpToPx(32)).
             // Thời gian animation ~280ms với DecelerateInterpolator.
-            setEdgeReceptorsActive(false)
+            updateShakeDetectorState()
             p.flags = p.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
             bubbleView?.alpha = 0.20f
             bubbleView?.scaleX = 0.85f
@@ -942,7 +881,6 @@ class FloatingBubbleService : Service() {
             }
 
             if (newState != BubbleState.STATE_3_HIDDEN) {
-                setEdgeReceptorsActive(false)
                 p.flags = p.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
             }
 
@@ -988,13 +926,15 @@ class FloatingBubbleService : Service() {
 
                         when (newState) {
                             BubbleState.STATE_1_ACTIVE -> {
+                                updateShakeDetectorState()
                                 bubbleLifecycleHandler.postDelayed(toState2Runnable, 1500L)
                             }
                             BubbleState.STATE_2_DIMMED -> {
+                                updateShakeDetectorState()
                                 bubbleLifecycleHandler.postDelayed(toState3Runnable, 4000L)
                             }
                             BubbleState.STATE_3_HIDDEN -> {
-                                setEdgeReceptorsActive(true)
+                                updateShakeDetectorState()
                             }
                         }
                     }
@@ -1146,7 +1086,7 @@ class FloatingBubbleService : Service() {
         hideDismissTarget(immediate = true)
         currentAnimator?.cancel()
         isCollapsing = false
-        setEdgeReceptorsActive(false)
+        updateShakeDetectorState()
         root.removeAllViews()
         root.alpha = 1.0f
 
@@ -2571,29 +2511,17 @@ class FloatingBubbleService : Service() {
         cachedWallpaperBmp = null
         hideDismissTarget(immediate = true)
 
-        edgeReceptorLeft?.let {
-            try {
-                if (it.isAttachedToWindow) {
-                    windowManager.removeView(it)
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Lỗi gỡ bỏ edgeReceptorLeft: ${e.message}")
-            }
+        screenReceiver?.let {
+            try { unregisterReceiver(it) } catch (_: Exception) {}
         }
-        edgeReceptorLeft = null
-        edgeParamsLeft = null
+        screenReceiver = null
 
-        edgeReceptorRight?.let {
-            try {
-                if (it.isAttachedToWindow) {
-                    windowManager.removeView(it)
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Lỗi gỡ bỏ edgeReceptorRight: ${e.message}")
-            }
+        sensorManager?.let { sm ->
+            shakeDetector?.stop(sm)
         }
-        edgeReceptorRight = null
-        edgeParamsRight = null
+        shakeDetector = null
+        sensorThread?.quitSafely()
+        sensorThread = null
 
         bubbleRootView?.let {
             try {

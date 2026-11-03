@@ -417,6 +417,14 @@ class UserPreferences private constructor(context: Context) {
         _bubbleDisplayModeFlow.value = mode
     }
 
+    fun isShakeToWakeEnabled(): Boolean {
+        return prefs.getBoolean(KEY_SHAKE_TO_WAKE, true)
+    }
+
+    fun setShakeToWakeEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_SHAKE_TO_WAKE, enabled).apply()
+    }
+
     fun getTaskNotes(): Map<String, String> {
         val json = try {
             prefs.getString(KEY_TASK_NOTES, null)
@@ -488,6 +496,7 @@ class UserPreferences private constructor(context: Context) {
         private const val KEY_WALLPAPER_MODE = "key_wallpaper_mode"
         private const val KEY_SUMMARY_STATUS_BAR_NOTIF = "key_summary_status_bar_notif"
         private const val KEY_BUBBLE_DISPLAY_MODE = "key_bubble_display_mode"
+        private const val KEY_SHAKE_TO_WAKE = "key_shake_to_wake"
         private const val KEY_TASK_NOTES = "key_task_notes"
 
         const val PACKAGE_ZALO = "com.zing.zalo"
