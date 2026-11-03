@@ -122,6 +122,7 @@ import com.orca.orcaauto.ui.theme.AccentCyan
 import com.orca.orcaauto.ui.theme.AccentEmerald
 import com.orca.orcaauto.ui.theme.AccentRose
 import com.orca.orcaauto.ui.theme.AccentAmber
+import com.orca.orcaauto.ui.theme.BackgroundDark
 import com.orca.orcaauto.ui.theme.CardBorder
 import com.orca.orcaauto.ui.theme.GlassBorder
 import com.orca.orcaauto.ui.theme.GlassBorderSubtle
@@ -526,7 +527,7 @@ fun SettingsScreen() {
                         checked = isRecentSummaryContextEnabled,
                         onCheckedChange = { preferences.setRecentSummaryContextEnabled(it) },
                         colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color.White,
+                            checkedThumbColor = BackgroundDark,
                             checkedTrackColor = PrimaryIndigo
                         )
                     )
@@ -560,7 +561,7 @@ fun SettingsScreen() {
                         checked = isLongTermTasksContextEnabled,
                         onCheckedChange = { preferences.setLongTermTasksContextEnabled(it) },
                         colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color.White,
+                            checkedThumbColor = BackgroundDark,
                             checkedTrackColor = PrimaryIndigo
                         )
                     )
@@ -840,9 +841,12 @@ fun SettingsScreen() {
                             Toast.makeText(context, "Định dạng không hợp lệ (HH:mm) hoặc giờ đã tồn tại!", Toast.LENGTH_LONG).show()
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryIndigo)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = PrimaryIndigo,
+                        contentColor = BackgroundDark
+                    )
                 ) {
-                    Text("Xác Nhận")
+                    Text("Xác Nhận", color = BackgroundDark, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -901,9 +905,12 @@ fun SettingsScreen() {
             confirmButton = {
                 Button(
                     onClick = { showTestDialog = false },
-                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryIndigo)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = PrimaryIndigo,
+                        contentColor = BackgroundDark
+                    )
                 ) {
-                    Text("Đóng")
+                    Text("Đóng", color = BackgroundDark, fontWeight = FontWeight.Bold)
                 }
             },
             containerColor = SurfaceDark
@@ -974,13 +981,16 @@ fun SettingsScreen() {
                             }
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryIndigo),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = PrimaryIndigo,
+                        contentColor = BackgroundDark
+                    ),
                     enabled = !isRestoring
                 ) {
                     if (isRestoring) {
-                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = BackgroundDark)
                     } else {
-                        Text("Tiến Hành Phục Hồi")
+                        Text("Tiến Hành Phục Hồi", color = BackgroundDark, fontWeight = FontWeight.Bold)
                     }
                 }
             },
@@ -1179,12 +1189,15 @@ private fun MultiKeyPoolSection(
                         }
                     },
                     modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryIndigo),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = PrimaryIndigo,
+                        contentColor = BackgroundDark
+                    ),
                     shape = RoundedCornerShape(10.dp)
                 ) {
-                    Icon(imageVector = Icons.Default.Add, contentDescription = null)
+                    Icon(imageVector = Icons.Default.Add, contentDescription = null, tint = BackgroundDark)
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Thêm Key")
+                    Text("Thêm Key", color = BackgroundDark, fontWeight = FontWeight.Bold)
                 }
 
                 OutlinedButton(
@@ -1381,12 +1394,15 @@ private fun FixedContextSection(
                     focusManager.clearFocus()
                 },
                 modifier = Modifier.align(Alignment.End),
-                colors = ButtonDefaults.buttonColors(containerColor = PrimaryIndigo),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = PrimaryIndigo,
+                    contentColor = BackgroundDark
+                ),
                 shape = RoundedCornerShape(8.dp)
             ) {
-                Icon(imageVector = Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                Icon(imageVector = Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp), tint = BackgroundDark)
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("Lưu Bối Cảnh", fontSize = 13.sp)
+                Text("Lưu Bối Cảnh", fontSize = 13.sp, color = BackgroundDark, fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -1690,9 +1706,12 @@ private fun PermissionActionRow(
             onClick = onGrantClick,
             shape = RoundedCornerShape(8.dp),
             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = PrimaryIndigo)
+            colors = ButtonDefaults.buttonColors(
+                containerColor = PrimaryIndigo,
+                contentColor = BackgroundDark
+            )
         ) {
-            Text(buttonText, fontSize = 11.sp, color = Color.White)
+            Text(buttonText, fontSize = 11.sp, color = BackgroundDark, fontWeight = FontWeight.Bold)
         }
     }
 }
@@ -1743,7 +1762,10 @@ private fun WallpaperSection(
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         Button(
                             onClick = onRequestImportWallpaper,
-                            colors = ButtonDefaults.buttonColors(containerColor = PrimaryIndigo),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = PrimaryIndigo,
+                                contentColor = BackgroundDark
+                            ),
                             shape = RoundedCornerShape(8.dp),
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                             modifier = Modifier.height(32.dp)
@@ -1751,7 +1773,8 @@ private fun WallpaperSection(
                             Text(
                                 text = if (wallpaperPath != null) "Đổi Ảnh" else "Chọn Ảnh",
                                 fontSize = 11.5.sp,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
+                                color = BackgroundDark
                             )
                         }
 
@@ -2008,14 +2031,17 @@ private fun TimezoneAndBackupSection(
                 Button(
                     onClick = onBackupClick,
                     modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryIndigo),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = PrimaryIndigo,
+                        contentColor = BackgroundDark
+                    ),
                     shape = RoundedCornerShape(10.dp),
                     enabled = !isBackingUp
                 ) {
                     if (isBackingUp) {
-                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = BackgroundDark)
                     } else {
-                        Text("Sao Lưu (Backup)", fontSize = 12.sp)
+                        Text("Sao Lưu (Backup)", fontSize = 12.sp, color = BackgroundDark, fontWeight = FontWeight.Bold)
                     }
                 }
 
@@ -2067,9 +2093,12 @@ private fun TimezoneAndBackupSection(
                             showCustomTzDialog = false
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryIndigo)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = PrimaryIndigo,
+                        contentColor = BackgroundDark
+                    )
                 ) {
-                    Text("Áp Dụng")
+                    Text("Áp Dụng", color = BackgroundDark, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -2266,8 +2295,9 @@ private fun KeyItemRow(
                 ) {
                     Text(
                         text = "$index",
-                        color = Color.White,
+                        color = BackgroundDark,
                         style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
                         fontSize = 10.sp
                     )
                 }
@@ -2292,7 +2322,7 @@ private fun KeyItemRow(
                 checked = config.isEnabled,
                 onCheckedChange = onToggle,
                 colors = SwitchDefaults.colors(
-                    checkedThumbColor = Color.White,
+                    checkedThumbColor = BackgroundDark,
                     checkedTrackColor = PrimaryIndigo
                 )
             )
@@ -2404,10 +2434,13 @@ private fun EditKeyModelDialog(
                         onSaveModel(trimmed)
                     }
                 },
-                colors = ButtonDefaults.buttonColors(containerColor = PrimaryIndigo),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = PrimaryIndigo,
+                    contentColor = BackgroundDark
+                ),
                 shape = RoundedCornerShape(8.dp)
             ) {
-                Text("Lưu Mô Hình", fontWeight = FontWeight.Bold, color = Color.White)
+                Text("Lưu Mô Hình", fontWeight = FontWeight.Bold, color = BackgroundDark)
             }
         },
         dismissButton = {
@@ -2439,7 +2472,7 @@ private fun AppToggleRow(
             checked = isChecked,
             onCheckedChange = onCheckedChange,
             colors = SwitchDefaults.colors(
-                checkedThumbColor = Color.White,
+                checkedThumbColor = BackgroundDark,
                 checkedTrackColor = PrimaryIndigo,
                 uncheckedTrackColor = SurfaceDark,
                 uncheckedBorderColor = CardBorder
@@ -2826,12 +2859,15 @@ private fun ApiDebugConsoleDialog(
                         modifier = Modifier.weight(1f),
                         enabled = !isRunningPingTest,
                         shape = RoundedCornerShape(8.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = PrimaryIndigo)
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = PrimaryIndigo,
+                            contentColor = BackgroundDark
+                        )
                     ) {
                         if (isRunningPingTest) {
-                            CircularProgressIndicator(modifier = Modifier.size(14.dp), color = Color.White, strokeWidth = 2.dp)
+                            CircularProgressIndicator(modifier = Modifier.size(14.dp), color = BackgroundDark, strokeWidth = 2.dp)
                         } else {
-                            Text("⚡ Ping Test API", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                            Text("⚡ Ping Test API", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = BackgroundDark)
                         }
                     }
 

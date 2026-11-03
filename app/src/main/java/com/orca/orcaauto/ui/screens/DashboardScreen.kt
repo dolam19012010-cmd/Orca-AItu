@@ -65,6 +65,7 @@ import com.orca.orcaauto.service.KeepAliveForegroundService
 import com.orca.orcaauto.ui.theme.AccentCyan
 import com.orca.orcaauto.ui.theme.AccentEmerald
 import com.orca.orcaauto.ui.theme.AccentRose
+import com.orca.orcaauto.ui.theme.BackgroundDark
 import com.orca.orcaauto.ui.theme.CardBorder
 import com.orca.orcaauto.ui.theme.GlassBorder
 import com.orca.orcaauto.ui.theme.GlassSurfaceDark
@@ -231,22 +232,25 @@ private fun ExecutiveQuickActionsCard(
                 Button(
                     onClick = onTestAiClick,
                     modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryIndigo),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = PrimaryIndigo,
+                        contentColor = BackgroundDark
+                    ),
                     shape = RoundedCornerShape(10.dp),
                     enabled = !isTestingAi
                 ) {
                     if (isTestingAi) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(16.dp),
-                            color = Color.White,
+                            color = BackgroundDark,
                             strokeWidth = 2.dp
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Đang xử lý...", fontSize = 12.sp)
+                        Text("Đang xử lý...", fontSize = 12.sp, color = BackgroundDark, fontWeight = FontWeight.Bold)
                     } else {
-                        Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp), tint = BackgroundDark)
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Tóm Tắt AI Ngay", fontSize = 12.sp)
+                        Text("Tóm Tắt AI Ngay", fontSize = 12.sp, color = BackgroundDark, fontWeight = FontWeight.Bold)
                     }
                 }
 

@@ -62,6 +62,7 @@ import com.orca.orcaauto.R
 import com.orca.orcaauto.ui.theme.AccentCyan
 import com.orca.orcaauto.ui.theme.AccentEmerald
 import com.orca.orcaauto.ui.theme.AccentRose
+import com.orca.orcaauto.ui.theme.BackgroundDark
 import com.orca.orcaauto.ui.theme.CardBorder
 import com.orca.orcaauto.ui.theme.GlassBorderSubtle
 import com.orca.orcaauto.ui.theme.PrimaryIndigo
@@ -363,7 +364,7 @@ fun OnboardingGuideDialog(
                         onCheckedChange = { dontShowAgain = it },
                         colors = CheckboxDefaults.colors(
                             checkedColor = PrimaryIndigo,
-                            checkmarkColor = Color.White,
+                            checkmarkColor = BackgroundDark,
                             uncheckedColor = TextMutedDark
                         )
                     )
@@ -380,11 +381,14 @@ fun OnboardingGuideDialog(
         confirmButton = {
             Button(
                 onClick = { onDismiss(dontShowAgain) },
-                colors = ButtonDefaults.buttonColors(containerColor = PrimaryIndigo),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = PrimaryIndigo,
+                    contentColor = BackgroundDark
+                ),
                 shape = RoundedCornerShape(10.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("Đã Hiểu & Đóng", fontWeight = FontWeight.Bold, color = Color.White)
+                Text("Đã Hiểu & Đóng", fontWeight = FontWeight.Bold, color = BackgroundDark)
             }
         }
     )

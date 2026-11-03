@@ -1208,9 +1208,9 @@ class FloatingBubbleService : Service() {
 
             if (wallpaperBmp != null) {
                 val scrimColor = when (wpMode) {
-                    WallpaperMode.CLEAR -> Color.parseColor("#660F172A")
-                    WallpaperMode.BLURRED -> Color.parseColor("#7A0F172A")
-                    WallpaperMode.DYNAMIC -> Color.parseColor("#730F172A")
+                    WallpaperMode.CLEAR -> Color.parseColor("#B309090B")
+                    WallpaperMode.BLURRED -> Color.parseColor("#CC09090B")
+                    WallpaperMode.DYNAMIC -> Color.parseColor("#BF09090B")
                 }
                 background = FrostedWallpaperDrawable(
                     bitmap = wallpaperBmp,
@@ -1221,7 +1221,7 @@ class FloatingBubbleService : Service() {
                 )
             } else {
                 background = GradientDrawable().apply {
-                    setColor(Color.parseColor("#E60F172A"))
+                    setColor(Color.parseColor("#F509090B"))
                     cornerRadius = dpToPx(24).toFloat()
                     setStroke(dpToPx(1), Color.parseColor("#33FFFFFF"))
                 }
@@ -1399,18 +1399,21 @@ class FloatingBubbleService : Service() {
 
         val queryEt = EditText(this).apply {
             hint = if (isCallingAi) "AI đang xử lý..." else "Nhập lệnh hoặc câu hỏi..."
-            setHintTextColor(Color.parseColor("#64748B"))
+            setHintTextColor(Color.parseColor("#71717A"))
             setTextColor(Color.WHITE)
             textSize = 12.5f
             background = GradientDrawable().apply {
-                setColor(Color.parseColor("#4D0F172A"))
+                setColor(Color.parseColor("#18181B"))
                 cornerRadius = dpToPx(8).toFloat()
-                setStroke(dpToPx(1), Color.parseColor("#26FFFFFF"))
+                setStroke(dpToPx(1), Color.parseColor("#33FFFFFF"))
             }
             setPadding(dpToPx(10), dpToPx(9), dpToPx(10), dpToPx(9))
             setSingleLine(true)
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             isEnabled = !isCallingAi
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                isForceDarkAllowed = false
+            }
             setOnFocusChangeListener { _, hasFocus ->
                 if (hasFocus) {
                     scrollView.postDelayed({
@@ -1448,10 +1451,11 @@ class FloatingBubbleService : Service() {
         }
         inputRow.addView(queryEt)
 
-        val sendBtn = Button(this).apply {
+        val sendBtn = TextView(this).apply {
             text = if (isCallingAi) "..." else "Gửi"
             setTextColor(if (isCallingAi) Color.parseColor("#94A3B8") else Color.BLACK)
             textSize = 12f
+            gravity = Gravity.CENTER
             typeface = Typeface.DEFAULT_BOLD
             background = GradientDrawable().apply {
                 setColor(if (isCallingAi) Color.parseColor("#3327272A") else Color.WHITE)
@@ -1461,11 +1465,13 @@ class FloatingBubbleService : Service() {
             layoutParams = LinearLayout.LayoutParams(dpToPx(60), dpToPx(38)).apply {
                 leftMargin = dpToPx(8)
             }
-            isEnabled = !isCallingAi
+            isClickable = !isCallingAi
             setOnClickListener {
-                val q = queryEt.text.toString().trim()
-                if (q.isNotBlank()) {
-                    executeAiCall(q)
+                if (!isCallingAi) {
+                    val q = queryEt.text.toString().trim()
+                    if (q.isNotBlank()) {
+                        executeAiCall(q)
+                    }
                 }
             }
         }
@@ -2197,11 +2203,11 @@ class FloatingBubbleService : Service() {
         val noteEt = EditText(this).apply {
             setText(initialNote)
             hint = "Nhập dặn dò AI cho các ca tiếp theo (tùy chọn)..."
-            setHintTextColor(Color.parseColor("#64748B"))
+            setHintTextColor(Color.parseColor("#71717A"))
             setTextColor(Color.WHITE)
             textSize = 12f
             background = GradientDrawable().apply {
-                setColor(Color.parseColor("#261E293B"))
+                setColor(Color.parseColor("#18181B"))
                 cornerRadius = dpToPx(8).toFloat()
                 setStroke(dpToPx(1), Color.parseColor("#334155"))
             }
@@ -2209,6 +2215,9 @@ class FloatingBubbleService : Service() {
             minLines = 2
             maxLines = 3
             gravity = Gravity.TOP or Gravity.START
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                isForceDarkAllowed = false
+            }
         }
         bodyLayout.addView(noteEt)
 

@@ -116,6 +116,7 @@ import java.util.Locale
 import com.orca.orcaauto.ui.theme.AccentCyan
 import com.orca.orcaauto.ui.theme.AccentEmerald
 import com.orca.orcaauto.ui.theme.AccentRose
+import com.orca.orcaauto.ui.theme.BackgroundDark
 import com.orca.orcaauto.ui.theme.CardBorder
 import com.orca.orcaauto.ui.theme.GlassBorder
 import com.orca.orcaauto.ui.theme.GlassBorderSubtle
@@ -794,9 +795,12 @@ fun TwoPartSummaryCard(
                         Toast.makeText(context, "Đã đưa về trạng thái chưa hoàn thành!", Toast.LENGTH_SHORT).show()
                         taskToConfirmUncomplete = null
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryIndigo)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = PrimaryIndigo,
+                        contentColor = BackgroundDark
+                    )
                 ) {
-                    Text("Xác nhận", color = Color.White, fontWeight = FontWeight.Bold)
+                    Text("Xác nhận", color = BackgroundDark, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -1474,20 +1478,23 @@ fun TaskAlarmConfigDialog(
                         onDismiss()
                     }
                 },
-                colors = ButtonDefaults.buttonColors(containerColor = PrimaryIndigo),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = PrimaryIndigo,
+                    contentColor = BackgroundDark
+                ),
                 shape = RoundedCornerShape(8.dp)
             ) {
                 Icon(
                     imageVector = Icons.Default.Check,
                     contentDescription = null,
                     modifier = Modifier.size(16.dp),
-                    tint = Color.White
+                    tint = BackgroundDark
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
                     text = "Lưu thiết lập",
                     fontWeight = FontWeight.Bold,
-                    color = Color.White
+                    color = BackgroundDark
                 )
             }
         },

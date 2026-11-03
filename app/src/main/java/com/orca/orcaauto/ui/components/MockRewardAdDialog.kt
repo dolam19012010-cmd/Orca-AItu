@@ -55,6 +55,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.orca.orcaauto.ui.theme.AccentCyan
 import com.orca.orcaauto.ui.theme.AccentEmerald
+import com.orca.orcaauto.ui.theme.BackgroundDark
 import com.orca.orcaauto.ui.theme.CardBorder
 import com.orca.orcaauto.ui.theme.PrimaryIndigo
 import com.orca.orcaauto.ui.theme.SurfaceDark
@@ -287,14 +288,17 @@ fun MockRewardAdDialog(
                                 onClick = { isPlayingAd = true },
                                 modifier = Modifier.weight(1.4f),
                                 enabled = !isPlayingAd,
-                                colors = ButtonDefaults.buttonColors(containerColor = PrimaryIndigo),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = PrimaryIndigo,
+                                    contentColor = BackgroundDark
+                                ),
                                 shape = RoundedCornerShape(10.dp)
                             ) {
                                 Text(
                                     text = if (isPlayingAd) "Đang xem ($secondsRemaining s)" else "Bắt Đầu Xem (5s)",
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color.White
+                                    color = BackgroundDark
                                 )
                             }
                         } else {
