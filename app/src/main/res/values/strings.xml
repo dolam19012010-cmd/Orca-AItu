@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">Orca AItu</string>
+    <string name="app_short_name">AItu</string>
+    <string name="service_name">AItu Background Engine</string>
+    <string name="notification_channel_name">AItu Service</string>
+    <string name="notification_channel_desc">Duy trì dịch vụ quét thông báo và bảo vệ tiến trình ngầm</string>
+    <string name="notification_running_title">AItu đang hoạt động</string>
+    <string name="notification_running_desc">Đang bảo vệ tiến trình ngầm và theo dõi thông báo công việc</string>
+</resources>
