@@ -48,9 +48,13 @@ object GeminiPromptBuilder {
 
         contentBuilder.append("=== THỜI GIAN THỰC HIỆN BÁO CÁO ===\n")
         contentBuilder.append("⏰ Thời điểm hiện tại: $nowFormatted (Múi giờ: ${tz.id}, GMT$offsetStr).\n")
-        contentBuilder.append("⚡ QUY TẮC THỜI GIAN:\n")
+        contentBuilder.append("⚡ QUY TẮC THỜI GIAN & ƯỚC TÍNH BÁO THỨC ĐỀ XUẤT HỢP LÝ:\n")
         contentBuilder.append("1. ĐỐI CHIẾU THỜI GIAN THỰC: Luôn đối chiếu các mốc trong tin nhắn ('chiều nay', 'sáng mai', 'ngày kia', 'thứ 6 tuần sau', 'tháng sau'...) với mốc hiện tại ở trên để tính toán ngày giờ chuẩn xác.\n")
-        contentBuilder.append("2. GHI ĐỦ NGÀY VÀ GIỜ: Trong phần 'Hạn: [Thời gian]' của mỗi nhiệm vụ, hãy ghi rõ cả giờ và ngày nếu là việc tương lai (ví dụ: 'Hạn: 15:30 hôm nay', 'Hạn: 10:00 ngày mai 31/10', 'Hạn: 09:00 ngày kia 01/11', 'Hạn: 16h ngày 15/11'). Điều này giúp hệ thống tự động đặt báo thức chuẩn xác và nạp vào Lịch!\n\n")
+        contentBuilder.append("2. NHÌN NGÀY VÀ HẠN, ƯỚC TÍNH BÁO THỨC HỢP LÝ: Hãy nhìn kỹ ngày giờ diễn ra và bản chất công việc, ước tính các yếu tố thực tế (thời gian chuẩn bị, di chuyển, mức độ gấp, vùng đệm an toàn) để chọn ra mốc thời gian báo thức/nhắc nhở đề xuất thiết thực nhất. Ví dụ:\n")
+        contentBuilder.append("   • Cuộc họp hoặc lịch hẹn lúc 09:00 sáng mai ➜ Đề xuất báo thức khoảng 08:15 hoặc 08:30 để kịp chuẩn bị (Hạn: 08:30 ngày mai).\n")
+        contentBuilder.append("   • Hạn chót hoàn thành việc lúc 17:00 chiều nay ➜ Đề xuất báo thức lúc 16:00 hoặc 16:30 để kịp hoàn thiện trước hạn (Hạn: 16:30 hôm nay).\n")
+        contentBuilder.append("   • Sự kiện cần chuẩn bị vào buổi sáng ➜ Đề xuất báo thức đầu giờ sáng (Hạn: 07:30 ngày mai).\n")
+        contentBuilder.append("3. GHI ĐỦ NGÀY VÀ GIỜ: Trong phần 'Hạn: [Thời gian]' của mỗi nhiệm vụ, hãy ghi rõ cả giờ đề xuất và ngày (ví dụ: 'Hạn: 16:30 hôm nay', 'Hạn: 08:30 ngày mai 05/11', 'Hạn: 15h ngày 15/11'). Điều này giúp hệ thống tự động đặt chuông báo thức thông minh chuẩn xác!\n\n")
 
         if (activeAlarms.isNotEmpty()) {
             contentBuilder.append("=== DANH SÁCH BÁO THỨC & NHIỆM VỤ ĐÃ ĐƯỢC ĐẶT (TRÁNH TẠO TRÙNG LẶP) ===\n")
@@ -137,10 +141,10 @@ object GeminiPromptBuilder {
         contentBuilder.append("2. [${persona.noteSectionTitle}]: ${persona.noteDescription}\n\n")
 
         contentBuilder.append("=== PHẦN 2: BẢNG ĐIỀU PHỐI NHIỆM VỤ ===\n")
-        contentBuilder.append("QUY TẮC ĐỊNH DẠNG: Mỗi mục trên 1 dòng duy nhất theo cú pháp: [Tên nhiệm vụ ngắn gọn] | Nguồn: [Tên người gửi ngắn] | Hạn: [Giờ/Hạn chót]\n")
+        contentBuilder.append("QUY TẮC ĐỊNH DẠNG: Mỗi mục trên 1 dòng duy nhất theo cú pháp: [Tên nhiệm vụ ngắn gọn] | Nguồn: [Tên người gửi ngắn] | Hạn: [Giờ đề xuất/Hạn chót]\n")
         contentBuilder.append("TUYỆT ĐỐI KHÔNG dùng dấu ** in đậm hay ký tự thừa trong tên nhiệm vụ. Giữ tên và hạn chót cực kỳ súc tích, không cách dòng hay xuống dòng thừa.\n\n")
         contentBuilder.append("### 🔴 NHIỆM VỤ PHẢI LÀM (TO-DO)\n")
-        contentBuilder.append("- [Nhiệm vụ cần làm] | Nguồn: [Người gửi] | Hạn: [Giờ cụ thể]\n\n")
+        contentBuilder.append("- [Nhiệm vụ cần làm] | Nguồn: [Người gửi] | Hạn: [Giờ đề xuất cụ thể]\n\n")
         contentBuilder.append("### 🟢 NHIỆM VỤ ĐÃ LÀM (DONE)\n")
         contentBuilder.append("⚡ QUY TẮC BỎ VIỆC ĐÃ HOÀN THÀNH: Chỉ giữ lại tối đa 1-2 việc QUAN TRỌNG NHẤT vừa hoàn tất gần đây (có mốc thời gian rõ: 'Đã xong 10:30'). Các việc vặt, tiểu tiết đã xong thì TỰ ĐỘNG BỎ ĐI, KHÔNG liệt kê để tránh rác màn hình.\n")
         contentBuilder.append("- [Nhiệm vụ quan trọng đã xong] | Nguồn: [Người gửi] | Thời gian: [Đã xong lúc HH:mm]\n\n")
