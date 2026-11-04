@@ -35,8 +35,9 @@ class GeminiPromptBuilderTest {
         // Verify user interactive query
         assertTrue(prompt.contains("Tập trung vào đơn hàng lớn"))
 
-        // Verify reference to previous summary
+        // Verify reference to previous summary and overdue task retention
         assertTrue(prompt.contains("Ca trước đã chốt đơn thành công"))
+        assertTrue(prompt.contains("thêm 1 đến 2 phiên sau khi quá hạn"))
 
         // Verify notification content
         assertTrue(prompt.contains("Nguyễn Văn A"))

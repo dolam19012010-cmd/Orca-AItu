@@ -49,7 +49,8 @@ object GeminiPromptBuilder {
         contentBuilder.append("=== THỜI GIAN THỰC TẾ & MỐC HẸN ===\n")
         contentBuilder.append("⏰ Thời điểm hiện tại: $nowFormatted (Múi giờ: ${tz.id}, GMT$offsetStr).\n")
         contentBuilder.append("• Đối chiếu mốc thời gian trong tin nhắn với thời điểm hiện tại để tính đúng ngày giờ và ước tính mốc báo thức đề xuất hợp lý.\n")
-        contentBuilder.append("• Nếu việc cần làm chưa có giờ cụ thể, hãy ghi 'Hạn: Hôm nay (Chờ chốt giờ)' hoặc giờ ước tính kèm ngày.\n\n")
+        contentBuilder.append("• Nếu việc cần làm chưa có giờ cụ thể, hãy ghi 'Hạn: Hôm nay (Chờ chốt giờ)' hoặc giờ ước tính kèm ngày.\n")
+        contentBuilder.append("• Đối với những việc chưa xong mà đã quá hạn hoặc hoàn thành thụ động theo thời gian: Vẫn giữ lại theo dõi thêm 1 đến 2 phiên sau khi quá hạn, tránh vội vàng xóa bỏ làm trôi việc của người dùng.\n\n")
 
         // 3. Active Alarms Sync (Chống tạo lặp)
         if (activeAlarms.isNotEmpty()) {
@@ -100,10 +101,10 @@ object GeminiPromptBuilder {
 
         // 9. Previous Summary Context
         if (previousSummary.isNotBlank()) {
-            val compactPrev = previousSummary.trim().take(1000)
+            val compactPrev = previousSummary.trim().take(3000)
             contentBuilder.append("=== BÁO CÁO CA TRƯỚC (THAM CHIẾU TIẾN ĐỘ) ===\n")
             contentBuilder.append(compactPrev)
-            contentBuilder.append("\n⚡ Nối tiếp tiến độ, không lặp lại nếu không có diễn biến mới.\n\n")
+            contentBuilder.append("\n⚡ Nối tiếp tiến độ từ ca trước; những việc chưa hoàn thành hoặc quá hạn vẫn duy trì trong danh sách thêm 1-2 phiên theo quy tắc trên.\n\n")
         }
 
         // 10. Live User Query
@@ -150,6 +151,7 @@ object GeminiPromptBuilder {
         contentBuilder.append("• Bắt buộc dùng đúng 3 nhóm tiêu đề chuẩn sau:\n\n")
 
         contentBuilder.append("### 🔴 NHIỆM VỤ PHẢI LÀM (TO-DO)\n")
+        contentBuilder.append("(Bao gồm việc mới và các việc quá hạn/hoàn thành thụ động được giữ lại theo dõi thêm 1-2 phiên)\n")
         contentBuilder.append("- [Tên nhiệm vụ cần làm] | Nguồn: [Người gửi] | Hạn: [Giờ/Ngày đề xuất]\n\n")
 
         contentBuilder.append("### 🟢 NHIỆM VỤ ĐÃ LÀM (DONE)\n")
