@@ -112,6 +112,9 @@ fun MainAppNavHost() {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 try {
+                    // Tắt chuông báo thức nếu người dùng mở ứng dụng xem
+                    com.orca.orcaauto.receiver.AlarmRingtonePlayer.stop()
+
                     // Tự động xóa chấm đỏ thông báo khi người dùng mở ứng dụng xem
                     preferences.setHasUnreadSummary(false)
 

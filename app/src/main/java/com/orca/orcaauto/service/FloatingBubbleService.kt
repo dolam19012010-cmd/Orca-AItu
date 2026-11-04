@@ -634,6 +634,12 @@ class FloatingBubbleService : Service() {
             val p = windowParams ?: return@setOnTouchListener false
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
+                    // Phương án 1: Nếu chuông báo thức đang kêu, chỉ cần chạm vào bóng chat là tắt tiếng ngay lập tức!
+                    if (com.orca.orcaauto.receiver.AlarmRingtonePlayer.isPlaying) {
+                        com.orca.orcaauto.receiver.AlarmRingtonePlayer.stop()
+                        Toast.makeText(this@FloatingBubbleService, "✓ Đã tắt chuông báo!", Toast.LENGTH_SHORT).show()
+                    }
+
                     bubbleLifecycleHandler.removeCallbacks(toState2Runnable)
                     bubbleLifecycleHandler.removeCallbacks(toState3Runnable)
                     bubbleLifecycleHandler.removeCallbacks(bubbleLongPressRunnable)
@@ -1167,6 +1173,8 @@ class FloatingBubbleService : Service() {
             } catch (e: Exception) {}
         }
         isExpanded = true
+        // Tắt chuông báo thức nếu người dùng mở thẻ AI xem
+        com.orca.orcaauto.receiver.AlarmRingtonePlayer.stop()
 
         // Clean transparent backdrop without black wash spilling outside
         root.setBackgroundColor(Color.TRANSPARENT)
@@ -2620,24 +2628,32 @@ class FloatingBubbleService : Service() {
 
         fun wakeToState1(context: Context) {
             if (!isOverlayPermissionGranted(context)) return
-            val intent = Intent(context, FloatingBubbleService::class.java).apply {
-                action = ACTION_WAKE_TO_STATE_1
-                putExtra(EXTRA_WAKE_TO_STATE_1, true)
+            try {
+                val intent = Intent(context, FloatingBubbleService::class.java).apply {
+                    action = ACTION_WAKE_TO_STATE_1
+                    putExtra(EXTRA_WAKE_TO_STATE_1, true)
+                }
+                context.startService(intent)
+            } catch (e: Exception) {
+                Log.w("FloatingBubbleService", "Không thể gọi startService cho wakeToState1: ${e.message}")
             }
-            context.startService(intent)
         }
 
         fun show(context: Context, summaryContent: String = "", modelInfo: String = "", wakeToState1: Boolean = true) {
             if (!isOverlayPermissionGranted(context)) return
-            val intent = Intent(context, FloatingBubbleService::class.java).apply {
-                putExtra(EXTRA_SUMMARY_CONTENT, summaryContent)
-                putExtra(EXTRA_MODEL_INFO, modelInfo)
-                if (wakeToState1) {
-                    action = ACTION_WAKE_TO_STATE_1
-                    putExtra(EXTRA_WAKE_TO_STATE_1, true)
+            try {
+                val intent = Intent(context, FloatingBubbleService::class.java).apply {
+                    putExtra(EXTRA_SUMMARY_CONTENT, summaryContent)
+                    putExtra(EXTRA_MODEL_INFO, modelInfo)
+                    if (wakeToState1) {
+                        action = ACTION_WAKE_TO_STATE_1
+                        putExtra(EXTRA_WAKE_TO_STATE_1, true)
+                    }
                 }
+                context.startService(intent)
+            } catch (e: Exception) {
+                Log.w("FloatingBubbleService", "Không thể gọi startService cho show: ${e.message}")
             }
-            context.startService(intent)
         }
 
         fun hide(context: Context) {

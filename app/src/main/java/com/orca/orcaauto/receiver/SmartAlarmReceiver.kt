@@ -40,9 +40,16 @@ object AlarmRingtonePlayer {
     private var ringtone: Ringtone? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private var stopRunnable: Runnable? = null
+    private var currentContext: Context? = null
+    private var activeNotificationId: Int? = null
 
-    fun play(context: Context) {
+    val isPlaying: Boolean
+        get() = ringtone?.isPlaying == true
+
+    fun play(context: Context, notificationId: Int? = null) {
         stop()
+        currentContext = context.applicationContext
+        activeNotificationId = notificationId
         try {
             var alertUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
             if (alertUri == null) {
@@ -80,6 +87,14 @@ object AlarmRingtonePlayer {
                 if (it.isPlaying) it.stop()
             }
             ringtone = null
+            activeNotificationId?.let { notifId ->
+                try {
+                    val nm = currentContext?.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+                    nm?.cancel(notifId)
+                } catch (_: Exception) {}
+            }
+            activeNotificationId = null
+            currentContext = null
             Log.d(TAG, "Đã tắt chuông báo thức.")
         } catch (e: Exception) {
             Log.w(TAG, "Lỗi khi tắt chuông: ${e.message}")
@@ -174,8 +189,10 @@ class SmartAlarmReceiver : BroadcastReceiver() {
                 Log.i(TAG, "🔔 [BÁO THỨC HỢP LỆ] Đang kích hoạt chuông và thông báo: $taskTitle")
 
                 withContext(Dispatchers.Main) {
-                    // 1. Play loud System Alarm Ringtone
-                    AlarmRingtonePlayer.play(context)
+                    val notificationId = (taskTitle.hashCode() and 0x7FFFFFFF) + if (isPrimary) 1 else 0
+
+                    // 1. Play loud System Alarm Ringtone with notificationId tracking
+                    AlarmRingtonePlayer.play(context, notificationId)
 
                     // 2. Light up screen via WakeLock
                     val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
@@ -186,8 +203,8 @@ class SmartAlarmReceiver : BroadcastReceiver() {
                         wakeLock?.acquire(45000L) // 45 seconds
                     } catch (_: Exception) {}
 
-                    // 3. Show Heads-Up Alarm Notification
-                    showAlarmNotification(context, matchingActive.alarmId, taskTitle, label, isPrimary)
+                    // 3. Show Heads-Up Alarm Notification (Bấm vào hoặc vuốt là tắt chuông ngay)
+                    showAlarmNotification(context, matchingActive.alarmId, taskTitle, label, isPrimary, notificationId)
 
                     // 4. Wake Floating Bubble to State 1 with clean Red Dot!
                     try {
@@ -210,7 +227,8 @@ class SmartAlarmReceiver : BroadcastReceiver() {
         alarmId: String,
         taskTitle: String,
         label: String,
-        isPrimary: Boolean
+        isPrimary: Boolean,
+        notificationId: Int
     ) {
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val channelId = "orca_smart_alarm_loud_channel"
@@ -241,9 +259,7 @@ class SmartAlarmReceiver : BroadcastReceiver() {
             }
         }
 
-        val notificationId = (taskTitle.hashCode() and 0x7FFFFFFF) + if (isPrimary) 1 else 0
-
-        // 1. Action: Tap body to open OrcaAuto
+        // 1. Action: Tap body to open OrcaAuto (which also silences ringtone in onResume)
         val openAppIntent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             putExtra("navigate_to", "history")
@@ -255,7 +271,7 @@ class SmartAlarmReceiver : BroadcastReceiver() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        // 2. Action: "TẮT CHUÔNG" button
+        // 2. Action: "TẮT CHUÔNG" button & Swipe Dismiss
         val dismissIntent = Intent(context, SmartAlarmReceiver::class.java).apply {
             action = ACTION_DISMISS_ALARM_RING
             putExtra(EXTRA_NOTIFICATION_ID, notificationId)
@@ -289,15 +305,15 @@ class SmartAlarmReceiver : BroadcastReceiver() {
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(titleText)
             .setContentText(taskTitle)
-            .setStyle(NotificationCompat.BigTextStyle().bigText("$label\n\n📌 Nhiệm vụ: $taskTitle"))
+            .setStyle(NotificationCompat.BigTextStyle().bigText("$label\n\n📌 Nhiệm vụ: $taskTitle\n👉 Bấm 'TẮT CHUÔNG' hoặc chạm mở bóng chat để tắt tiếng."))
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setAutoCancel(true)
-            .setOngoing(true)
+            .setOngoing(false) // Không khóa thông báo để người dùng có thể gạt tắt tiếng
             .setContentIntent(contentPendingIntent)
-            .setFullScreenIntent(contentPendingIntent, true)
-            .addAction(0, "✓ TẮT CHUÔNG", dismissPendingIntent)
+            .setDeleteIntent(dismissPendingIntent) // Gạt thông báo cũng tắt chuông ngay lập tức!
+            .addAction(R.drawable.ic_notification, "✓ TẮT CHUÔNG", dismissPendingIntent)
             .addAction(0, "⏰ BÁO LẠI 5P", snoozePendingIntent)
             .build()
 
