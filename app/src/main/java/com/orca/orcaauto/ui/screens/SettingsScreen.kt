@@ -1,4 +1,4 @@
-package com.orca.orcaauto.ui.screens
+﻿package com.orca.orcaauto.ui.screens
 
 import android.net.Uri
 import android.widget.Toast
@@ -62,6 +62,18 @@ import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Wallpaper
+import androidx.compose.material.icons.filled.FilterAlt
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.material3.InputChip
+import androidx.compose.material3.InputChipDefaults
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
+import androidx.compose.material3.SuggestionChip
+import androidx.compose.material3.SuggestionChipDefaults
+import androidx.compose.runtime.mutableStateListOf
+import com.orca.orcaauto.data.preferences.AppFilterRule
+import com.orca.orcaauto.data.preferences.ChatFilterMode
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -287,6 +299,8 @@ fun SettingsScreen() {
     val isLongTermTasksContextEnabled by preferences.longTermTasksContextEnabledFlow.collectAsState()
     val wallpaperPath by preferences.wallpaperPathFlow.collectAsState()
     val wallpaperMode by preferences.wallpaperModeFlow.collectAsState()
+    val filterRules by preferences.filterRulesFlow.collectAsState()
+    var appForFilterDialog by remember { mutableStateOf<String?>(null) }
 
     var showRewardAdForImport by remember { mutableStateOf(false) }
     var pendingImportUri by remember { mutableStateOf<Uri?>(null) }
@@ -390,9 +404,11 @@ fun SettingsScreen() {
                 zaloEnabled = zaloEnabled,
                 telegramEnabled = telegramEnabled,
                 messengerEnabled = messengerEnabled,
+                filterRules = filterRules,
                 onToggleZalo = { preferences.setZaloEnabled(it) },
                 onToggleTelegram = { preferences.setTelegramEnabled(it) },
-                onToggleMessenger = { preferences.setMessengerEnabled(it) }
+                onToggleMessenger = { preferences.setMessengerEnabled(it) },
+                onOpenFilterDialog = { pkg -> appForFilterDialog = pkg }
             )
         }
 
@@ -1002,6 +1018,21 @@ fun SettingsScreen() {
             containerColor = SurfaceDark
         )
     }
+
+    appForFilterDialog?.let { pkg ->
+        AppChatFilterDialog(
+            packageName = pkg,
+            appName = preferences.getTargetAppName(pkg),
+            initialRule = filterRules[pkg] ?: AppFilterRule(appPackage = pkg),
+            recentSenders = preferences.getRecentSenders(pkg),
+            onDismiss = { appForFilterDialog = null },
+            onSaveRule = { updatedRule ->
+                preferences.saveAppFilterRule(updatedRule)
+                Toast.makeText(context, "Đã lưu bộ lọc cho ${preferences.getTargetAppName(pkg)}", Toast.LENGTH_SHORT).show()
+                appForFilterDialog = null
+            }
+        )
+    }
 }
 
 @Composable
@@ -1479,39 +1510,47 @@ private fun AppMonitoredSection(
     zaloEnabled: Boolean,
     telegramEnabled: Boolean,
     messengerEnabled: Boolean,
+    filterRules: Map<String, AppFilterRule>,
     onToggleZalo: (Boolean) -> Unit,
     onToggleTelegram: (Boolean) -> Unit,
-    onToggleMessenger: (Boolean) -> Unit
+    onToggleMessenger: (Boolean) -> Unit,
+    onOpenFilterDialog: (String) -> Unit
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Text(
-            text = "Chọn các ứng dụng nhắn tin mà AI sẽ theo dõi để phát hiện công việc và tóm tắt hội thoại.",
+            text = "Chọn các ứng dụng nhận tin nhắn mà AI sẽ theo dõi để phát hiện công việc. Nhấn giữ vào từng ứng dụng để cài đặt Bộ lọc (Chặn hoặc Chỉ định riêng).",
             style = MaterialTheme.typography.bodySmall,
             color = TextSecondaryDark
         )
 
         AppToggleRow(
             appName = "Zalo",
-            packageDescription = "com.zing.zalo",
+            packageDescription = UserPreferences.PACKAGE_ZALO,
             isChecked = zaloEnabled,
-            onCheckedChange = onToggleZalo
+            rule = filterRules[UserPreferences.PACKAGE_ZALO],
+            onCheckedChange = onToggleZalo,
+            onLongClick = { onOpenFilterDialog(UserPreferences.PACKAGE_ZALO) }
         )
 
         AppToggleRow(
             appName = "Telegram",
-            packageDescription = "org.telegram.messenger",
+            packageDescription = UserPreferences.PACKAGE_TELEGRAM,
             isChecked = telegramEnabled,
-            onCheckedChange = onToggleTelegram
+            rule = filterRules[UserPreferences.PACKAGE_TELEGRAM],
+            onCheckedChange = onToggleTelegram,
+            onLongClick = { onOpenFilterDialog(UserPreferences.PACKAGE_TELEGRAM) }
         )
 
         AppToggleRow(
             appName = "Facebook Messenger",
-            packageDescription = "com.facebook.orca",
+            packageDescription = UserPreferences.PACKAGE_MESSENGER,
             isChecked = messengerEnabled,
-            onCheckedChange = onToggleMessenger
+            rule = filterRules[UserPreferences.PACKAGE_MESSENGER],
+            onCheckedChange = onToggleMessenger,
+            onLongClick = { onOpenFilterDialog(UserPreferences.PACKAGE_MESSENGER) }
         )
     }
 }
@@ -2452,21 +2491,73 @@ private fun EditKeyModelDialog(
     )
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun AppToggleRow(
     appName: String,
     packageDescription: String,
     isChecked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
+    rule: AppFilterRule? = null,
+    onCheckedChange: (Boolean) -> Unit,
+    onLongClick: () -> Unit
 ) {
+    val ruleMode = rule?.mode ?: ChatFilterMode.NORMAL_WITH_BLOCK
+    val ruleCount = rule?.chatNames?.size ?: 0
+    val statusText = if (ruleCount > 0) {
+        when (ruleMode) {
+            ChatFilterMode.NORMAL_WITH_BLOCK -> "Nghe thường (Chặn $ruleCount chat)"
+            ChatFilterMode.STRICT_WHITELIST -> "Chỉ định riêng ($ruleCount chat)"
+        }
+    } else {
+        when (ruleMode) {
+            ChatFilterMode.NORMAL_WITH_BLOCK -> "Nghe thường (chưa chặn ai)"
+            ChatFilterMode.STRICT_WHITELIST -> "Chỉ định riêng (chưa thêm)"
+        }
+    }
+
+    val statusColor = if (ruleCount > 0) {
+        if (ruleMode == ChatFilterMode.STRICT_WHITELIST) AccentEmerald else AccentAmber
+    } else {
+        TextMutedDark
+    }
+
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .combinedClickable(
+                onClick = { onCheckedChange(!isChecked) },
+                onLongClick = onLongClick
+            )
+            .background(SurfaceDark.copy(alpha = 0.5f))
+            .border(0.5.dp, GlassBorderSubtle, RoundedCornerShape(12.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Column {
-            Text(text = appName, color = TextPrimaryDark, fontWeight = FontWeight.Medium)
-            Text(text = packageDescription, color = TextMutedDark, style = MaterialTheme.typography.labelSmall)
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = appName,
+                    color = TextPrimaryDark,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 14.5.sp
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "• Giữ để cài lọc",
+                    color = PrimaryIndigoLight,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Normal
+                )
+            }
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = "$statusText • $packageDescription",
+                color = statusColor,
+                style = MaterialTheme.typography.labelSmall,
+                fontSize = 11.5.sp
+            )
         }
         Switch(
             checked = isChecked,
@@ -2479,6 +2570,301 @@ private fun AppToggleRow(
             )
         )
     }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AppChatFilterDialog(
+    packageName: String,
+    appName: String,
+    initialRule: AppFilterRule,
+    recentSenders: List<String>,
+    onDismiss: () -> Unit,
+    onSaveRule: (AppFilterRule) -> Unit
+) {
+    var selectedMode by remember { mutableStateOf(initialRule.mode) }
+    val chatNamesList = remember { mutableStateListOf<String>().apply { addAll(initialRule.chatNames) } }
+    var newChatInput by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF1E1E24),
+        title = {
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .background(PrimaryIndigo.copy(alpha = 0.2f), RoundedCornerShape(8.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.FilterAlt,
+                            contentDescription = null,
+                            tint = PrimaryIndigoLight,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = "Bộ Lọc — $appName",
+                        fontWeight = FontWeight.Bold,
+                        color = TextPrimaryDark,
+                        fontSize = 17.sp
+                    )
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Gói ứng dụng: $packageName",
+                    color = TextMutedDark,
+                    fontSize = 11.5.sp
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Text(
+                    text = "CHẾ ĐỘ NHẬN TIN NHẮN:",
+                    color = TextPrimaryDark,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp
+                )
+
+                // Option 1: NORMAL_WITH_BLOCK
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable { selectedMode = ChatFilterMode.NORMAL_WITH_BLOCK }
+                        .background(
+                            if (selectedMode == ChatFilterMode.NORMAL_WITH_BLOCK) PrimaryIndigo.copy(alpha = 0.15f)
+                            else SurfaceDark.copy(alpha = 0.5f)
+                        )
+                        .border(
+                            1.dp,
+                            if (selectedMode == ChatFilterMode.NORMAL_WITH_BLOCK) PrimaryIndigo
+                            else GlassBorderSubtle,
+                            RoundedCornerShape(10.dp)
+                        )
+                        .padding(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    RadioButton(
+                        selected = selectedMode == ChatFilterMode.NORMAL_WITH_BLOCK,
+                        onClick = { selectedMode = ChatFilterMode.NORMAL_WITH_BLOCK },
+                        colors = RadioButtonDefaults.colors(selectedColor = PrimaryIndigo)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column {
+                        Text(
+                            text = "🟢 Nghe thường (Có kèm chặn)",
+                            fontWeight = FontWeight.SemiBold,
+                            color = TextPrimaryDark,
+                            fontSize = 13.5.sp
+                        )
+                        Text(
+                            text = "Đọc mọi tin nhắn, TRỪ danh sách bị chặn bên dưới.",
+                            color = TextSecondaryDark,
+                            fontSize = 11.5.sp
+                        )
+                    }
+                }
+
+                // Option 2: STRICT_WHITELIST
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable { selectedMode = ChatFilterMode.STRICT_WHITELIST }
+                        .background(
+                            if (selectedMode == ChatFilterMode.STRICT_WHITELIST) AccentEmerald.copy(alpha = 0.15f)
+                            else SurfaceDark.copy(alpha = 0.5f)
+                        )
+                        .border(
+                            1.dp,
+                            if (selectedMode == ChatFilterMode.STRICT_WHITELIST) AccentEmerald
+                            else GlassBorderSubtle,
+                            RoundedCornerShape(10.dp)
+                        )
+                        .padding(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    RadioButton(
+                        selected = selectedMode == ChatFilterMode.STRICT_WHITELIST,
+                        onClick = { selectedMode = ChatFilterMode.STRICT_WHITELIST },
+                        colors = RadioButtonDefaults.colors(selectedColor = AccentEmerald)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column {
+                        Text(
+                            text = "🎯 Chỉ định riêng (Whitelist)",
+                            fontWeight = FontWeight.SemiBold,
+                            color = TextPrimaryDark,
+                            fontSize = 13.5.sp
+                        )
+                        Text(
+                            text = "Chỉ nhận DUY NHẤT danh sách bên dưới, bỏ qua tất cả còn lại.",
+                            color = TextSecondaryDark,
+                            fontSize = 11.5.sp
+                        )
+                    }
+                }
+
+                HorizontalDivider(color = GlassBorderSubtle, thickness = 0.5.dp)
+
+                val listTitle = if (selectedMode == ChatFilterMode.NORMAL_WITH_BLOCK) {
+                    "DANH SÁCH ĐOẠN CHAT BỊ CHẶN (${chatNamesList.size}):"
+                } else {
+                    "DANH SÁCH ĐOẠN CHAT ĐƯỢC CHỈ ĐỊNH (${chatNamesList.size}):"
+                }
+                Text(
+                    text = listTitle,
+                    color = TextPrimaryDark,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp
+                )
+
+                if (chatNamesList.isEmpty()) {
+                    Text(
+                        text = if (selectedMode == ChatFilterMode.NORMAL_WITH_BLOCK)
+                            "Chưa có đoạn chat nào bị chặn. Đang nghe bình thường tất cả."
+                        else "Chưa có đoạn chat nào được chỉ định. Thêm ít nhất 1 đoạn chat bên dưới.",
+                        color = TextMutedDark,
+                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                } else {
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        chatNamesList.forEach { name ->
+                            InputChip(
+                                selected = false,
+                                onClick = {},
+                                label = { Text(text = name, fontSize = 12.sp, color = TextPrimaryDark) },
+                                trailingIcon = {
+                                    IconButton(
+                                        onClick = { chatNamesList.remove(name) },
+                                        modifier = Modifier.size(16.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "Xóa",
+                                            tint = AccentRose,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
+                                },
+                                colors = InputChipDefaults.inputChipColors(
+                                    containerColor = SurfaceDark,
+                                    labelColor = TextPrimaryDark
+                                ),
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (selectedMode == ChatFilterMode.NORMAL_WITH_BLOCK) AccentRose.copy(alpha = 0.5f) else AccentEmerald.copy(alpha = 0.5f)
+                                )
+                            )
+                        }
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = newChatInput,
+                        onValueChange = { newChatInput = it },
+                        placeholder = { Text("Tên người gửi / tên nhóm...", fontSize = 12.sp, color = TextMutedDark) },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = TextPrimaryDark,
+                            unfocusedTextColor = TextPrimaryDark,
+                            focusedBorderColor = PrimaryIndigo,
+                            unfocusedBorderColor = GlassBorderSubtle,
+                            focusedContainerColor = SurfaceDark,
+                            unfocusedContainerColor = SurfaceDark
+                        ),
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.5.sp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            val trimmed = newChatInput.trim()
+                            if (trimmed.isNotBlank() && !chatNamesList.contains(trimmed)) {
+                                chatNamesList.add(trimmed)
+                                newChatInput = ""
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = PrimaryIndigo),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("+ Thêm", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                val unaddedRecents = recentSenders.filter { !chatNamesList.contains(it) }
+                if (unaddedRecents.isNotEmpty()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = "🕒 Vừa phát hiện gần đây từ $appName (chạm để thêm nhanh):",
+                            color = TextSecondaryDark,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            unaddedRecents.take(8).forEach { recentName ->
+                                SuggestionChip(
+                                    onClick = { chatNamesList.add(recentName) },
+                                    label = { Text("+ $recentName", fontSize = 11.5.sp, color = AccentCyan) },
+                                    colors = SuggestionChipDefaults.suggestionChipColors(
+                                        containerColor = Color(0xFF131B2A)
+                                    ),
+                                    border = BorderStroke(
+                                        1.dp,
+                                        AccentCyan.copy(alpha = 0.3f)
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val updatedRule = AppFilterRule(
+                        appPackage = packageName,
+                        mode = selectedMode,
+                        chatNames = chatNamesList.toSet()
+                    )
+                    onSaveRule(updatedRule)
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = PrimaryIndigo),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Text("Lưu Cấu Hình", fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Hủy", color = TextSecondaryDark)
+            }
+        }
+    )
 }
 
 @Composable

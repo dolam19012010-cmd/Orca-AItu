@@ -60,6 +60,9 @@ class UserPreferences private constructor(context: Context) {
     private val _hasUnreadSummaryFlow = MutableStateFlow(hasUnreadSummary())
     val hasUnreadSummaryFlow: StateFlow<Boolean> = _hasUnreadSummaryFlow.asStateFlow()
 
+    private val _filterRulesFlow = MutableStateFlow(loadAllFilterRules())
+    val filterRulesFlow: StateFlow<Map<String, AppFilterRule>> = _filterRulesFlow.asStateFlow()
+
     private fun loadKeyPool(): List<ApiKeyConfig> {
         val json = try {
             prefs.getString(KEY_API_KEY_POOL, null)
@@ -489,6 +492,78 @@ class UserPreferences private constructor(context: Context) {
         }
     }
 
+    private fun loadAllFilterRules(): Map<String, AppFilterRule> {
+        val json = try {
+            prefs.getString(KEY_APP_FILTER_RULES, null)
+        } catch (_: Throwable) {
+            null
+        }
+        if (!json.isNullOrBlank()) {
+            val type = object : TypeToken<Map<String, AppFilterRule>>() {}.type
+            return try {
+                gson.fromJson<Map<String, AppFilterRule>>(json, type) ?: emptyMap()
+            } catch (_: Throwable) {
+                emptyMap()
+            }
+        }
+        return emptyMap()
+    }
+
+    fun getAppFilterRule(packageName: String): AppFilterRule {
+        val allRules = _filterRulesFlow.value
+        return allRules[packageName] ?: AppFilterRule(appPackage = packageName)
+    }
+
+    fun saveAppFilterRule(rule: AppFilterRule) {
+        val allRules = loadAllFilterRules().toMutableMap()
+        allRules[rule.appPackage] = rule
+        val json = gson.toJson(allRules)
+        try {
+            prefs.edit().putString(KEY_APP_FILTER_RULES, json).apply()
+        } catch (e: Throwable) {
+            android.util.Log.e("UserPreferences", "Lỗi saveAppFilterRule: ${e.message}")
+        }
+        _filterRulesFlow.value = allRules
+    }
+
+    fun getRecentSenders(packageName: String): List<String> {
+        return try {
+            val json = prefs.getString(KEY_RECENT_SENDERS, null) ?: return emptyList()
+            val type = object : TypeToken<Map<String, List<String>>>() {}.type
+            val map: Map<String, List<String>> = gson.fromJson(json, type) ?: emptyMap()
+            map[packageName] ?: emptyList()
+        } catch (_: Throwable) {
+            emptyList()
+        }
+    }
+
+    fun addRecentSender(packageName: String, senderName: String) {
+        val cleanName = senderName.trim()
+        if (cleanName.isBlank() || cleanName.length < 2) return
+        try {
+            val currentMap = try {
+                val json = prefs.getString(KEY_RECENT_SENDERS, null)
+                if (json != null) {
+                    val type = object : TypeToken<Map<String, List<String>>>() {}.type
+                    gson.fromJson<Map<String, List<String>>>(json, type)?.toMutableMap() ?: mutableMapOf()
+                } else mutableMapOf()
+            } catch (_: Throwable) {
+                mutableMapOf()
+            }
+
+            val list = (currentMap[packageName] ?: emptyList()).toMutableList()
+            list.remove(cleanName)
+            list.add(0, cleanName)
+            if (list.size > 15) {
+                list.subList(15, list.size).clear()
+            }
+            currentMap[packageName] = list
+            prefs.edit().putString(KEY_RECENT_SENDERS, gson.toJson(currentMap)).apply()
+        } catch (e: Throwable) {
+            android.util.Log.e("UserPreferences", "Lỗi addRecentSender: ${e.message}")
+        }
+    }
+
     companion object {
         private const val PREFS_FILENAME = "orca_secure_prefs"
         private const val KEY_GEMINI_API_KEY = "key_gemini_api_key"
@@ -496,6 +571,8 @@ class UserPreferences private constructor(context: Context) {
         private const val KEY_APP_ZALO = "key_app_zalo"
         private const val KEY_APP_TELEGRAM = "key_app_telegram"
         private const val KEY_APP_MESSENGER = "key_app_messenger"
+        private const val KEY_APP_FILTER_RULES = "key_app_filter_rules"
+        private const val KEY_RECENT_SENDERS = "key_recent_senders"
         private const val KEY_CUSTOM_FIXED_CONTEXT = "key_custom_fixed_context"
         private const val KEY_SCHEDULED_HOURS = "key_scheduled_hours"
         private const val KEY_PROMPT_PERSONA = "key_prompt_persona"
