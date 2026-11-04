@@ -50,12 +50,12 @@ object GeminiPromptBuilder {
         contentBuilder.append("⏰ Thời điểm hiện tại: $nowFormatted (Múi giờ: ${tz.id}, GMT$offsetStr).\n")
         contentBuilder.append("1. ĐỐI CHIẾU THỜI GIAN: Đối chiếu các mốc trong tin nhắn ('chiều nay', 'sáng mai', 'ngày kia', 'thứ 6'...) với mốc hiện tại ở trên để tính đúng ngày giờ.\n")
         contentBuilder.append("2. NHÌN NGÀY VÀ HẠN, ƯỚC TÍNH BÁO THỨC HỢP LÝ: Nhìn kỹ ngày, giờ và bản chất công việc; ước tính thời gian chuẩn bị, di chuyển hoặc độ gấp để đề xuất giờ báo thức thiết thực (Ví dụ: Họp 09:00 sáng mai ➜ Đề xuất báo 08:30; Hạn nộp 17:00 chiều nay ➜ Đề xuất báo 16:30).\n")
-        contentBuilder.append("3. GHI ĐỦ NGÀY VÀ GIỜ: Trong phần 'Hạn: [Thời gian]', luôn ghi cả giờ đề xuất và ngày (Ví dụ: 'Hạn: 16:30 hôm nay', 'Hạn: 08:30 ngày mai 05/11').\n\n")
+        contentBuilder.append("3. GHI ĐỦ NGÀY VÀ GIỜ: Trong phần 'Hạn: [Thời gian]', luôn ghi cả giờ đề xuất và ngày (Ví dụ: 'Hạn: 16:30 hôm nay', 'Hạn: 08:30 ngày mai 05/11'). Nếu việc quan trọng chưa chốt giờ cụ thể, hãy ghi 'Hạn: Hôm nay (Chờ chốt giờ)' hoặc ước tính giờ kèm ngày.\n\n")
 
-        // 3. Separation of Tasks vs Casual Notes (Chỉ đạo: Việc lặt vặt/nhỏ/không rõ ràng nhắc qua lời nhắn, không thêm vào task)
+        // 3. Separation of Tasks vs Casual Notes
         contentBuilder.append("=== PHÂN ĐỊNH: BẢNG NHIỆM VỤ VS LỜI NHẮN/LƯU Ý ===\n")
-        contentBuilder.append("• BẢNG NHIỆM VỤ (PHẦN 2): Chỉ đưa vào những việc rõ ràng, có hành động cụ thể và cần làm dứt khoát.\n")
-        contentBuilder.append("• LỜI NHẮN / LƯU Ý (PHẦN 1): Những việc lặt vặt, nhỏ nhặt, hoặc thông tin chưa rõ ràng (chưa chốt giờ, nhờ vả bâng quơ) thì chỉ nhắc nhẹ qua Lời Nhắn hoặc Lưu Ý để người dùng nắm được, KHÔNG thêm vào Bảng Nhiệm Vụ (TO-DO) để tránh làm rác danh sách và kích hoạt báo thức thừa.\n\n")
+        contentBuilder.append("• BẢNG NHIỆM VỤ (PHẦN 2): Đưa vào những việc có hành động cụ thể cần làm. ĐẶC BIỆT: Việc QUAN TRỌNG thì DÙ CHƯA CHỐT GIỜ VẪN BẮT BUỘC ĐƯA VÀO (ghi 'Hạn: Hôm nay (Chờ chốt giờ)' hoặc giờ ước tính). Tuyệt đối không bỏ sót việc quan trọng chỉ vì đối phương chưa chốt giờ.\n")
+        contentBuilder.append("• LỜI NHẮN / LƯU Ý (PHẦN 1): Dành cho những việc lặt vặt, tiểu tiết không quan trọng, hoặc nhờ vả vu vơ (mua đồ vặt, tán gẫu...). Những việc vặt này chỉ nhắc nhẹ ở đây, KHÔNG đưa vào Bảng Nhiệm Vụ (TO-DO) để tránh làm rác danh sách checklist.\n\n")
 
         // 4. Active Alarms Sync (Chống tạo lặp)
         if (activeAlarms.isNotEmpty()) {

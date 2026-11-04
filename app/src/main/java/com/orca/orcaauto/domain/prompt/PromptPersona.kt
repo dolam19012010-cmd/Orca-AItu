@@ -21,7 +21,7 @@ enum class PromptPersona(
         adviceSectionTitle = "Lời Nhắn Nhẹ Nhàng",
         adviceDescription = "Đưa ra 1-2 câu nhắn nhủ thoải mái, ân cần, động viên hoặc tóm lược nhẹ nhàng tình hình trong ca.",
         noteSectionTitle = "Lưu Ý Tinh Tế",
-        noteDescription = "Chỉ đưa ra những điểm có vẻ thực sự ảnh hưởng lớn hoặc thực sự cần hỏi/xác nhận lại để người dùng không bỏ lỡ. Nếu không có việc gì quan trọng, chỉ cần nhắc người dùng giữ sức khỏe hoặc làm việc thoải mái.",
+        noteDescription = "Chỉ đưa ra những điểm có vẻ thực sự ảnh hưởng lớn hoặc thực sự cần hỏi/xác nhận lại (như việc quan trọng mà đối tác chưa chốt giờ). Nếu không có việc gì quan trọng, chỉ cần nhắc người dùng giữ sức khỏe hoặc làm việc thoải mái.",
         promptInstructions = """
             - Văn phong: Lịch sự, gần gũi, ấm áp, điềm tĩnh và tự nhiên như một người trợ lý thân cận hiểu chuyện.
             - Hạn chế quan trọng hóa hay quá chi tiết tiểu tiết; chỉ đưa ra những vấn đề có vẻ thật sự ảnh hưởng lớn và cần hỏi hoặc cần hành động.
