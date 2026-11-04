@@ -71,12 +71,11 @@
             </intent-filter>
         </service>
 
-        <!-- Keep-Alive Foreground Service -->
+        <!-- Keep-Alive Foreground Service: Vô hiệu hóa hoàn toàn để thanh thông báo luôn sạch sẽ -->
         <service
             android:name=".service.KeepAliveForegroundService"
-            android:enabled="true"
-            android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:enabled="false"
+            android:exported="false" />
 
         <!-- Floating Chat Bubble Service (Bong bóng nổi) -->
         <service

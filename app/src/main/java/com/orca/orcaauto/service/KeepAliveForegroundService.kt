@@ -27,27 +27,10 @@ class KeepAliveForegroundService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        try {
-            val notification = buildForegroundNotification()
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                startForeground(
-                    NOTIFICATION_ID,
-                    notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-                )
-            } else {
-                startForeground(NOTIFICATION_ID, notification)
-            }
-
-            _isRunningFlow.value = true
-            return START_STICKY
-        } catch (e: Throwable) {
-            android.util.Log.e("KeepAliveService", "Không thể chạy Foreground Service (${e.message}). Dừng dịch vụ an toàn để không crash ứng dụng.", e)
-            _isRunningFlow.value = false
-            stopSelf()
-            return START_NOT_STICKY
-        }
+        // Dịch vụ thường trực đã bị khai tử hoàn toàn để giữ thanh thông báo sạch sẽ.
+        _isRunningFlow.value = false
+        stopSelf()
+        return START_NOT_STICKY
     }
 
     override fun onDestroy() {

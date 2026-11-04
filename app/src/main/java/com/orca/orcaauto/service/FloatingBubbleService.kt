@@ -1943,7 +1943,8 @@ class FloatingBubbleService : Service() {
                             } else if (isCompleted) {
                                 Toast.makeText(this@FloatingBubbleService, "Nhấn giữ để đưa về trạng thái chưa hoàn thành", Toast.LENGTH_SHORT).show()
                             } else {
-                                alarmPill?.performClick()
+                                // Mở cấu hình / chi tiết nhiệm vụ, KHÔNG tự ý kích hoạt hoặc tắt chuông báo thức
+                                showFloatingTaskConfigDialog(task, alarmId, existingAlarm)
                             }
                         }
                         true
