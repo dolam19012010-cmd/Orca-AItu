@@ -1360,13 +1360,13 @@ class FloatingBubbleService : Service() {
             contentLayout.addView(emptyBox)
         } else {
             parsed.tasksToDo.forEach { task ->
-                contentLayout.addView(renderTaskRow(task, isPlanned = false))
+                contentLayout.addView(renderTaskRow(task, isPlanned = false, cardLayout = cardLayout))
             }
             parsed.tasksPlanned.forEach { task ->
-                contentLayout.addView(renderTaskRow(task, isPlanned = true))
+                contentLayout.addView(renderTaskRow(task, isPlanned = true, cardLayout = cardLayout))
             }
             parsed.tasksDone.forEach { task ->
-                contentLayout.addView(renderTaskRow(task, isPlanned = false))
+                contentLayout.addView(renderTaskRow(task, isPlanned = false, cardLayout = cardLayout))
             }
         }
 
@@ -1492,7 +1492,7 @@ class FloatingBubbleService : Service() {
     }
 
     @SuppressLint("ClickableViewAccessibility")
-    private fun renderTaskRow(task: TaskItem, isPlanned: Boolean): View {
+    private fun renderTaskRow(task: TaskItem, isPlanned: Boolean, cardLayout: View): View {
         val cleanTitle = task.title.replace(Regex("""^[\[\(\-•*\d.]+\s*"""), "").trim()
         val parsedDt = SystemAlarmHelper.parseDateTimeFromText(task.deadline)
         val targetCal = parsedDt?.calendar ?: Calendar.getInstance().apply { add(Calendar.HOUR_OF_DAY, 1) }
@@ -1792,58 +1792,123 @@ class FloatingBubbleService : Service() {
         taskRow.addView(badgeRow)
         container.addView(taskRow)
 
-        // Unified Gesture Handler for taskRow: Horizontal Swipe (Complete/Cancel), Long Press 550ms (Dialog), Short Tap (Quick alarm)
+        // Unified Gesture Handler for taskRow:
+        // 1. Horizontal Swipe (Complete/Cancel) with strict swipe lock:
+        //    Once swiped, hold is permanently cancelled for this touch session, even if paused mid-drag!
+        // 2. Hold 550ms: Spawns Drag Pill View tracking finger position.
+        //    - Released inside card: Opens detail config & alarm dialog.
+        //    - Released outside card: Jumps directly to chat with auto-copied smart reply!
+        // 3. Short Tap (< 550ms): Quick alarm toggle or status toast.
         var startX = 0f
         var startY = 0f
         var isSwiping = false
-        var isLongPressTriggered = false
+        var isPillActive = false
+        var hasCancelledHold = false
         val touchSlop = ViewConfiguration.get(this).scaledTouchSlop
         val swipeThreshold = dpToPx(72) // Tăng thêm 20% ngưỡng kéo theo lệnh user (60dp * 1.2 = 72dp)
         val taskHandler = Handler(Looper.getMainLooper())
 
-        val longPressRunnable = Runnable {
-            if (!isSwiping) {
-                isLongPressTriggered = true
-                if (isCancelled) {
-                    showFloatingConfirmationDialog(
-                        title = "Khôi phục nhiệm vụ?",
-                        message = "Bạn có muốn khôi phục lại nhiệm vụ \"$cleanTitle\" về danh sách việc cần làm không?",
-                        confirmText = "Khôi phục",
-                        confirmColor = Color.parseColor("#10B981")
-                    ) {
-                        SystemAlarmHelper.restoreCancelledTask(this@FloatingBubbleService, cleanTitle, alarmId)
-                        val restoredAlarm = (existingAlarm ?: SmartAlarmEntity(
-                            alarmId = alarmId,
-                            taskTitle = cleanTitle,
-                            targetTimeMillis = System.currentTimeMillis(),
-                            targetDateLabel = proposedTime,
-                            status = SmartAlarmStatus.PROPOSED
-                        )).copy(status = SmartAlarmStatus.PROPOSED, updatedAt = System.currentTimeMillis())
-                        alarmDbMap = alarmDbMap + (alarmId to restoredAlarm) + (generatedAlarmId to restoredAlarm)
-                        Toast.makeText(this@FloatingBubbleService, "Đã khôi phục nhiệm vụ thành công!", Toast.LENGTH_SHORT).show()
-                        updateBubbleContent()
+        val cardRect = Rect()
+        var dragPillView: LinearLayout? = null
+        var pillIcon: TextView? = null
+        var pillTv: TextView? = null
+        var wasOutside = false
+
+        val removePillSafely: () -> Unit = {
+            if (dragPillView != null) {
+                bubbleRootView?.removeView(dragPillView)
+                dragPillView = null
+                pillIcon = null
+                pillTv = null
+            }
+        }
+
+        val updatePillState: (Float, Float) -> Unit = { rawX, rawY ->
+            val pill = dragPillView
+            if (pill != null) {
+                cardLayout.getGlobalVisibleRect(cardRect)
+                val isOutside = !cardRect.contains(rawX.toInt(), rawY.toInt())
+
+                if (isOutside != wasOutside) {
+                    wasOutside = isOutside
+                    if (isOutside) {
+                        try {
+                            pill.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
+                        } catch (_: Exception) {}
                     }
-                } else if (isCompleted) {
-                    showFloatingConfirmationDialog(
-                        title = "Đưa về chưa hoàn thành?",
-                        message = "Bạn có muốn đưa nhiệm vụ \"$cleanTitle\" về lại danh sách việc cần làm (chưa hoàn thành) để tiếp tục theo dõi không?",
-                        confirmText = "Xác nhận",
-                        confirmColor = Color.WHITE
-                    ) {
-                        SystemAlarmHelper.uncompleteTask(this@FloatingBubbleService, cleanTitle, alarmId)
-                        val uncompletedAlarm = (existingAlarm ?: SmartAlarmEntity(
-                            alarmId = alarmId,
-                            taskTitle = cleanTitle,
-                            targetTimeMillis = System.currentTimeMillis(),
-                            targetDateLabel = proposedTime,
-                            status = SmartAlarmStatus.PROPOSED
-                        )).copy(status = SmartAlarmStatus.PROPOSED, updatedAt = System.currentTimeMillis())
-                        alarmDbMap = alarmDbMap + (alarmId to uncompletedAlarm) + (generatedAlarmId to uncompletedAlarm)
-                        Toast.makeText(this@FloatingBubbleService, "Đã đưa về trạng thái chưa hoàn thành!", Toast.LENGTH_SHORT).show()
-                        updateBubbleContent()
+                }
+
+                if (isOutside) {
+                    val targetName = task.source.ifBlank { "Zalo" }
+                    pillIcon?.text = "🚀"
+                    pillTv?.text = "Thả để mở chat [$targetName]"
+                    pill.background = GradientDrawable().apply {
+                        setColor(Color.parseColor("#E60284C7"))
+                        cornerRadius = dpToPx(20).toFloat()
+                        setStroke(dpToPx(1), Color.parseColor("#9938BDF8"))
                     }
                 } else {
-                    showFloatingTaskConfigDialog(task, alarmId, existingAlarm)
+                    pillIcon?.text = "⚙️"
+                    pillTv?.text = "Thả để đặt báo thức / ghi chú"
+                    pill.background = GradientDrawable().apply {
+                        setColor(Color.parseColor("#E61E293B"))
+                        cornerRadius = dpToPx(20).toFloat()
+                        setStroke(dpToPx(1), Color.parseColor("#4DFFFFFF"))
+                    }
+                }
+
+                pill.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
+                val pillW = pill.measuredWidth
+                val pillH = pill.measuredHeight
+                val dm = resources.displayMetrics
+                val targetX = (rawX - pillW / 2).coerceIn(dpToPx(8).toFloat(), (dm.widthPixels - pillW - dpToPx(8)).toFloat())
+                val targetY = (rawY - pillH - dpToPx(38)).coerceAtLeast(dpToPx(24).toFloat())
+                pill.x = targetX
+                pill.y = targetY
+            }
+        }
+
+        val longPressRunnable = Runnable {
+            if (!isSwiping && !hasCancelledHold) {
+                isPillActive = true
+                wasOutside = false
+
+                val root = bubbleRootView
+                if (root != null) {
+                    val pill = LinearLayout(this@FloatingBubbleService).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER_VERTICAL
+                        elevation = dpToPx(60).toFloat()
+                        translationZ = dpToPx(60).toFloat()
+                        setPadding(dpToPx(14), dpToPx(7), dpToPx(14), dpToPx(7))
+                        layoutParams = FrameLayout.LayoutParams(
+                            ViewGroup.LayoutParams.WRAP_CONTENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT
+                        )
+                    }
+                    val icon = TextView(this@FloatingBubbleService).apply {
+                        textSize = 13f
+                    }
+                    val tv = TextView(this@FloatingBubbleService).apply {
+                        textSize = 11.5f
+                        typeface = Typeface.DEFAULT_BOLD
+                        setTextColor(Color.WHITE)
+                        setPadding(dpToPx(6), 0, 0, 0)
+                    }
+                    pill.addView(icon)
+                    pill.addView(tv)
+                    dragPillView = pill
+                    pillIcon = icon
+                    pillTv = tv
+
+                    updatePillState(startX, startY)
+                    root.addView(pill)
+                    pill.bringToFront()
+
+                    pill.scaleX = 0.8f
+                    pill.scaleY = 0.8f
+                    pill.alpha = 0f
+                    pill.animate().scaleX(1.0f).scaleY(1.0f).alpha(1.0f).setDuration(150).start()
                 }
             }
         }
@@ -1854,50 +1919,125 @@ class FloatingBubbleService : Service() {
                     startX = event.rawX
                     startY = event.rawY
                     isSwiping = false
-                    isLongPressTriggered = false
+                    isPillActive = false
+                    hasCancelledHold = false
                     taskHandler.removeCallbacks(longPressRunnable)
-                    // Nhấn giữ 550ms cho thoải mái, không cần rung theo lệnh user
                     taskHandler.postDelayed(longPressRunnable, 550L)
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val dx = event.rawX - startX
                     val dy = event.rawY - startY
-                    if (Math.hypot(dx.toDouble(), dy.toDouble()) > touchSlop) {
-                        taskHandler.removeCallbacks(longPressRunnable)
-                    }
 
-                    if (!isSwiping && Math.abs(dx) > touchSlop && Math.abs(dx) > Math.abs(dy) * 1.5f) {
-                        val allowRight = !isCompleted && !isCancelled
-                        val allowLeft = !isCancelled
-                        if ((dx > 0 && allowRight) || (dx < 0 && allowLeft)) {
-                            isSwiping = true
-                            v.parent?.requestDisallowInterceptTouchEvent(true)
+                    if (!isPillActive) {
+                        // Nếu ngón tay di chuyển vượt touchSlop trước khi đủ 550ms -> hủy giữ ngay lập tức
+                        if (Math.hypot(dx.toDouble(), dy.toDouble()) > touchSlop) {
+                            hasCancelledHold = true
+                            taskHandler.removeCallbacks(longPressRunnable)
                         }
-                    }
 
-                    if (isSwiping) {
-                        val clampedDx = when {
-                            dx > 0 && (isCompleted || isCancelled) -> 0f
-                            dx < 0 && isCancelled -> 0f
-                            else -> dx
+                        // Nhận diện vuốt ngang: khóa cứng vào isSwiping
+                        if (!isSwiping && Math.abs(dx) > touchSlop && Math.abs(dx) > Math.abs(dy) * 1.5f) {
+                            val allowRight = !isCompleted && !isCancelled
+                            val allowLeft = !isCancelled
+                            if ((dx > 0 && allowRight) || (dx < 0 && allowLeft)) {
+                                isSwiping = true
+                                hasCancelledHold = true
+                                taskHandler.removeCallbacks(longPressRunnable)
+                                v.parent?.requestDisallowInterceptTouchEvent(true)
+                            }
                         }
-                        v.translationX = clampedDx
-                        if (clampedDx > 0) {
-                            leftSwipeAction.visibility = View.VISIBLE
-                            rightSwipeAction.visibility = View.GONE
-                        } else if (clampedDx < 0) {
-                            leftSwipeAction.visibility = View.GONE
-                            rightSwipeAction.visibility = View.VISIBLE
+
+                        if (isSwiping) {
+                            val clampedDx = when {
+                                dx > 0 && (isCompleted || isCancelled) -> 0f
+                                dx < 0 && isCancelled -> 0f
+                                else -> dx
+                            }
+                            v.translationX = clampedDx
+                            if (clampedDx > 0) {
+                                leftSwipeAction.visibility = View.VISIBLE
+                                rightSwipeAction.visibility = View.GONE
+                            } else if (clampedDx < 0) {
+                                leftSwipeAction.visibility = View.GONE
+                                rightSwipeAction.visibility = View.VISIBLE
+                            }
+                            true
+                        } else {
+                            false
                         }
-                        true
                     } else {
-                        false
+                        // Đang trong chế độ Viên thuốc theo ngón tay
+                        v.parent?.requestDisallowInterceptTouchEvent(true)
+                        updatePillState(event.rawX, event.rawY)
+                        true
                     }
                 }
                 MotionEvent.ACTION_UP -> {
                     taskHandler.removeCallbacks(longPressRunnable)
-                    if (isLongPressTriggered) {
+
+                    if (isPillActive) {
+                        isPillActive = false
+                        cardLayout.getGlobalVisibleRect(cardRect)
+                        val isOutside = !cardRect.contains(event.rawX.toInt(), event.rawY.toInt())
+                        removePillSafely()
+
+                        if (isOutside) {
+                            // THẢ NGOÀI VÙNG THẺ: Nhảy thẳng vào phòng chat!
+                            ChatIntentManager.jumpToChat(
+                                context = this@FloatingBubbleService,
+                                sourceText = task.source,
+                                taskTitle = cleanTitle,
+                                autoCopySmartReply = true
+                            )
+                            val root = bubbleRootView
+                            if (root != null) {
+                                collapseExpandedCard(root)
+                            }
+                        } else {
+                            // THẢ TRONG VÙNG THẺ: Mở chi tiết đặt báo thức / ghi chú
+                            if (isCancelled) {
+                                showFloatingConfirmationDialog(
+                                    title = "Khôi phục nhiệm vụ?",
+                                    message = "Bạn có muốn khôi phục lại nhiệm vụ \"$cleanTitle\" về danh sách việc cần làm không?",
+                                    confirmText = "Khôi phục",
+                                    confirmColor = Color.parseColor("#10B981")
+                                ) {
+                                    SystemAlarmHelper.restoreCancelledTask(this@FloatingBubbleService, cleanTitle, alarmId)
+                                    val restoredAlarm = (existingAlarm ?: SmartAlarmEntity(
+                                        alarmId = alarmId,
+                                        taskTitle = cleanTitle,
+                                        targetTimeMillis = System.currentTimeMillis(),
+                                        targetDateLabel = proposedTime,
+                                        status = SmartAlarmStatus.PROPOSED
+                                    )).copy(status = SmartAlarmStatus.PROPOSED, updatedAt = System.currentTimeMillis())
+                                    alarmDbMap = alarmDbMap + (alarmId to restoredAlarm) + (generatedAlarmId to restoredAlarm)
+                                    Toast.makeText(this@FloatingBubbleService, "Đã khôi phục nhiệm vụ thành công!", Toast.LENGTH_SHORT).show()
+                                    updateBubbleContent()
+                                }
+                            } else if (isCompleted) {
+                                showFloatingConfirmationDialog(
+                                    title = "Đưa về chưa hoàn thành?",
+                                    message = "Bạn có muốn đưa nhiệm vụ \"$cleanTitle\" về lại danh sách việc cần làm (chưa hoàn thành) để tiếp tục theo dõi không?",
+                                    confirmText = "Xác nhận",
+                                    confirmColor = Color.WHITE
+                                ) {
+                                    SystemAlarmHelper.uncompleteTask(this@FloatingBubbleService, cleanTitle, alarmId)
+                                    val uncompletedAlarm = (existingAlarm ?: SmartAlarmEntity(
+                                        alarmId = alarmId,
+                                        taskTitle = cleanTitle,
+                                        targetTimeMillis = System.currentTimeMillis(),
+                                        targetDateLabel = proposedTime,
+                                        status = SmartAlarmStatus.PROPOSED
+                                    )).copy(status = SmartAlarmStatus.PROPOSED, updatedAt = System.currentTimeMillis())
+                                    alarmDbMap = alarmDbMap + (alarmId to uncompletedAlarm) + (generatedAlarmId to uncompletedAlarm)
+                                    Toast.makeText(this@FloatingBubbleService, "Đã đưa về trạng thái chưa hoàn thành!", Toast.LENGTH_SHORT).show()
+                                    updateBubbleContent()
+                                }
+                            } else {
+                                showFloatingTaskConfigDialog(task, alarmId, existingAlarm)
+                            }
+                        }
                         return@setOnTouchListener true
                     }
 
@@ -1959,6 +2099,10 @@ class FloatingBubbleService : Service() {
                 }
                 MotionEvent.ACTION_CANCEL -> {
                     taskHandler.removeCallbacks(longPressRunnable)
+                    if (isPillActive) {
+                        isPillActive = false
+                        removePillSafely()
+                    }
                     if (isSwiping) {
                         isSwiping = false
                         v.animate().translationX(0f).setDuration(180).withEndAction {

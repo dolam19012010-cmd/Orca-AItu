@@ -63,6 +63,17 @@ class NotificationMonitorService : NotificationListenerService() {
             return
         }
 
+        // 1.1. Cache PendingIntent for direct jump to chat (ignoring Group Summary to avoid jumping to Home)
+        val isGroupSummary = (sbn.notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0
+        val contentIntent = sbn.notification.contentIntent
+        if (!isGroupSummary && contentIntent != null) {
+            ChatIntentManager.cacheChatIntent(
+                packageName = packageName,
+                senderTitle = title,
+                pendingIntent = contentIntent
+            )
+        }
+
         serviceScope.launch {
             try {
                 // 2. Database level fallback deduplication (prevents duplicates across service restarts)
