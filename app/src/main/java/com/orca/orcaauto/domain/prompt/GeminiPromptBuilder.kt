@@ -42,20 +42,21 @@ object GeminiPromptBuilder {
 
         // 1. Role & Tone instruction based on Persona
         contentBuilder.append(persona.systemRole).append("\n\n")
-        contentBuilder.append("=== NGUYÊN TẮC VĂN PHONG & CÁCH NHẮC NHỞ ===\n")
+        contentBuilder.append("=== NGUYÊN TẮC VĂN PHONG ===\n")
         contentBuilder.append(persona.promptInstructions).append("\n\n")
 
-        // 2. Real-time Anchor & Smart Alarm Estimation
-        contentBuilder.append("=== THỜI GIAN HIỆN TẠI & QUY TẮC ĐỀ XUẤT BÁO THỨC ===\n")
+        // 2. Real-time Anchor & Time Estimation
+        contentBuilder.append("=== THỜI GIAN THỰC TẾ & MỐC HẸN ===\n")
         contentBuilder.append("⏰ Thời điểm hiện tại: $nowFormatted (Múi giờ: ${tz.id}, GMT$offsetStr).\n")
-        contentBuilder.append("1. ĐỐI CHIẾU THỜI GIAN: Đối chiếu các mốc trong tin nhắn ('chiều nay', 'sáng mai', 'ngày kia', 'thứ 6'...) với mốc hiện tại ở trên để tính đúng ngày giờ.\n")
-        contentBuilder.append("2. NHÌN NGÀY VÀ HẠN, ƯỚC TÍNH BÁO THỨC HỢP LÝ: Nhìn kỹ ngày, giờ và bản chất công việc; ước tính thời gian chuẩn bị, di chuyển hoặc độ gấp để đề xuất giờ báo thức thiết thực (Ví dụ: Họp 09:00 sáng mai ➜ Đề xuất báo 08:30; Hạn nộp 17:00 chiều nay ➜ Đề xuất báo 16:30).\n")
-        contentBuilder.append("3. GHI ĐỦ NGÀY VÀ GIỜ: Trong phần 'Hạn: [Thời gian]', luôn ghi cả giờ đề xuất và ngày (Ví dụ: 'Hạn: 16:30 hôm nay', 'Hạn: 08:30 ngày mai 05/11'). Nếu việc quan trọng chưa chốt giờ cụ thể, hãy ghi 'Hạn: Hôm nay (Chờ chốt giờ)' hoặc ước tính giờ kèm ngày.\n\n")
+        contentBuilder.append("• Hãy đối chiếu các mốc trong tin nhắn ('chiều nay', 'sáng mai', 'ngày kia', 'thứ 6'...) với thời điểm hiện tại để tính đúng ngày giờ.\n")
+        contentBuilder.append("• Ước tính thời gian báo thức đề xuất hợp lý (ví dụ: họp 09:00 sáng mai ➜ đề xuất 08:30; deadline 17:00 chiều nay ➜ đề xuất 16:30).\n")
+        contentBuilder.append("• Nếu việc cần làm nhưng chưa chốt giờ cụ thể, hãy ghi 'Hạn: Hôm nay (Chờ chốt giờ)' hoặc khung giờ ước tính kèm ngày.\n\n")
 
-        // 3. Separation of Tasks vs Casual Notes
-        contentBuilder.append("=== PHÂN ĐỊNH: BẢNG NHIỆM VỤ VS LỜI NHẮN/LƯU Ý ===\n")
-        contentBuilder.append("• BẢNG NHIỆM VỤ (PHẦN 2): Đưa vào những việc có hành động cụ thể cần làm. ĐẶC BIỆT: Việc QUAN TRỌNG thì DÙ CHƯA CHỐT GIỜ VẪN BẮT BUỘC ĐƯA VÀO (ghi 'Hạn: Hôm nay (Chờ chốt giờ)' hoặc giờ ước tính). Tuyệt đối không bỏ sót việc quan trọng chỉ vì đối phương chưa chốt giờ.\n")
-        contentBuilder.append("• LỜI NHẮN / LƯU Ý (PHẦN 1): Dành cho những việc lặt vặt, tiểu tiết không quan trọng, hoặc nhờ vả vu vơ (mua đồ vặt, tán gẫu...). Những việc vặt này chỉ nhắc nhẹ ở đây, KHÔNG đưa vào Bảng Nhiệm Vụ (TO-DO) để tránh làm rác danh sách checklist.\n\n")
+        // 3. Flexible Task Selection (Linh hoạt chọn lọc đầu việc, không cực đoan)
+        contentBuilder.append("=== HƯỚNG DẪN CHỌN LỌC ĐẦU VIỆC ===\n")
+        contentBuilder.append("• Hãy dùng sự nhạy bén và ngữ cảnh để chọn lọc các việc thực tế cần làm (bao gồm cả công việc, việc cá nhân hoặc việc gia đình cần thiết như mua đồ, chuẩn bị đồ, hỗ trợ người thân...).\n")
+        contentBuilder.append("• Nếu là việc cần làm nhưng chưa có giờ chính xác, vẫn đưa vào Bảng nhiệm vụ để người dùng không bỏ lỡ.\n")
+        contentBuilder.append("• Lời nhắn / Lưu ý (Phần 1): Nhắc nhở ân cần tình hình chung, hoặc lưu ý những điểm cần hỏi lại / xác nhận thêm.\n\n")
 
         // 4. Active Alarms Sync (Chống tạo lặp)
         if (activeAlarms.isNotEmpty()) {
@@ -63,7 +64,7 @@ object GeminiPromptBuilder {
             for (alarm in activeAlarms.take(15)) {
                 contentBuilder.append("- ${alarm.taskTitle} | Hạn: ${alarm.targetDateLabel}\n")
             }
-            contentBuilder.append("⚡ Các việc trên ĐÃ BẬT BÁO THỨC. Nếu tin nhắn mới không có thay đổi gì về giờ giấc hay tiến độ thì không cần liệt kê lại để tránh trùng lặp.\n\n")
+            contentBuilder.append("⚡ Các việc trên ĐÃ BẬT BÁO THỨC. Nếu tin nhắn mới không có thay đổi về giờ giấc thì không cần liệt kê lại.\n\n")
         }
 
         // 5. Cancelled Tasks Blacklist
@@ -73,7 +74,7 @@ object GeminiPromptBuilder {
             for (title in distinctCancelled) {
                 contentBuilder.append("- $title\n")
             }
-            contentBuilder.append("⚡ Người dùng đã chủ động hủy các việc này. Cấm đưa lại vào bảng nhiệm vụ, kể cả khi tin nhắn còn chứa thông tin.\n\n")
+            contentBuilder.append("⚡ Người dùng đã chủ động hủy các việc này, không đưa lại vào bảng nhiệm vụ.\n\n")
         }
 
         // 6. Completed Tasks
@@ -101,7 +102,7 @@ object GeminiPromptBuilder {
         if (customFixedContext.isNotBlank()) {
             contentBuilder.append("=== BỐI CẢNH CỦA NGƯỜI DÙNG ===\n")
             contentBuilder.append(customFixedContext.trim())
-            contentBuilder.append("\n(Dùng bối cảnh trên để hiểu vai trò và ưu tiên đúng các mối quan hệ công việc cốt lõi).\n\n")
+            contentBuilder.append("\n\n")
         }
 
         // 9. Previous Summary Context
@@ -109,7 +110,7 @@ object GeminiPromptBuilder {
             val compactPrev = previousSummary.trim().take(1000)
             contentBuilder.append("=== BÁO CÁO CA TRƯỚC (THAM CHIẾU TIẾN ĐỘ) ===\n")
             contentBuilder.append(compactPrev)
-            contentBuilder.append("\n⚡ Dùng để nối tiếp tiến độ, không chép lại y nguyên nếu tin nhắn mới không có diễn biến mới.\n\n")
+            contentBuilder.append("\n⚡ Nối tiếp tiến độ, không lặp lại nếu không có diễn biến mới.\n\n")
         }
 
         // 10. Live User Query
@@ -140,23 +141,30 @@ object GeminiPromptBuilder {
             }
         }
 
-        // 12. Output Format (2 Parts)
-        contentBuilder.append("\n=== CẤU TRÚC ĐẦU RA BẮT BUỘC (2 PHẦN) ===\n\n")
+        // 12. BẮT BUỘC TUÂN THỦ 100% CẤU TRÚC ĐỊNH DẠNG ĐẦU RA (LÀM CĂNG Ở ĐỊNH DẠNG)
+        contentBuilder.append("\n=== QUY TẮC ĐỊNH DẠNG ĐẦU RA BẮT BUỘC (TUÂN THỦ TUYỆT ĐỐI) ===\n\n")
+        contentBuilder.append("BẮT BUỘC xuất ra đúng cấu trúc 2 PHẦN như sau, không tự ý đổi tiêu đề hay thêm bớt phần khác:\n\n")
 
         contentBuilder.append("=== PHẦN 1: ${persona.adviceSectionTitle.uppercase()} & ${persona.noteSectionTitle.uppercase()} ===\n")
         contentBuilder.append("1. [${persona.adviceSectionTitle}]: ${persona.adviceDescription}\n")
         contentBuilder.append("2. [${persona.noteSectionTitle}]: ${persona.noteDescription}\n\n")
 
         contentBuilder.append("=== PHẦN 2: BẢNG ĐIỀU PHỐI NHIỆM VỤ ===\n")
-        contentBuilder.append("QUY TẮC ĐỊNH DẠNG: Mỗi mục trên 1 dòng duy nhất theo cú pháp: [Tên nhiệm vụ ngắn gọn] | Nguồn: [Tên người gửi ngắn] | Hạn: [Giờ đề xuất/Hạn chót]\n")
-        contentBuilder.append("TUYỆT ĐỐI KHÔNG dùng dấu ** in đậm hay ký tự thừa trong tên nhiệm vụ. Giữ tên và hạn chót cực kỳ súc tích, không cách dòng hay xuống dòng thừa.\n\n")
+        contentBuilder.append("QUY TẮC CÚ PHÁP TỪNG DÒNG NHIỆM VỤ (BẮT BUỘC CHUẨN XÁC ĐỂ HỆ THỐNG PARSE MÁY):\n")
+        contentBuilder.append("• Mỗi nhiệm vụ trên ĐÚNG 1 DÒNG DUY NHẤT theo cú pháp: [Tên nhiệm vụ ngắn gọn] | Nguồn: [Tên người gửi ngắn] | Hạn: [Thời gian/Giờ đề xuất]\n")
+        contentBuilder.append("• TUYỆT ĐỐI KHÔNG dùng dấu sao in đậm (**) trong tên nhiệm vụ.\n")
+        contentBuilder.append("• TUYỆT ĐỐI KHÔNG tự ý ngắt dòng, xuống dòng giữa chừng trong một nhiệm vụ.\n")
+        contentBuilder.append("• Bắt buộc dùng đúng 3 nhóm tiêu đề chuẩn sau:\n\n")
+
         contentBuilder.append("### 🔴 NHIỆM VỤ PHẢI LÀM (TO-DO)\n")
-        contentBuilder.append("- [Nhiệm vụ cần làm] | Nguồn: [Người gửi] | Hạn: [Giờ đề xuất cụ thể]\n\n")
+        contentBuilder.append("- [Tên nhiệm vụ cần làm] | Nguồn: [Người gửi] | Hạn: [Giờ/Ngày đề xuất]\n\n")
+
         contentBuilder.append("### 🟢 NHIỆM VỤ ĐÃ LÀM (DONE)\n")
-        contentBuilder.append("⚡ Chỉ giữ lại tối đa 1-2 việc QUAN TRỌNG NHẤT vừa hoàn tất gần đây (có mốc thời gian rõ: 'Đã xong lúc HH:mm'). Tuyệt đối không liệt kê việc vặt đã xong.\n")
-        contentBuilder.append("- [Nhiệm vụ quan trọng đã xong] | Nguồn: [Người gửi] | Thời gian: [Đã xong lúc HH:mm]\n\n")
+        contentBuilder.append("(Chỉ giữ tối đa 1-2 việc quan trọng vừa hoàn tất gần đây có mốc giờ rõ; không liệt kê việc lặt vặt đã xong)\n")
+        contentBuilder.append("- [Tên việc quan trọng đã xong] | Nguồn: [Người gửi] | Thời gian: [Đã xong lúc HH:mm]\n\n")
+
         contentBuilder.append("### 🟡 KẾ HOẠCH DỰ KIẾN (PLANNED)\n")
-        contentBuilder.append("- [Lịch hẹn/kế hoạch tương lai] | Nguồn: [Người gửi] | Mục tiêu: [Ngày/Giờ]\n")
+        contentBuilder.append("- [Tên lịch hẹn/kế hoạch tương lai] | Nguồn: [Người gửi] | Mục tiêu: [Ngày/Giờ]\n")
 
         return contentBuilder.toString()
     }
