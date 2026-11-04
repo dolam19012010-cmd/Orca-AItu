@@ -2,8 +2,10 @@ package com.orca.orcaauto.domain.filter
 
 import android.app.Notification
 import android.service.notification.StatusBarNotification
+import com.orca.orcaauto.data.preferences.AppFilterRule
 import com.orca.orcaauto.data.preferences.ChatFilterMode
 import com.orca.orcaauto.data.preferences.UserPreferences
+import java.text.Normalizer
 
 object NotificationFilter {
 
@@ -13,6 +15,8 @@ object NotificationFilter {
         Regex("(?i)(\\b\\d{4,8}\\b).*?(là\\s*mã|is\\s*your\\s*code|để\\s*xác\\s*nhận|for\\s*verification)"),
         Regex("(?i)\\b(otp|xác\\s*nhận|xác\\s*thực)\\b.*?\\b\\d{4,8}\\b")
     )
+
+    private val WHITESPACE_REGEX = Regex("\\s+")
 
     /**
      * Determine if a StatusBarNotification should be recorded.
@@ -75,7 +79,6 @@ object NotificationFilter {
         preferences: UserPreferences
     ): Boolean {
         val rule = preferences.getAppFilterRule(packageName)
-        val chatNames = rule.chatNames
 
         // Record sender/group to recent list if non-empty
         val candidateName = conversationTitle.ifBlank { title }
@@ -83,19 +86,34 @@ object NotificationFilter {
             preferences.addRecentSender(packageName, candidateName)
         }
 
+        return evaluateRule(rule, conversationTitle, title)
+    }
+
+    /**
+     * Pure evaluation logic for AppFilterRule.
+     * Guaranteed crash-proof against extreme inputs, regex characters, unicode NFC/NFD variations,
+     * and whitespace anomalies.
+     */
+    fun evaluateRule(
+        rule: AppFilterRule,
+        conversationTitle: String,
+        title: String
+    ): Boolean {
+        val chatNames = rule.chatNames
+
         if (chatNames.isEmpty()) {
-            // When no rules configured:
-            // NORMAL_WITH_BLOCK: allow all
-            // STRICT_WHITELIST: allow all until user adds at least one rule
-            return true
+            return when (rule.mode) {
+                ChatFilterMode.NORMAL_WITH_BLOCK -> true  // No blocklist rules -> allow all
+                ChatFilterMode.STRICT_WHITELIST -> false  // Empty whitelist -> block all until configured
+            }
         }
 
-        val normalizedConvTitle = conversationTitle.trim().lowercase()
-        val normalizedTitle = title.trim().lowercase()
+        val normalizedConvTitle = normalize(conversationTitle)
+        val normalizedTitle = normalize(title)
 
         // Check if either conversationTitle or title matches any configured rule name/keyword
         val isMatched = chatNames.any { ruleName ->
-            val normalizedRule = ruleName.trim().lowercase()
+            val normalizedRule = normalize(ruleName)
             if (normalizedRule.isBlank()) false
             else {
                 (normalizedConvTitle.isNotBlank() && (normalizedConvTitle == normalizedRule || normalizedConvTitle.contains(normalizedRule))) ||
@@ -104,15 +122,19 @@ object NotificationFilter {
         }
 
         return when (rule.mode) {
-            ChatFilterMode.NORMAL_WITH_BLOCK -> {
-                // If matched in block mode, drop message
-                !isMatched
-            }
-            ChatFilterMode.STRICT_WHITELIST -> {
-                // If matched in whitelist mode, permit message
-                isMatched
-            }
+            ChatFilterMode.NORMAL_WITH_BLOCK -> !isMatched
+            ChatFilterMode.STRICT_WHITELIST -> isMatched
         }
+    }
+
+    /**
+     * Normalizes text to NFC form, collapses arbitrary whitespace, and converts to lowercase.
+     */
+    fun normalize(text: String): String {
+        if (text.isBlank()) return ""
+        return Normalizer.normalize(text.trim(), Normalizer.Form.NFC)
+            .lowercase()
+            .replace(WHITESPACE_REGEX, " ")
     }
 
     private fun isOtpMessage(content: String): Boolean {
