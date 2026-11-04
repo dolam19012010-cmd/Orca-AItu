@@ -538,7 +538,7 @@ class UserPreferences private constructor(context: Context) {
     }
 
     fun addRecentSender(packageName: String, senderName: String) {
-        val cleanName = senderName.trim()
+        val cleanName = senderName.trim().take(80)
         if (cleanName.isBlank() || cleanName.length < 2) return
         try {
             val currentMap = try {
@@ -552,7 +552,10 @@ class UserPreferences private constructor(context: Context) {
             }
 
             val list = (currentMap[packageName] ?: emptyList()).toMutableList()
-            list.remove(cleanName)
+            if (list.isNotEmpty() && list[0].equals(cleanName, ignoreCase = true)) {
+                return // Đã nằm sẵn ở vị trí đầu tiên, không cần ghi đĩa liên tục
+            }
+            list.removeAll { it.equals(cleanName, ignoreCase = true) }
             list.add(0, cleanName)
             if (list.size > 15) {
                 list.subList(15, list.size).clear()

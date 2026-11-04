@@ -41,9 +41,10 @@ object NotificationFilter {
             return false
         }
 
-        // 2. Extract title, conversationTitle & text
+        // 2. Extract conversationTitle, subText, title & text
         val extras = notification.extras ?: return false
         val conversationTitle = extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.toString()?.trim().orEmpty()
+        val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim().orEmpty()
         val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim().orEmpty()
         val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim().orEmpty()
         val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim().orEmpty()
@@ -60,8 +61,8 @@ object NotificationFilter {
             return false
         }
 
-        // 4. Personalized Chat Filter (Blacklist vs Whitelist)
-        if (!isChatAllowed(packageName, conversationTitle, title, preferences)) {
+        // 4. Personalized Chat Filter (Blacklist vs Whitelist with Asterisk Wildcard support)
+        if (!isChatAllowed(packageName, conversationTitle, subText, title, preferences)) {
             return false
         }
 
@@ -75,29 +76,43 @@ object NotificationFilter {
     fun isChatAllowed(
         packageName: String,
         conversationTitle: String,
+        subText: String,
         title: String,
         preferences: UserPreferences
     ): Boolean {
         val rule = preferences.getAppFilterRule(packageName)
 
-        // Record sender/group to recent list if non-empty
-        val candidateName = conversationTitle.ifBlank { title }
+        // Record sender/group to recent list if non-empty (prioritize conversationTitle -> subText -> title)
+        val candidateName = conversationTitle.ifBlank { subText }.ifBlank { title }
         if (candidateName.isNotBlank() && candidateName != "Người gửi ẩn danh") {
             preferences.addRecentSender(packageName, candidateName)
         }
 
-        return evaluateRule(rule, conversationTitle, title)
+        return evaluateRule(rule, conversationTitle, subText, title)
     }
 
     /**
-     * Pure evaluation logic for AppFilterRule.
+     * Backward-compatible overload for 2-title calls.
+     */
+    fun isChatAllowed(
+        packageName: String,
+        conversationTitle: String,
+        title: String,
+        preferences: UserPreferences
+    ): Boolean {
+        return isChatAllowed(packageName, conversationTitle, "", title, preferences)
+    }
+
+    /**
+     * Pure evaluation logic for AppFilterRule supporting Asterisk (*) wildcards and exact matching.
      * Guaranteed crash-proof against extreme inputs, regex characters, unicode NFC/NFD variations,
      * and whitespace anomalies.
      */
     fun evaluateRule(
         rule: AppFilterRule,
         conversationTitle: String,
-        title: String
+        subText: String = "",
+        title: String = ""
     ): Boolean {
         val chatNames = rule.chatNames
 
@@ -108,22 +123,50 @@ object NotificationFilter {
             }
         }
 
-        val normalizedConvTitle = normalize(conversationTitle)
+        val normalizedConv = normalize(conversationTitle)
+        val normalizedSub = normalize(subText)
         val normalizedTitle = normalize(title)
 
-        // Check if either conversationTitle or title matches any configured rule name/keyword
+        // Check if ANY of conversationTitle, subText, or title matches ANY configured rule
         val isMatched = chatNames.any { ruleName ->
             val normalizedRule = normalize(ruleName)
             if (normalizedRule.isBlank()) false
             else {
-                (normalizedConvTitle.isNotBlank() && (normalizedConvTitle == normalizedRule || normalizedConvTitle.contains(normalizedRule))) ||
-                (normalizedTitle.isNotBlank() && (normalizedTitle == normalizedRule || normalizedTitle.contains(normalizedRule)))
+                (normalizedConv.isNotBlank() && matchesGlobPattern(normalizedConv, normalizedRule)) ||
+                (normalizedSub.isNotBlank() && matchesGlobPattern(normalizedSub, normalizedRule)) ||
+                (normalizedTitle.isNotBlank() && matchesGlobPattern(normalizedTitle, normalizedRule))
             }
         }
 
         return when (rule.mode) {
             ChatFilterMode.NORMAL_WITH_BLOCK -> !isMatched
             ChatFilterMode.STRICT_WHITELIST -> isMatched
+        }
+    }
+
+    /**
+     * Matches text against pattern using Asterisk (*) wildcard rules:
+     * - Pattern with NO '*' (e.g. "chi"): EXACT MATCH (`text == pattern`).
+     * - Pattern wrapped in '*' (e.g. "*dự án orca*"): CONTAINS (`text.contains("dự án orca")`).
+     * - Pattern ending with '*' (e.g. "sếp*"): STARTS WITH (`text.startsWith("sếp")`).
+     * - Pattern starting with '*' (e.g. "*tuấn"): ENDS WITH (`text.endsWith("tuấn")`).
+     * - Arbitrary glob (e.g. "dự*orca"): Translates '*' to '.*' regex safely.
+     */
+    fun matchesGlobPattern(text: String, pattern: String): Boolean {
+        if (text == pattern) return true
+        if (!pattern.contains('*')) {
+            return text == pattern
+        }
+
+        val rawClean = pattern.replace("*", "").trim()
+        if (rawClean.isBlank()) return false // Pattern was just "*" or "***"
+
+        return try {
+            val parts = pattern.split('*')
+            val regexPattern = parts.joinToString(separator = ".*") { Regex.escape(it) }
+            Regex(regexPattern, setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)).matches(text)
+        } catch (_: Throwable) {
+            text.contains(rawClean, ignoreCase = true)
         }
     }
 

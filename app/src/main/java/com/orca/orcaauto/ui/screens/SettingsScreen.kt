@@ -2733,9 +2733,9 @@ private fun AppChatFilterDialog(
                     Text(
                         text = if (selectedMode == ChatFilterMode.NORMAL_WITH_BLOCK)
                             "Chưa có đoạn chat nào bị chặn. Đang nghe bình thường tất cả."
-                        else "Chưa có đoạn chat nào được chỉ định. Thêm ít nhất 1 đoạn chat bên dưới.",
-                        color = TextMutedDark,
-                        fontSize = 12.sp,
+                        else "⚠️ Chú ý: Danh sách đang trống! Ứng dụng sẽ tạm ngưng ghi nhận mọi tin nhắn từ $appName cho đến khi bạn thêm ít nhất 1 đoạn chat.",
+                        color = if (selectedMode == ChatFilterMode.NORMAL_WITH_BLOCK) TextMutedDark else AccentAmber,
+                        fontSize = 11.5.sp,
                         style = MaterialTheme.typography.bodySmall
                     )
                 } else {
@@ -2782,7 +2782,7 @@ private fun AppChatFilterDialog(
                     OutlinedTextField(
                         value = newChatInput,
                         onValueChange = { newChatInput = it },
-                        placeholder = { Text("Tên người gửi / tên nhóm...", fontSize = 12.sp, color = TextMutedDark) },
+                        placeholder = { Text("Chính xác (vd: Chi) hoặc bao quát (vd: *Dự Án*)...", fontSize = 12.sp, color = TextMutedDark) },
                         modifier = Modifier.weight(1f),
                         singleLine = true,
                         colors = OutlinedTextFieldDefaults.colors(
@@ -2809,6 +2809,11 @@ private fun AppChatFilterDialog(
                     ) {
                         Text("+ Thêm", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
+                Text(
+                    text = "💡 Mẹo: Dùng dấu * ở 2 đầu (vd: *Dự Án*) để tìm bao quát bất kể icon. Gõ không có dấu * (vd: Chi) để chặn đích danh 1 người.",
+                    color = TextMutedDark,
+                    fontSize = 10.5.sp
+                )
                 }
 
                 val unaddedRecents = recentSenders.filter { !chatNamesList.contains(it) }
