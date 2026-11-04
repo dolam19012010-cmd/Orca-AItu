@@ -906,8 +906,7 @@ private fun SwipeableTaskItemRow(
                 .combinedClickable(
                     onClick = {
                         if (!isCompleted && !isCancelled) {
-                            // Mở bảng chi tiết cấu hình khi chạm nhẹ vào thân thẻ, KHÔNG tự ý toggle chuông báo thức
-                            onOpenAlarmDetail()
+                            onQuickAlarmToggle()
                         } else if (isCancelled) {
                             Toast.makeText(context, "Nhấn giữ để khôi phục nhiệm vụ đã hủy", Toast.LENGTH_SHORT).show()
                         } else if (isCompleted) {
