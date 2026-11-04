@@ -24,7 +24,7 @@ enum class PromptPersona(
         noteDescription = "Đưa ra 1-2 điểm lưu ý đáng quan tâm hoặc cần hỏi/xác nhận lại. Nếu không có gì đặc biệt, chỉ cần lời chúc hoặc nhắc giữ sức khỏe nhẹ nhàng.",
         promptInstructions = """
             - Văn phong: Lịch sự, gần gũi, ấm áp, điềm tĩnh và tự nhiên.
-            - Linh hoạt chọn lọc các việc thiết thực cần làm (cả công việc lẫn việc cá nhân/gia đình) dựa theo ngữ cảnh.
+            - Tự nhiên thấu hiểu ngữ cảnh để chắt lọc các việc cần làm, không câu nệ tiểu tiết.
             - Hạn chế làm quá vấn đề; điểm lưu ý tập trung vào những việc thực sự đáng quan tâm hoặc cần xác nhận.
             - Bỏ qua các tin nhắn quảng cáo rác, mã OTP hoặc chào hỏi xã giao không có đầu việc.
         """.trimIndent()

@@ -48,17 +48,10 @@ object GeminiPromptBuilder {
         // 2. Real-time Anchor & Time Estimation
         contentBuilder.append("=== THỜI GIAN THỰC TẾ & MỐC HẸN ===\n")
         contentBuilder.append("⏰ Thời điểm hiện tại: $nowFormatted (Múi giờ: ${tz.id}, GMT$offsetStr).\n")
-        contentBuilder.append("• Hãy đối chiếu các mốc trong tin nhắn ('chiều nay', 'sáng mai', 'ngày kia', 'thứ 6'...) với thời điểm hiện tại để tính đúng ngày giờ.\n")
-        contentBuilder.append("• Ước tính thời gian báo thức đề xuất hợp lý (ví dụ: họp 09:00 sáng mai ➜ đề xuất 08:30; deadline 17:00 chiều nay ➜ đề xuất 16:30).\n")
-        contentBuilder.append("• Nếu việc cần làm nhưng chưa chốt giờ cụ thể, hãy ghi 'Hạn: Hôm nay (Chờ chốt giờ)' hoặc khung giờ ước tính kèm ngày.\n\n")
+        contentBuilder.append("• Đối chiếu mốc thời gian trong tin nhắn với thời điểm hiện tại để tính đúng ngày giờ và ước tính mốc báo thức đề xuất hợp lý.\n")
+        contentBuilder.append("• Nếu việc cần làm chưa có giờ cụ thể, hãy ghi 'Hạn: Hôm nay (Chờ chốt giờ)' hoặc giờ ước tính kèm ngày.\n\n")
 
-        // 3. Flexible Task Selection (Linh hoạt chọn lọc đầu việc, không cực đoan)
-        contentBuilder.append("=== HƯỚNG DẪN CHỌN LỌC ĐẦU VIỆC ===\n")
-        contentBuilder.append("• Hãy dùng sự nhạy bén và ngữ cảnh để chọn lọc các việc thực tế cần làm (bao gồm cả công việc, việc cá nhân hoặc việc gia đình cần thiết như mua đồ, chuẩn bị đồ, hỗ trợ người thân...).\n")
-        contentBuilder.append("• Nếu là việc cần làm nhưng chưa có giờ chính xác, vẫn đưa vào Bảng nhiệm vụ để người dùng không bỏ lỡ.\n")
-        contentBuilder.append("• Lời nhắn / Lưu ý (Phần 1): Nhắc nhở ân cần tình hình chung, hoặc lưu ý những điểm cần hỏi lại / xác nhận thêm.\n\n")
-
-        // 4. Active Alarms Sync (Chống tạo lặp)
+        // 3. Active Alarms Sync (Chống tạo lặp)
         if (activeAlarms.isNotEmpty()) {
             contentBuilder.append("=== DANH SÁCH BÁO THỨC ĐANG BẬT (TRÁNH TẠO TRÙNG) ===\n")
             for (alarm in activeAlarms.take(15)) {
