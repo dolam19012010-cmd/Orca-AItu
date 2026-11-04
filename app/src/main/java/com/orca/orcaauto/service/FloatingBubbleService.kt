@@ -1801,6 +1801,8 @@ class FloatingBubbleService : Service() {
         // 3. Short Tap (< 550ms): Quick alarm toggle or status toast.
         var startX = 0f
         var startY = 0f
+        var lastRawX = 0f
+        var lastRawY = 0f
         var isSwiping = false
         var isPillActive = false
         var hasCancelledHold = false
@@ -1901,9 +1903,9 @@ class FloatingBubbleService : Service() {
                     pillIcon = icon
                     pillTv = tv
 
-                    updatePillState(startX, startY)
                     root.addView(pill)
                     pill.bringToFront()
+                    updatePillState(lastRawX, lastRawY)
 
                     pill.scaleX = 0.8f
                     pill.scaleY = 0.8f
@@ -1918,6 +1920,8 @@ class FloatingBubbleService : Service() {
                 MotionEvent.ACTION_DOWN -> {
                     startX = event.rawX
                     startY = event.rawY
+                    lastRawX = event.rawX
+                    lastRawY = event.rawY
                     isSwiping = false
                     isPillActive = false
                     hasCancelledHold = false
@@ -1926,6 +1930,8 @@ class FloatingBubbleService : Service() {
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
+                    lastRawX = event.rawX
+                    lastRawY = event.rawY
                     val dx = event.rawX - startX
                     val dy = event.rawY - startY
 

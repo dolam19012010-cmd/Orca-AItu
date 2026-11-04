@@ -8,6 +8,8 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.widget.Toast
 import java.text.Normalizer
@@ -125,7 +127,7 @@ object ChatIntentManager {
             val success = launchPendingIntent(context, matched.pendingIntent)
             if (success) {
                 Log.i(TAG, "Tầng 1: Đã kích hoạt PendingIntent vào chat của $senderName ($targetPackage)")
-                Toast.makeText(context, "🚀 Đang mở chat với $senderName...", Toast.LENGTH_SHORT).show()
+                showToast(context, "🚀 Đang mở chat với $senderName...")
                 return true
             }
             Log.w(TAG, "Tầng 1 thất bại (CanceledException), chuyển sang Tầng 2...")
@@ -135,7 +137,7 @@ object ChatIntentManager {
         val deepLinkSuccess = launchDeepLink(context, targetPackage, matched?.extractedPhoneOrUsername)
         if (deepLinkSuccess) {
             Log.i(TAG, "Tầng 2: Mở Deep Link thành công cho $targetPackage")
-            Toast.makeText(context, "🚀 Đang mở cuộc trò chuyện với $senderName...", Toast.LENGTH_SHORT).show()
+            showToast(context, "🚀 Đang mở cuộc trò chuyện với $senderName...")
             return true
         }
 
@@ -218,9 +220,9 @@ object ChatIntentManager {
             }
             if (launchIntent != null) {
                 context.startActivity(launchIntent)
-                Toast.makeText(context, "Đã mở app. Hãy chọn chat với: $senderName", Toast.LENGTH_LONG).show()
+                showToast(context, "Đã mở app. Hãy chọn chat với: $senderName", Toast.LENGTH_LONG)
             } else {
-                Toast.makeText(context, "Không tìm thấy ứng dụng trên thiết bị", Toast.LENGTH_SHORT).show()
+                showToast(context, "Không tìm thấy ứng dụng trên thiết bị", Toast.LENGTH_SHORT)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Lỗi mở app fallback: ${e.message}")
@@ -245,12 +247,32 @@ object ChatIntentManager {
 
     fun copyToClipboard(context: Context, text: String) {
         try {
-            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-            val clip = ClipData.newPlainText("OrcaAuto Smart Reply", text)
-            clipboard?.setPrimaryClip(clip)
-            Toast.makeText(context, "📋 Đã sao chép câu trả lời: \"$text\"", Toast.LENGTH_SHORT).show()
+            Handler(Looper.getMainLooper()).post {
+                try {
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                    val clip = ClipData.newPlainText("OrcaAuto Smart Reply", text)
+                    clipboard?.setPrimaryClip(clip)
+                    Toast.makeText(context, "📋 Đã sao chép câu trả lời: \"$text\"", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Không thể copy vào clipboard: ${e.message}")
+                }
+            }
         } catch (e: Exception) {
-            Log.w(TAG, "Không thể copy vào clipboard: ${e.message}")
+            Log.w(TAG, "Lỗi post copyToClipboard: ${e.message}")
+        }
+    }
+
+    private fun showToast(context: Context, text: String, duration: Int = Toast.LENGTH_SHORT) {
+        try {
+            Handler(Looper.getMainLooper()).post {
+                try {
+                    Toast.makeText(context, text, duration).show()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Không thể hiển thị Toast: ${e.message}")
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Lỗi post showToast: ${e.message}")
         }
     }
 
