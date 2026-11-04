@@ -18,12 +18,9 @@ class BootReceiver : BroadcastReceiver() {
 
         if (action == Intent.ACTION_BOOT_COMPLETED || action == "android.intent.action.QUICKBOOT_POWERON") {
             try {
-                // Restart KeepAlive Foreground Service
-                KeepAliveForegroundService.start(context)
-
-                // Reschedule WorkManager tasks for 12:00 and 18:00
+                // Reschedule WorkManager tasks for scheduled hours
                 WorkScheduler.scheduleDailySummaries(context)
-                Log.i(TAG, "Đã khởi động lại Service và lập lịch WorkManager thành công sau khi khởi động máy.")
+                Log.i(TAG, "Đã lập lịch WorkManager thành công sau khi khởi động máy.")
 
                 // Reschedule only ACTIVE alarms whose target time is in the future
                 kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {

@@ -113,8 +113,9 @@ class SummaryWorker(
 
                 // 7. Pop up Floating Chat Bubble (Bong bóng nổi) if permission is granted
                 try {
+                    preferences.setHasUnreadSummary(true)
                     if (isOverlayActive) {
-                        com.orca.orcaauto.service.FloatingBubbleService.show(applicationContext, cleanSummary, modelInfo)
+                        com.orca.orcaauto.service.FloatingBubbleService.show(applicationContext, cleanSummary, modelInfo, wakeToState1 = true)
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "Không thể hiển thị Bong bóng nổi: ${e.message}")

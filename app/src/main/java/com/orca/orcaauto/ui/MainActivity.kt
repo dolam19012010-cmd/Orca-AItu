@@ -112,6 +112,12 @@ fun MainAppNavHost() {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 try {
+                    // Tự động xóa chấm đỏ thông báo khi người dùng mở ứng dụng xem
+                    preferences.setHasUnreadSummary(false)
+
+                    // Đảm bảo dừng triệt để Foreground Service thường trực để không hiển thị thông báo dai dẳng
+                    KeepAliveForegroundService.stop(context)
+
                     val notifGranted = OemSurvivalHelper.isNotificationAccessGranted(context)
                     val batteryIgnored = OemSurvivalHelper.isBatteryOptimizationIgnored(context)
                     val overlayGranted = FloatingBubbleService.isOverlayPermissionGranted(context)
@@ -133,23 +139,20 @@ fun MainAppNavHost() {
     // Request POST_NOTIFICATIONS permission safely in Compose after first frame
     val notificationPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        if (isGranted) {
-            KeepAliveForegroundService.start(context)
-        }
+    ) { _ ->
+        // Không tự động bật KeepAliveForegroundService để giữ thanh thông báo sạch sẽ
     }
 
     androidx.compose.runtime.LaunchedEffect(Unit) {
+        // Dừng Foreground Service thường trực ngay khi khởi động app
+        KeepAliveForegroundService.stop(context)
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED
             ) {
                 notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-            } else {
-                KeepAliveForegroundService.start(context)
             }
-        } else {
-            KeepAliveForegroundService.start(context)
         }
     }
 

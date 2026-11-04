@@ -118,8 +118,6 @@ class NotificationMonitorService : NotificationListenerService() {
     override fun onListenerConnected() {
         super.onListenerConnected()
         Log.i(TAG, "NotificationListenerService connected.")
-        // Ensure KeepAliveForegroundService is running
-        KeepAliveForegroundService.start(applicationContext)
     }
 
     override fun onListenerDisconnected() {

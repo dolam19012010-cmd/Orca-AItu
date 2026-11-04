@@ -77,6 +77,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Calendar
 import java.util.Locale
@@ -98,6 +99,8 @@ class FloatingBubbleService : Service() {
     private var cachedWallpaperBmp: Bitmap? = null
     private var lastWallpaperPath: String? = null
     private var lastWallpaperModified: Long = 0L
+    private var unreadDotView: View? = null
+    private var lastKnownSummaryId: Long? = null
 
     // 3-State Lifecycle for Floating Bubble (Chu trình 3 trạng thái duy nhất chuẩn mực)
     enum class BubbleState {
@@ -207,11 +210,34 @@ class FloatingBubbleService : Service() {
                     .getLatestSummaryFlow()
                     .collect { latest ->
                         if (latest != null && latest.summaryContent.isNotBlank()) {
+                            val isNewSummary = lastKnownSummaryId != null && lastKnownSummaryId != latest.id
+                            lastKnownSummaryId = latest.id
                             latestSummaryText = latest.summaryContent
                             if (latest.modelInfo.isNotBlank()) {
                                 latestModelInfo = latest.modelInfo
                             }
+                            if (isNewSummary) {
+                                UserPreferences.getInstance(this@FloatingBubbleService).setHasUnreadSummary(true)
+                                withContext(Dispatchers.Main) {
+                                    if (bubbleRootView != null && !isExpanded) {
+                                        transitionToBubbleState(BubbleState.STATE_1_ACTIVE, animate = true, activeDurationMs = 4000L)
+                                    }
+                                }
+                            }
                             if (isExpanded) updateBubbleContent()
+                        }
+                    }
+            } catch (_: Exception) {}
+        }
+
+        // 3. Reactive Flow for Unread Red Dot Indicator (Clean Red Dot, no numbers)
+        serviceScope.launch {
+            try {
+                UserPreferences.getInstance(this@FloatingBubbleService)
+                    .hasUnreadSummaryFlow
+                    .collect { hasUnread ->
+                        withContext(Dispatchers.Main) {
+                            unreadDotView?.visibility = if (hasUnread) View.VISIBLE else View.GONE
                         }
                     }
             } catch (_: Exception) {}
@@ -226,6 +252,12 @@ class FloatingBubbleService : Service() {
         val model = intent?.getStringExtra(EXTRA_MODEL_INFO).orEmpty()
         if (model.isNotBlank()) {
             latestModelInfo = model
+        }
+
+        val shouldWake = intent?.getBooleanExtra(EXTRA_WAKE_TO_STATE_1, false) == true ||
+                intent?.action == ACTION_WAKE_TO_STATE_1
+        if (shouldWake) {
+            UserPreferences.getInstance(this).setHasUnreadSummary(true)
         }
 
         // Always ensure we have latest summary if memory is blank
@@ -245,6 +277,9 @@ class FloatingBubbleService : Service() {
                 createFloatingBubble()
             } else {
                 updateBubbleContent()
+                if (shouldWake && !isExpanded) {
+                    transitionToBubbleState(BubbleState.STATE_1_ACTIVE, animate = true, activeDurationMs = 4000L)
+                }
             }
         } else {
             Log.w(TAG, "Chưa cấp quyền SYSTEM_ALERT_WINDOW!")
@@ -552,26 +587,28 @@ class FloatingBubbleService : Service() {
         }
         bubble.addView(icon)
 
-        // Badge (Shows number of urgent tasks if > 0)
-        if (urgentCount > 0) {
-            val badgeSize = dpToPx(16)
-            val badge = TextView(this).apply {
-                text = if (urgentCount > 9) "9+" else "$urgentCount"
-                setTextColor(Color.WHITE)
-                textSize = 9f
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER
-                background = GradientDrawable().apply {
-                    shape = GradientDrawable.OVAL
-                    setColor(Color.parseColor("#EF4444"))
-                    setStroke(dpToPx(1), Color.WHITE)
-                }
-                layoutParams = FrameLayout.LayoutParams(badgeSize, badgeSize).apply {
-                    gravity = Gravity.TOP or Gravity.END
-                }
+        // Clean Red Dot Indicator (Chấm đỏ thông báo thuần, không số)
+        val dotSize = dpToPx(10)
+        val redDot = View(this).apply {
+            tag = TAG_UNREAD_RED_DOT
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.parseColor("#EF4444"))
+                setStroke(dpToPx(1.5f.toInt().coerceAtLeast(1)), Color.WHITE)
             }
-            bubble.addView(badge)
+            layoutParams = FrameLayout.LayoutParams(dotSize, dotSize).apply {
+                gravity = Gravity.TOP or Gravity.END
+                topMargin = dpToPx(2)
+                marginEnd = dpToPx(2)
+            }
+            visibility = if (UserPreferences.getInstance(this@FloatingBubbleService).hasUnreadSummary()) {
+                View.VISIBLE
+            } else {
+                View.GONE
+            }
         }
+        unreadDotView = redDot
+        bubble.addView(redDot)
 
         root.addView(bubble)
 
@@ -747,7 +784,11 @@ class FloatingBubbleService : Service() {
         }
     }
 
-    private fun transitionToBubbleState(newState: BubbleState, animate: Boolean = true) {
+    private fun transitionToBubbleState(
+        newState: BubbleState,
+        animate: Boolean = true,
+        activeDurationMs: Long = 2000L
+    ) {
         if (isExpanded || bubbleRootView == null || windowParams == null) return
         val p = windowParams ?: return
         val dm = resources.displayMetrics
@@ -808,7 +849,7 @@ class FloatingBubbleService : Service() {
             when (newState) {
                 BubbleState.STATE_1_ACTIVE -> {
                     updateShakeDetectorState()
-                    bubbleLifecycleHandler.postDelayed(toState2Runnable, 1500L)
+                    bubbleLifecycleHandler.postDelayed(toState2Runnable, activeDurationMs)
                 }
                 BubbleState.STATE_2_DIMMED -> {
                     updateShakeDetectorState()
@@ -927,7 +968,7 @@ class FloatingBubbleService : Service() {
                         when (newState) {
                             BubbleState.STATE_1_ACTIVE -> {
                                 updateShakeDetectorState()
-                                bubbleLifecycleHandler.postDelayed(toState2Runnable, 1500L)
+                                bubbleLifecycleHandler.postDelayed(toState2Runnable, activeDurationMs)
                             }
                             BubbleState.STATE_2_DIMMED -> {
                                 updateShakeDetectorState()
@@ -1081,6 +1122,7 @@ class FloatingBubbleService : Service() {
 
     @SuppressLint("ClickableViewAccessibility")
     private fun expandFloatingCard(root: FrameLayout, animate: Boolean = true) {
+        UserPreferences.getInstance(this).setHasUnreadSummary(false)
         bubbleLifecycleHandler.removeCallbacks(toState2Runnable)
         bubbleLifecycleHandler.removeCallbacks(toState3Runnable)
         hideDismissTarget(immediate = true)
@@ -2545,6 +2587,8 @@ class FloatingBubbleService : Service() {
         }
         dismissTargetView = null
         dismissCircleView = null
+        activeBubbleView = null
+        unreadDotView = null
     }
 
     private fun dpToPx(dp: Int): Int {
@@ -2557,6 +2601,9 @@ class FloatingBubbleService : Service() {
 
     companion object {
         private const val TAG = "FloatingBubble"
+        const val TAG_UNREAD_RED_DOT = "tag_unread_red_dot"
+        const val ACTION_WAKE_TO_STATE_1 = "com.orca.orcaauto.action.WAKE_TO_STATE_1"
+        const val EXTRA_WAKE_TO_STATE_1 = "extra_wake_to_state_1"
         const val EXTRA_SUMMARY_CONTENT = "extra_summary_content"
         const val EXTRA_MODEL_INFO = "extra_model_info"
 
@@ -2571,11 +2618,24 @@ class FloatingBubbleService : Service() {
             )
         }
 
-        fun show(context: Context, summaryContent: String = "", modelInfo: String = "") {
+        fun wakeToState1(context: Context) {
+            if (!isOverlayPermissionGranted(context)) return
+            val intent = Intent(context, FloatingBubbleService::class.java).apply {
+                action = ACTION_WAKE_TO_STATE_1
+                putExtra(EXTRA_WAKE_TO_STATE_1, true)
+            }
+            context.startService(intent)
+        }
+
+        fun show(context: Context, summaryContent: String = "", modelInfo: String = "", wakeToState1: Boolean = true) {
             if (!isOverlayPermissionGranted(context)) return
             val intent = Intent(context, FloatingBubbleService::class.java).apply {
                 putExtra(EXTRA_SUMMARY_CONTENT, summaryContent)
                 putExtra(EXTRA_MODEL_INFO, modelInfo)
+                if (wakeToState1) {
+                    action = ACTION_WAKE_TO_STATE_1
+                    putExtra(EXTRA_WAKE_TO_STATE_1, true)
+                }
             }
             context.startService(intent)
         }

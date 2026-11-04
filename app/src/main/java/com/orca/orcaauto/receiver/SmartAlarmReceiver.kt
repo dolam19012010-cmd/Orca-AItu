@@ -19,8 +19,10 @@ import androidx.core.app.NotificationCompat
 import com.orca.orcaauto.R
 import com.orca.orcaauto.data.local.AppDatabase
 import com.orca.orcaauto.data.local.SmartAlarmStatus
+import com.orca.orcaauto.data.preferences.UserPreferences
 import com.orca.orcaauto.domain.alarm.AlarmCascadeMode
 import com.orca.orcaauto.domain.alarm.SystemAlarmHelper
+import com.orca.orcaauto.service.FloatingBubbleService
 import com.orca.orcaauto.ui.MainActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -186,6 +188,14 @@ class SmartAlarmReceiver : BroadcastReceiver() {
 
                     // 3. Show Heads-Up Alarm Notification
                     showAlarmNotification(context, matchingActive.alarmId, taskTitle, label, isPrimary)
+
+                    // 4. Wake Floating Bubble to State 1 with clean Red Dot!
+                    try {
+                        UserPreferences.getInstance(context).setHasUnreadSummary(true)
+                        FloatingBubbleService.wakeToState1(context)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Không thể đánh thức bong bóng chat: ${e.message}")
+                    }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Lỗi xử lý báo thức: ${e.message}", e)

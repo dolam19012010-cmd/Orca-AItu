@@ -61,7 +61,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.orca.orcaauto.R
 import com.orca.orcaauto.data.local.AppDatabase
 import com.orca.orcaauto.data.preferences.UserPreferences
-import com.orca.orcaauto.service.KeepAliveForegroundService
+import com.orca.orcaauto.service.OemSurvivalHelper
 import com.orca.orcaauto.ui.theme.AccentCyan
 import com.orca.orcaauto.ui.theme.AccentEmerald
 import com.orca.orcaauto.ui.theme.AccentRose
@@ -88,7 +88,19 @@ fun DashboardScreen() {
 
     var isTestingAi by remember { mutableStateOf(false) }
 
-    val isForegroundRunning by KeepAliveForegroundService.isRunningFlow.collectAsState()
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var isNotificationAccessGranted by remember { mutableStateOf(OemSurvivalHelper.isNotificationAccessGranted(context)) }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                isNotificationAccessGranted = OemSurvivalHelper.isNotificationAccessGranted(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     val scheduledHours by preferences.scheduledHoursFlow.collectAsState()
     val wallpaperPath by preferences.wallpaperPathFlow.collectAsState()
 
@@ -145,12 +157,12 @@ fun DashboardScreen() {
 
         // Unified System Status Cockpit
         SystemStatusCockpitCard(
-            isForegroundRunning = isForegroundRunning,
-            onToggleForeground = {
-                if (isForegroundRunning) {
-                    KeepAliveForegroundService.stop(context)
-                } else {
-                    KeepAliveForegroundService.start(context)
+            isNotificationGranted = isNotificationAccessGranted,
+            onOpenNotificationSettings = {
+                try {
+                    context.startActivity(OemSurvivalHelper.getNotificationAccessIntent(context))
+                } catch (e: Exception) {
+                    Toast.makeText(context, "Không thể mở cài đặt thông báo: ${e.message}", Toast.LENGTH_SHORT).show()
                 }
             },
             unprocessedCount = unprocessedCount,
@@ -271,8 +283,8 @@ private fun ExecutiveQuickActionsCard(
 
 @Composable
 private fun SystemStatusCockpitCard(
-    isForegroundRunning: Boolean,
-    onToggleForeground: () -> Unit,
+    isNotificationGranted: Boolean,
+    onOpenNotificationSettings: () -> Unit,
     unprocessedCount: Int,
     scheduledHours: List<String>
 ) {
@@ -294,7 +306,7 @@ private fun SystemStatusCockpitCard(
                 color = TextPrimaryDark
             )
 
-            // Row 1: Foreground Service
+            // Row 1: Notification Listener Engine
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -304,30 +316,30 @@ private fun SystemStatusCockpitCard(
                     Box(
                         modifier = Modifier
                             .size(10.dp)
-                            .background(if (isForegroundRunning) AccentEmerald else AccentRose, CircleShape)
+                            .background(if (isNotificationGranted) AccentEmerald else AccentRose, CircleShape)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Column {
                         Text(
-                            text = "Tiến trình chạy ngầm",
+                            text = "Tiến trình theo dõi thông báo",
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.Medium,
                             color = TextPrimaryDark
                         )
                         Text(
-                            text = if (isForegroundRunning) "Đang hoạt động (Thường trực)" else "Đã tạm dừng",
+                            text = if (isNotificationGranted) "Đang hoạt động tự động (Không tốn pin)" else "Chưa cấp quyền truy cập",
                             style = MaterialTheme.typography.labelSmall,
-                            color = if (isForegroundRunning) AccentEmerald else AccentRose
+                            color = if (isNotificationGranted) AccentEmerald else AccentRose
                         )
                     }
                 }
 
                 OutlinedButton(
-                    onClick = onToggleForeground,
+                    onClick = onOpenNotificationSettings,
                     shape = RoundedCornerShape(8.dp),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp)
                 ) {
-                    Text(if (isForegroundRunning) "Dừng" else "Khởi động", fontSize = 11.sp, color = AccentCyan)
+                    Text(if (isNotificationGranted) "Kiểm tra" else "Cấp quyền", fontSize = 11.sp, color = AccentCyan)
                 }
             }
 

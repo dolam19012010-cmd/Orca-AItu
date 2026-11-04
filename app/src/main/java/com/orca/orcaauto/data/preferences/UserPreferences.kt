@@ -57,6 +57,9 @@ class UserPreferences private constructor(context: Context) {
     private val _bubbleDisplayModeFlow = MutableStateFlow(getBubbleDisplayMode())
     val bubbleDisplayModeFlow: StateFlow<BubbleDisplayMode> = _bubbleDisplayModeFlow.asStateFlow()
 
+    private val _hasUnreadSummaryFlow = MutableStateFlow(hasUnreadSummary())
+    val hasUnreadSummaryFlow: StateFlow<Boolean> = _hasUnreadSummaryFlow.asStateFlow()
+
     private fun loadKeyPool(): List<ApiKeyConfig> {
         val json = try {
             prefs.getString(KEY_API_KEY_POOL, null)
@@ -425,6 +428,15 @@ class UserPreferences private constructor(context: Context) {
         prefs.edit().putBoolean(KEY_SHAKE_TO_WAKE, enabled).apply()
     }
 
+    fun hasUnreadSummary(): Boolean {
+        return prefs.getBoolean(KEY_HAS_UNREAD_SUMMARY, false)
+    }
+
+    fun setHasUnreadSummary(hasUnread: Boolean) {
+        prefs.edit().putBoolean(KEY_HAS_UNREAD_SUMMARY, hasUnread).apply()
+        _hasUnreadSummaryFlow.value = hasUnread
+    }
+
     fun getTaskNotes(): Map<String, String> {
         val json = try {
             prefs.getString(KEY_TASK_NOTES, null)
@@ -497,6 +509,7 @@ class UserPreferences private constructor(context: Context) {
         private const val KEY_SUMMARY_STATUS_BAR_NOTIF = "key_summary_status_bar_notif"
         private const val KEY_BUBBLE_DISPLAY_MODE = "key_bubble_display_mode"
         private const val KEY_SHAKE_TO_WAKE = "key_shake_to_wake"
+        private const val KEY_HAS_UNREAD_SUMMARY = "key_has_unread_summary"
         private const val KEY_TASK_NOTES = "key_task_notes"
 
         const val PACKAGE_ZALO = "com.zing.zalo"
