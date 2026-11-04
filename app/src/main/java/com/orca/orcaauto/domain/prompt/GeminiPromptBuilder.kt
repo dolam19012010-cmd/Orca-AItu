@@ -135,9 +135,19 @@ object GeminiPromptBuilder {
             }
         }
 
-        // 12. BẮT BUỘC TUÂN THỦ 100% CẤU TRÚC ĐỊNH DẠNG ĐẦU RA (LÀM CĂNG Ở ĐỊNH DẠNG)
-        contentBuilder.append("\n=== QUY TẮC ĐỊNH DẠNG ĐẦU RA BẮT BUỘC (TUÂN THỦ TUYỆT ĐỐI) ===\n\n")
-        contentBuilder.append("BẮT BUỘC xuất ra đúng cấu trúc 2 PHẦN như sau, không tự ý đổi tiêu đề hay thêm bớt phần khác:\n\n")
+        // 12. HƯỚNG DẪN SUY LUẬN TỪNG BƯỚC QUA THẺ NHÁP <scratchpad>
+        contentBuilder.append("\n=== NGUYÊN TẮC SUY LUẬN TỪNG BƯỚC (BẮT BUỘC DÙNG THẺ NHÁP <scratchpad>) ===\n")
+        contentBuilder.append("Trước khi xuất bản nội dung báo cáo chính thức, bạn BẮT BUỘC phải thực hiện phân tích logic bên trong thẻ <scratchpad>...</scratchpad> theo đúng 5 bước:\n")
+        contentBuilder.append("<scratchpad>\n")
+        contentBuilder.append("1. Neo thời gian: Xác định NOW là thời điểm nào (dd/MM/yyyy HH:mm). Liệt kê các mốc thời gian tương đối trong tin nhắn (\"mai\", \"chiều nay\", \"15h\") và quy đổi sang mốc thời gian cụ thể.\n")
+        contentBuilder.append("2. Lọc ý định & cam kết: Loại bỏ tin nhắn quảng cáo, mã OTP, tán gẫu không hành động. Chỉ giữ lại các việc có người giao việc hoặc cam kết rõ ràng.\n")
+        contentBuilder.append("3. Phân giải mâu thuẫn: Tìm các tin nhắn dời lịch/hủy việc/đính chính; đối chiếu với danh sách việc đã làm/đã hủy để không tạo lặp.\n")
+        contentBuilder.append("4. Kiểm toán quá hạn: So sánh hạn của từng việc với NOW. Nếu việc chưa hoàn thành mà đã quá hạn, đánh dấu và giữ lại theo dõi thêm 1-2 phiên theo lệnh người dùng.\n")
+        contentBuilder.append("5. Đề xuất báo thức: Tính toán giờ kích hoạt chuông hợp lý (họp/hẹn báo trước 15-30p; việc trong ngày chưa có giờ cụ thể thì ước tính 09:30 hoặc 14:30).\n")
+        contentBuilder.append("</scratchpad>\n\n")
+
+        contentBuilder.append("=== QUY TẮC ĐỊNH DẠNG ĐẦU RA BẮT BUỘC (SAU KHI ĐÓNG THẺ </scratchpad>) ===\n\n")
+        contentBuilder.append("Sau khi đóng thẻ </scratchpad>, bạn BẮT BUỘC xuất ra đúng cấu trúc 2 PHẦN như sau (Tuyệt đối không mang nội dung nháp ra ngoài):\n\n")
 
         contentBuilder.append("=== PHẦN 1: ${persona.adviceSectionTitle.uppercase()} & ${persona.noteSectionTitle.uppercase()} ===\n")
         contentBuilder.append("1. [${persona.adviceSectionTitle}]: ${persona.adviceDescription}\n")

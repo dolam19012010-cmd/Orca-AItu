@@ -20,6 +20,7 @@ data class TaskItem(
 @Immutable
 data class ParsedSummary(
     val rawCleanText: String,
+    val reasoningNotes: String? = null,
     // Phần 1: Phản biện & Lời khuyên
     val conciseAdvice: String,
     val criticalQuestions: List<String>,
@@ -32,11 +33,50 @@ data class ParsedSummary(
         get() = tasksToDo.size + tasksDone.size + tasksPlanned.size
 }
 
+object ScratchpadExtractor {
+
+    private val SCRATCHPAD_REGEX = Regex(
+        pattern = """<scratchpad>([\s\S]*?)(?:</scratchpad>|$)""",
+        options = setOf(RegexOption.IGNORE_CASE)
+    )
+
+    private val NATIVE_THINK_REGEX = Regex(
+        pattern = """<(?:think|thought|reasoning)>([\s\S]*?)(?:</(?:think|thought|reasoning)>|$)""",
+        options = setOf(RegexOption.IGNORE_CASE)
+    )
+
+    fun extractReasoning(rawText: String): String? {
+        val scratchMatch = SCRATCHPAD_REGEX.find(rawText)
+        val scratchContent = scratchMatch?.groups?.get(1)?.value?.trim()
+
+        val thinkMatch = NATIVE_THINK_REGEX.find(rawText)
+        val thinkContent = thinkMatch?.groups?.get(1)?.value?.trim()
+
+        return when {
+            !scratchContent.isNullOrBlank() && !thinkContent.isNullOrBlank() -> "$scratchContent\n$thinkContent"
+            !scratchContent.isNullOrBlank() -> scratchContent
+            !thinkContent.isNullOrBlank() -> thinkContent
+            else -> null
+        }
+    }
+
+    fun stripReasoning(rawText: String): String {
+        return rawText
+            .replace(SCRATCHPAD_REGEX, "")
+            .replace(NATIVE_THINK_REGEX, "")
+            .replace(Regex("(?i)</?(answer|response|summary|output|scratchpad|think|thought|reasoning)>"), "")
+            .replace(Regex("(?m)^```[a-zA-Z]*\\s*$"), "")
+            .replace(Regex("(?m)^```\\s*$"), "")
+            .replace(Regex("(?i)^(dưới đây là|here is the|bản tóm tắt|đây là bản tóm tắt).*?:\\s*\\n+"), "")
+            .trim()
+    }
+}
+
 object SummaryParser {
 
     fun cleanMarkdown(text: String): String {
         return text
-            .replace(Regex("(?i)</?(answer|response|summary|output|think|thought)>"), "")
+            .replace(Regex("(?i)</?(answer|response|summary|output|think|thought|scratchpad|reasoning)>"), "")
             .replace(Regex("\\*\\*"), "")
             .replace(Regex("__"), "")
             .replace(Regex("`"), "")
@@ -72,15 +112,8 @@ object SummaryParser {
      * Section 2: Task Dispatch Board (To-Do, Done, Planned) with clear deadlines.
      */
     fun parse(rawText: String): ParsedSummary {
-        // 1. Strip reasoning blocks from DeepSeek R1 / Gemini Thinking and markdown fences
-        val cleaned = rawText
-            .replace(Regex("(?s)<think>.*?</think>"), "")
-            .replace(Regex("(?s)<thought>.*?</thought>"), "")
-            .replace(Regex("(?i)</?(answer|response|summary|output)>"), "")
-            .replace(Regex("(?m)^```[a-zA-Z]*\\s*$"), "")
-            .replace(Regex("(?m)^```\\s*$"), "")
-            .replace(Regex("(?i)^(dưới đây là|here is the|bản tóm tắt|đây là bản tóm tắt).*?:\\s*\\n+"), "")
-            .trim()
+        val reasoning = ScratchpadExtractor.extractReasoning(rawText)
+        val cleaned = ScratchpadExtractor.stripReasoning(rawText)
 
         var advice = ""
         val criticalQuestions = mutableListOf<String>()
@@ -209,6 +242,7 @@ object SummaryParser {
 
         return ParsedSummary(
             rawCleanText = cleaned,
+            reasoningNotes = reasoning,
             conciseAdvice = advice,
             criticalQuestions = criticalQuestions.distinct(),
             tasksToDo = distinctToDo,

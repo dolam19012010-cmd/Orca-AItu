@@ -109,4 +109,35 @@ class SummaryParserTest {
         assertEquals(1, parsed.tasksToDo.size)
         assertEquals("Nộp bài tập về nhà buổi 19", parsed.tasksToDo[0].title)
     }
+
+    @Test
+    fun testStripScratchpadAndExtractReasoning() {
+        val inputWithScratchpad = """
+            <scratchpad>
+            1. Neo thời gian: Hiện tại là 20:30 ngày 04/11/2026.
+            2. Lọc nhiễu: Tin nhắn từ mẹ bảo mua sữa lúc 21h là việc thật.
+            3. Đề xuất báo thức: 20:45.
+            </scratchpad>
+            === PHẦN 1: LỜI NHẮN NHẸ NHÀNG & LƯU Ý TINH TẾ ===
+            1. [Lời Nhắn Nhẹ Nhàng]: Nhớ ghé siêu thị mua sữa cho mẹ nhé.
+            2. [Lưu Ý Tinh Tế]: Siêu thị đóng cửa lúc 21:30.
+
+            === PHẦN 2: BẢNG ĐIỀU PHỐI NHIỆM VỤ ===
+            ### 🔴 NHIỆM VỤ PHẢI LÀM (TO-DO)
+            - Mua sữa cho mẹ | Nguồn: Mẹ | Hạn: 21:00
+        """.trimIndent()
+
+        val parsed = SummaryParser.parse(inputWithScratchpad)
+        assertFalse(parsed.rawCleanText.contains("<scratchpad>"))
+        assertFalse(parsed.rawCleanText.contains("</scratchpad>"))
+        assertFalse(parsed.rawCleanText.contains("Neo thời gian"))
+        assertTrue(parsed.conciseAdvice.contains("mua sữa cho mẹ"))
+        assertEquals(1, parsed.tasksToDo.size)
+        assertEquals("Mua sữa cho mẹ", parsed.tasksToDo[0].title)
+        assertEquals("21:00", parsed.tasksToDo[0].deadline)
+        assertEquals("Mẹ", parsed.tasksToDo[0].source)
+        // Verify reasoning was extracted into reasoningNotes
+        assertTrue(parsed.reasoningNotes?.contains("Neo thời gian") == true)
+        assertTrue(parsed.reasoningNotes?.contains("Hiện tại là 20:30") == true)
+    }
 }
