@@ -13,14 +13,6 @@ object NotificationFilter {
         Regex("(?i)\\b(otp|xác\\s*nhận|xác\\s*thực)\\b.*?\\b\\d{4,8}\\b")
     )
 
-    // Keywords indicating system / junk / promotional messages
-    private val SPAM_KEYWORDS = listOf(
-        "khuyến mãi", "ưu đãi đặc biệt", "nhận ngay voucher", "giảm giá tới",
-        "nạp thẻ cào", "vay tiêu dùng", "quảng cáo", "livestream đang diễn ra",
-        "tham gia minigame", "săn deal", "voucher sốc", "đang đồng bộ tin nhắn",
-        "đang tải", "checking for messages", "syncing"
-    )
-
     /**
      * Determine if a StatusBarNotification should be recorded.
      * Returns true if it is a genuine, actionable human text message.
@@ -57,12 +49,7 @@ object NotificationFilter {
             return false
         }
 
-        // 3. Filter out system/app progress messages (e.g. "Đang tải ảnh...", "Cuộc gọi nhỡ")
-        if (isSpamOrSystem(title, fullContent)) {
-            return false
-        }
-
-        // 4. Filter out OTP codes
+        // 3. Filter out OTP codes
         if (isOtpMessage(fullContent) || isOtpMessage(title)) {
             return false
         }
@@ -77,10 +64,5 @@ object NotificationFilter {
             }
         }
         return false
-    }
-
-    private fun isSpamOrSystem(title: String, content: String): Boolean {
-        val combined = "$title $content".lowercase()
-        return SPAM_KEYWORDS.any { combined.contains(it) }
     }
 }

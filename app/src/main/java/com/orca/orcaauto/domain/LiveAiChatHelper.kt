@@ -34,14 +34,10 @@ object LiveAiChatHelper {
             )
         }
 
-        // 1. Purge old notifications (>24h) and fetch messages within 24h (cap 80)
+        // 1. Purge old notifications (>24h) and fetch all messages within 24h (cap at 100)
         val cutoff24h = System.currentTimeMillis() - (24 * 60 * 60 * 1000L)
         db.notificationDao().deleteOldNotifications(cutoff24h)
-        var notifications = db.notificationDao().getUnprocessedWithin24Hours(limit = 100)
-        val hadUnprocessed = notifications.isNotEmpty()
-        if (notifications.isEmpty()) {
-            notifications = db.notificationDao().getNotificationsWithin24Hours(cutoff24h).take(50)
-        }
+        val notifications = db.notificationDao().getNotificationsWithin24Hours(limit = 100)
 
         // 2. Build tailored prompt with user's supplemental instruction and previous summary reference
         val fixedContext = prefs.getCustomFixedContext()
@@ -85,8 +81,8 @@ object LiveAiChatHelper {
             )
             db.summaryDao().insert(summaryRecord)
 
-            // 5. Mark unprocessed messages as processed
-            if (hadUnprocessed) {
+            // 5. Mark messages as processed
+            if (notifications.isNotEmpty()) {
                 db.notificationDao().markAsProcessed(notifications.map { it.id })
             }
 

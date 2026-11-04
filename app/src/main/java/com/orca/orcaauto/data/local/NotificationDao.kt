@@ -18,12 +18,22 @@ interface NotificationDao {
     @Query("SELECT * FROM notifications WHERE isProcessed = 0 AND timestamp >= :sinceTimestamp ORDER BY timestamp ASC")
     suspend fun getUnprocessedNotificationsSince(sinceTimestamp: Long): List<NotificationEntity>
 
-    @Query("SELECT * FROM notifications WHERE isProcessed = 0 AND timestamp >= :sinceTimestamp ORDER BY timestamp DESC LIMIT :limit")
-    suspend fun getUnprocessedNotificationsSinceWithLimit(sinceTimestamp: Long, limit: Int): List<NotificationEntity>
+    @Query("SELECT * FROM notifications WHERE timestamp >= :sinceTimestamp ORDER BY timestamp DESC LIMIT :limit")
+    suspend fun getNotificationsSinceWithLimit(sinceTimestamp: Long, limit: Int): List<NotificationEntity>
 
-    suspend fun getUnprocessedWithin24Hours(limit: Int = 100): List<NotificationEntity> {
+    /**
+     * Lấy toàn bộ tin nhắn trong vòng 24 giờ qua (không loại trừ tin đã đọc/xử lý, chỉ loại trừ tin quá 24h)
+     */
+    suspend fun getNotificationsWithin24Hours(limit: Int = 100): List<NotificationEntity> {
         val cutoff24h = System.currentTimeMillis() - 24 * 3600 * 1000L
-        return getUnprocessedNotificationsSinceWithLimit(cutoff24h, limit).reversed()
+        return getNotificationsSinceWithLimit(cutoff24h, limit).reversed()
+    }
+
+    /**
+     * Tương thích với các lời gọi cũ: Không loại trừ tin đã đọc, chỉ lọc bỏ tin quá 24h theo lệnh người dùng
+     */
+    suspend fun getUnprocessedWithin24Hours(limit: Int = 100): List<NotificationEntity> {
+        return getNotificationsWithin24Hours(limit)
     }
 
     @Query("SELECT COUNT(*) FROM notifications")
@@ -60,7 +70,7 @@ interface NotificationDao {
     }
 
     @Query("SELECT * FROM notifications WHERE timestamp >= :sinceTimestamp ORDER BY timestamp DESC")
-    suspend fun getNotificationsWithin24Hours(sinceTimestamp: Long): List<NotificationEntity>
+    suspend fun getNotificationsSince(sinceTimestamp: Long): List<NotificationEntity>
 
     @Query("SELECT COUNT(*) FROM notifications WHERE isProcessed = 0")
     fun getUnprocessedCountFlow(): Flow<Int>

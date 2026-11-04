@@ -31,17 +31,17 @@ class SummaryWorker(
         }
 
         return try {
-            // 1. Purge notifications older than 24h and fetch unprocessed within 24h (cap at 60)
+            // 1. Purge notifications older than 24h and fetch messages within 24h (cap at 100)
             val cutoff24h = System.currentTimeMillis() - (24 * 60 * 60 * 1000L)
             database.notificationDao().deleteOldNotifications(cutoff24h)
-            val unprocessedNotifications = database.notificationDao().getUnprocessedWithin24Hours(limit = 100)
+            val notificationsIn24h = database.notificationDao().getNotificationsWithin24Hours(limit = 100)
 
-            if (unprocessedNotifications.isEmpty()) {
-                Log.i(TAG, "Không có tin nhắn mới nào cần xử lý trong 24 giờ qua. Hoàn tất chu kỳ.")
+            if (notificationsIn24h.isEmpty()) {
+                Log.i(TAG, "Không có tin nhắn nào trong 24 giờ qua. Hoàn tất chu kỳ.")
                 return Result.success()
             }
 
-            Log.i(TAG, "Tìm thấy ${unprocessedNotifications.size} tin nhắn chưa xử lý trong 24h qua. Chuẩn bị prompt...")
+            Log.i(TAG, "Tìm thấy ${notificationsIn24h.size} tin nhắn trong 24h qua. Chuẩn bị prompt...")
 
             // 2. Build structured prompt with real-time timestamp, fixed user context, and previous summary reference
             val fixedContext = preferences.getCustomFixedContext()
@@ -53,7 +53,7 @@ class SummaryWorker(
             val completedTasks = if (preferences.isLongTermTasksContextEnabled()) database.smartAlarmDao().getCompletedAlarms() else emptyList()
             val taskNotes = preferences.getTaskNotes()
             val prompt = GeminiPromptBuilder.buildSummaryPrompt(
-                notifications = unprocessedNotifications,
+                notifications = notificationsIn24h,
                 customFixedContext = fixedContext,
                 persona = persona,
                 previousSummary = previousSummary,
@@ -78,7 +78,7 @@ class SummaryWorker(
                 val summaryRecord = SummaryHistoryEntity(
                     timestamp = System.currentTimeMillis(),
                     targetTimeSlot = timeSlotWithProvider,
-                    messageCount = unprocessedNotifications.size,
+                    messageCount = notificationsIn24h.size,
                     summaryContent = cleanSummary,
                     status = "SUCCESS",
                     modelInfo = modelInfo
@@ -86,7 +86,7 @@ class SummaryWorker(
                 database.summaryDao().insert(summaryRecord)
 
                 // 5. Mark messages as processed in Room DB
-                val processedIds = unprocessedNotifications.map { it.id }
+                val processedIds = notificationsIn24h.map { it.id }
                 database.notificationDao().markAsProcessed(processedIds)
 
                 // 6. Only trigger Status Bar Notification if requested or if Floating Bubble is not available
@@ -101,7 +101,7 @@ class SummaryWorker(
                         com.orca.orcaauto.service.SummaryNotificationHelper.showSummaryReportNotification(
                             context = applicationContext,
                             timeSlot = timeShort,
-                            messageCount = unprocessedNotifications.size,
+                            messageCount = notificationsIn24h.size,
                             parsed = parsed,
                             rawSummary = cleanSummary,
                             modelInfo = modelInfo
