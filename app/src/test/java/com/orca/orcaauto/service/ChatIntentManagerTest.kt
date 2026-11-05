@@ -75,4 +75,26 @@ class ChatIntentManagerTest {
         val reply1 = ChatIntentManager.generateSmartReply("Báo cáo tuần")
         assertNotNull(reply1)
     }
+
+    @Test
+    fun testResolveTargetPackageAndDisplayName() {
+        // Source contains Zalo
+        val pkgZalo = ChatIntentManager.resolveTargetPackage("Zalo - Sếp Tuấn", "Gửi báo cáo")
+        assertEquals("com.zing.zalo", pkgZalo)
+        assertEquals("Zalo", ChatIntentManager.getAppDisplayName(pkgZalo))
+
+        // Source contains Telegram
+        val pkgTele = ChatIntentManager.resolveTargetPackage("Telegram", "Họp online")
+        assertEquals("org.telegram.messenger", pkgTele)
+        assertEquals("Telegram", ChatIntentManager.getAppDisplayName(pkgTele))
+
+        // Source contains Messenger
+        val pkgMess = ChatIntentManager.resolveTargetPackage("Messenger: Hoàng", "Đi cà phê")
+        assertEquals("com.facebook.orca", pkgMess)
+        assertEquals("Messenger", ChatIntentManager.getAppDisplayName(pkgMess))
+
+        // Title mentions Zalo
+        val pkgFromTitle = ChatIntentManager.resolveTargetPackage("", "Nhắn tin Zalo cho khách hàng")
+        assertEquals("com.zing.zalo", pkgFromTitle)
+    }
 }

@@ -104,47 +104,89 @@ object ChatIntentManager {
     }
 
     /**
-     * Nhảy vào chat với chiến lược phân tầng 3 lớp và tự động sao chép câu trả lời thông minh
+     * Xác định package của app tương ứng với nhiệm vụ (Zalo, Telegram, Messenger...)
      */
+    fun resolveTargetPackage(sourceText: String, taskTitle: String): String {
+        val cleanSource = normalizeText(sourceText)
+        val cleanTitle = normalizeText(taskTitle)
+
+        // 1. Phân tích trực tiếp từ sourceText
+        when {
+            cleanSource.contains("zalo") -> return "com.zing.zalo"
+            cleanSource.contains("telegram") || cleanSource.contains("tele") -> return "org.telegram.messenger"
+            cleanSource.contains("messenger") || cleanSource.contains("facebook") || cleanSource.contains("mess") -> return "com.facebook.orca"
+        }
+
+        // 2. Tra cứu trong bộ nhớ đệm người gửi gần đây (sender -> package)
+        for ((_, cached) in intentCache) {
+            val cachedSender = normalizeText(cached.senderTitle)
+            if (cachedSender.isNotBlank()) {
+                if (cleanSource.contains(cachedSender) || cachedSender.contains(cleanSource)) {
+                    return cached.packageName
+                }
+                if (cleanTitle.contains(cachedSender)) {
+                    return cached.packageName
+                }
+            }
+        }
+
+        // 3. Phân tích từ taskTitle nếu có nhắc tên app
+        when {
+            cleanTitle.contains("zalo") -> return "com.zing.zalo"
+            cleanTitle.contains("telegram") || cleanTitle.contains("tele") -> return "org.telegram.messenger"
+            cleanTitle.contains("messenger") || cleanTitle.contains("mess") -> return "com.facebook.orca"
+        }
+
+        // 4. Fallback: package của tin nhắn gần nhất trong cache
+        val latest = intentCache.values.maxByOrNull { it.timestamp }
+        if (latest != null) {
+            return latest.packageName
+        }
+
+        // Mặc định Zalo
+        return "com.zing.zalo"
+    }
+
+    fun getAppDisplayName(packageName: String): String {
+        return when (packageName) {
+            "com.zing.zalo" -> "Zalo"
+            "org.telegram.messenger" -> "Telegram"
+            "com.facebook.orca" -> "Messenger"
+            else -> "Zalo"
+        }
+    }
+
+    /**
+     * Mở trực tiếp ứng dụng tương ứng với nhiệm vụ (Zalo, Telegram, Messenger)
+     */
+    fun openAppForTask(context: Context, sourceText: String, taskTitle: String): Boolean {
+        val targetPackage = resolveTargetPackage(sourceText, taskTitle)
+        val appName = getAppDisplayName(targetPackage)
+        return try {
+            val launchIntent = context.packageManager.getLaunchIntentForPackage(targetPackage)?.apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
+            }
+            if (launchIntent != null) {
+                context.startActivity(launchIntent)
+                showToast(context, "🚀 Đang mở $appName...")
+                true
+            } else {
+                showToast(context, "Không tìm thấy $appName trên thiết bị", Toast.LENGTH_SHORT)
+                false
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Lỗi mở app $targetPackage: ${e.message}")
+            false
+        }
+    }
+
     fun jumpToChat(
         context: Context,
         sourceText: String,
         taskTitle: String,
         autoCopySmartReply: Boolean = false
     ): Boolean {
-        val matched = findBestMatchingIntent(sourceText, taskTitle)
-        val targetPackage = matched?.packageName ?: guessPackageFromSource(sourceText) ?: "com.zing.zalo"
-        val senderName = matched?.senderTitle ?: sourceText.ifBlank { "người gửi" }
-
-        // Tự động sao chép câu trả lời thông minh vào Clipboard (chỉ thực hiện khi người dùng bật)
-        if (autoCopySmartReply) {
-            val suggestedReply = generateSmartReply(taskTitle)
-            copyToClipboard(context, suggestedReply)
-        }
-
-        // TẦNG 1: Sử dụng PendingIntent gốc
-        if (matched?.pendingIntent != null && (System.currentTimeMillis() - matched.timestamp <= CACHE_EXPIRY_MS)) {
-            val success = launchPendingIntent(context, matched.pendingIntent)
-            if (success) {
-                Log.i(TAG, "Tầng 1: Đã kích hoạt PendingIntent vào chat của $senderName ($targetPackage)")
-                showToast(context, "🚀 Đang mở chat với $senderName...")
-                return true
-            }
-            Log.w(TAG, "Tầng 1 thất bại (CanceledException), chuyển sang Tầng 2...")
-        }
-
-        // TẦNG 2: Sử dụng Deep Link / URI Scheme
-        val deepLinkSuccess = launchDeepLink(context, targetPackage, matched?.extractedPhoneOrUsername)
-        if (deepLinkSuccess) {
-            Log.i(TAG, "Tầng 2: Mở Deep Link thành công cho $targetPackage")
-            showToast(context, "🚀 Đang mở cuộc trò chuyện với $senderName...")
-            return true
-        }
-
-        // TẦNG 3: Mở App trực tiếp qua Native Launcher (Không mở web)
-        Log.i(TAG, "Tầng 3: Mở app qua Native Launcher cho $targetPackage")
-        launchFallbackApp(context, targetPackage, senderName)
-        return true
+        return openAppForTask(context, sourceText, taskTitle)
     }
 
     private fun launchPendingIntent(context: Context, pendingIntent: PendingIntent): Boolean {

@@ -1841,9 +1841,10 @@ class FloatingBubbleService : Service() {
                 }
 
                 if (isOutside) {
-                    val targetName = task.source.ifBlank { "Zalo" }
+                    val targetPackage = ChatIntentManager.resolveTargetPackage(task.source, cleanTitle)
+                    val appDisplayName = ChatIntentManager.getAppDisplayName(targetPackage)
                     pillIcon?.text = "🚀"
-                    pillTv?.text = "Thả để mở chat [$targetName]"
+                    pillTv?.text = "Thả để mở $appDisplayName"
                     pill.background = GradientDrawable().apply {
                         setColor(Color.parseColor("#E60284C7"))
                         cornerRadius = dpToPx(20).toFloat()
@@ -1989,12 +1990,11 @@ class FloatingBubbleService : Service() {
                         removePillSafely()
 
                         if (isOutside) {
-                            // THẢ NGOÀI VÙNG THẺ: Nhảy thẳng vào phòng chat!
-                            ChatIntentManager.jumpToChat(
+                            // THẢ NGOÀI VÙNG THẺ: Mở app tương ứng của nhiệm vụ (Zalo, Telegram, Messenger)
+                            ChatIntentManager.openAppForTask(
                                 context = this@FloatingBubbleService,
                                 sourceText = task.source,
-                                taskTitle = cleanTitle,
-                                autoCopySmartReply = false
+                                taskTitle = cleanTitle
                             )
                             val root = bubbleRootView
                             if (root != null) {
