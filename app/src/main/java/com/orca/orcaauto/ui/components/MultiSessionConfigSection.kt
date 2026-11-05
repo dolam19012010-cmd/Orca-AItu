@@ -169,8 +169,10 @@ fun MultiSessionManagementSection(
                             "$count Key \u01B0u ti\u00EAn ri\u00EAng"
                         }
 
+                        val instructionDesc = if (session.customInstruction.isNotBlank()) "\n\u2022 Ch\u1EC9 th\u1ECB AI: ${session.customInstruction.take(30)}..." else ""
+
                         Text(
-                            text = "\u2022 $whitelistDesc\n\u2022 $keyPriorityDesc",
+                            text = "\u2022 $whitelistDesc\n\u2022 $keyPriorityDesc$instructionDesc",
                             style = MaterialTheme.typography.bodySmall,
                             color = Color(0xFFA1A1AA),
                             fontSize = 11.sp,
@@ -265,6 +267,7 @@ fun SessionConfigDialog(
     val whitelist = remember { mutableStateListOf<String>().apply { addAll(session.whitelist) } }
     val prioritizedKeyIds = remember { mutableStateListOf<String>().apply { addAll(session.keyPriorityIds) } }
     var customInput by remember { mutableStateOf("") }
+    var customInstruction by remember { mutableStateOf(session.customInstruction) }
 
     val availableEmojis = listOf("\u26A1", "\uD83D\uDCBC", "\uD83D\uDE80", "\uD83D\uDC65", "\uD83C\uDFE0", "\uD83C\uDFAF", "\uD83D\uDCCC", "\uD83D\uDD25", "\uD83D\uDCAC", "\u2B50")
 
@@ -604,6 +607,38 @@ fun SessionConfigDialog(
                         }
                     }
                 }
+                HorizontalDivider(color = GlassBorderSubtle)
+
+                // 4. Custom Permanent Instruction (Prompt Riêng Của Bản Nhân Bản)
+                Text(
+                    text = "4. L\u1EDDi D\u1EB7n C\u1ED1 \u0110\u1ECBnh Cho AI C\u1EE7a Phi\u00EAn N\u00E0y (Prompt Ri\u00EAng):",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = AccentCyan,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Text(
+                    text = "Gi\u1ED1ng nh\u01B0 m\u1ED9t b\u1EA3n app nh\u00E2n b\u1EA3n \u0111\u1ED9c l\u1EADp, b\u1EA1n c\u00F3 th\u1EC3 d\u1EB7n d\u00F2 ri\u00EAng cho phi\u00EAn n\u00E0y (vd: 'Ch\u1EC9 l\u1ECDc deadline v\u00E0 vi\u1EC7c g\u1EA5p, b\u1ECF qua x\u00E3 giao').",
+                    fontSize = 11.sp,
+                    color = Color(0xFFA1A1AA)
+                )
+
+                OutlinedTextField(
+                    value = customInstruction,
+                    onValueChange = { customInstruction = it },
+                    label = { Text("Ch\u1EC9 th\u1ECB ri\u00EAng cho AI phi\u00EAn n\u00E0y (T\u00F9y ch\u1ECDn)") },
+                    minLines = 2,
+                    maxLines = 4,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedLabelColor = AccentCyan,
+                        unfocusedLabelColor = Color(0xFFA1A1AA),
+                        focusedBorderColor = AccentCyan,
+                        unfocusedBorderColor = GlassBorderSubtle
+                    )
+                )
             }
         },
         confirmButton = {
@@ -615,7 +650,8 @@ fun SessionConfigDialog(
                         iconEmoji = selectedEmoji,
                         filterMode = if (whitelist.isNotEmpty()) ChatFilterMode.STRICT_WHITELIST else session.filterMode,
                         whitelist = whitelist.toSet(),
-                        keyPriorityIds = prioritizedKeyIds.toList()
+                        keyPriorityIds = prioritizedKeyIds.toList(),
+                        customInstruction = customInstruction.trim()
                     )
                     onSave(updated)
                 },

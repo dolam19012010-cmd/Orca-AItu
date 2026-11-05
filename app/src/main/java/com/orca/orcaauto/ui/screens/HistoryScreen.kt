@@ -153,10 +153,12 @@ fun HistoryScreen() {
     val sessions by preferences.sessionsFlow.collectAsState()
     val selectedSessionId by preferences.selectedSessionIdFlow.collectAsState()
     val displayedSummaries = remember(shiftSummaries, selectedSessionId) {
-        if (selectedSessionId == com.orca.orcaauto.data.preferences.SummarySessionConfig.MAIN_SESSION_ID) {
-            shiftSummaries
-        } else {
-            shiftSummaries.filter { it.sessionId == selectedSessionId }
+        shiftSummaries.filter { item ->
+            if (selectedSessionId == com.orca.orcaauto.data.preferences.SummarySessionConfig.MAIN_SESSION_ID) {
+                item.sessionId == com.orca.orcaauto.data.preferences.SummarySessionConfig.MAIN_SESSION_ID || item.sessionId.isBlank()
+            } else {
+                item.sessionId == selectedSessionId
+            }
         }
     }
 

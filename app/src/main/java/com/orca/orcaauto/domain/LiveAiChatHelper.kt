@@ -60,18 +60,26 @@ object LiveAiChatHelper {
         val fixedContext = prefs.getCustomFixedContext()
         val persona = prefs.getPromptPersona()
         val latestSummaryRecord = db.summaryDao().getLatestSummaryForSession(session.id)
-            ?: if (session.isMain) db.summaryDao().getLatestSummary() else null
         val previousSummary = if (prefs.isRecentSummaryContextEnabled()) latestSummaryRecord?.summaryContent.orEmpty() else ""
         val activeAlarms = if (prefs.isLongTermTasksContextEnabled()) db.smartAlarmDao().getActiveAlarms() else emptyList()
         val cancelledTasks = if (prefs.isLongTermTasksContextEnabled()) db.smartAlarmDao().getCancelledAlarms() else emptyList()
         val completedTasks = if (prefs.isLongTermTasksContextEnabled()) db.smartAlarmDao().getCompletedAlarms() else emptyList()
         val taskNotes = prefs.getTaskNotes()
 
+        val instructionParts = mutableListOf<String>()
+        if (session.customInstruction.isNotBlank()) {
+            instructionParts.add("【CHỈ THỊ RIÊNG CỦA PHIÊN '${session.name}'】:\n${session.customInstruction.trim()}")
+        }
+        if (!userQueryOrInstruction.isNullOrBlank()) {
+            instructionParts.add(userQueryOrInstruction.trim())
+        }
+        val effectiveInstruction = instructionParts.joinToString("\n\n")
+
         val prompt = GeminiPromptBuilder.buildSummaryPrompt(
             notifications = sessionNotifications,
             customFixedContext = fixedContext,
             persona = persona,
-            userQueryOrInstruction = userQueryOrInstruction ?: session.customInstruction,
+            userQueryOrInstruction = effectiveInstruction,
             previousSummary = previousSummary,
             activeAlarms = activeAlarms,
             cancelledTasks = cancelledTasks,

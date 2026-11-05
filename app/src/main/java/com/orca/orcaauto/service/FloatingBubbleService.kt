@@ -1342,7 +1342,6 @@ class FloatingBubbleService : Service() {
                         serviceScope.launch {
                             val db = AppDatabase.getDatabase(this@FloatingBubbleService)
                             val sessionSummary = db.summaryDao().getLatestSummaryForSession(session.id)
-                                ?: if (session.isMain) db.summaryDao().getLatestSummary() else null
                             if (sessionSummary != null) {
                                 latestSummaryText = sessionSummary.summaryContent
                                 latestModelInfo = sessionSummary.modelInfo
