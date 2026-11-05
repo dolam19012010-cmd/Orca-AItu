@@ -110,13 +110,13 @@ object ChatIntentManager {
         context: Context,
         sourceText: String,
         taskTitle: String,
-        autoCopySmartReply: Boolean = true
+        autoCopySmartReply: Boolean = false
     ): Boolean {
         val matched = findBestMatchingIntent(sourceText, taskTitle)
         val targetPackage = matched?.packageName ?: guessPackageFromSource(sourceText) ?: "com.zing.zalo"
         val senderName = matched?.senderTitle ?: sourceText.ifBlank { "người gửi" }
 
-        // Tự động sao chép câu trả lời thông minh vào Clipboard
+        // Tự động sao chép câu trả lời thông minh vào Clipboard (chỉ thực hiện khi người dùng bật)
         if (autoCopySmartReply) {
             val suggestedReply = generateSmartReply(taskTitle)
             copyToClipboard(context, suggestedReply)

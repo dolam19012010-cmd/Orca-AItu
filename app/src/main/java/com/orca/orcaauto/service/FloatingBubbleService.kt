@@ -1994,7 +1994,7 @@ class FloatingBubbleService : Service() {
                                 context = this@FloatingBubbleService,
                                 sourceText = task.source,
                                 taskTitle = cleanTitle,
-                                autoCopySmartReply = true
+                                autoCopySmartReply = false
                             )
                             val root = bubbleRootView
                             if (root != null) {
