@@ -129,6 +129,7 @@ import com.orca.orcaauto.domain.prompt.PromptPersona
 import com.orca.orcaauto.service.FloatingBubbleService
 import com.orca.orcaauto.service.OemSurvivalHelper
 import com.orca.orcaauto.ui.components.MockRewardAdDialog
+import com.orca.orcaauto.ui.components.MultiSessionManagementSection
 import com.orca.orcaauto.ui.components.OnboardingGuideDialog
 import com.orca.orcaauto.ui.theme.AccentCyan
 import com.orca.orcaauto.ui.theme.AccentEmerald
@@ -300,6 +301,14 @@ fun SettingsScreen() {
     val wallpaperPath by preferences.wallpaperPathFlow.collectAsState()
     val wallpaperMode by preferences.wallpaperModeFlow.collectAsState()
     val filterRules by preferences.filterRulesFlow.collectAsState()
+    val sessions by preferences.sessionsFlow.collectAsState()
+    val allRecentSenders = remember(filterRules) {
+        listOf(
+            UserPreferences.PACKAGE_ZALO,
+            UserPreferences.PACKAGE_TELEGRAM,
+            UserPreferences.PACKAGE_MESSENGER
+        ).flatMap { preferences.getRecentSenders(it) }.distinct()
+    }
     var appForFilterDialog by remember { mutableStateOf<String?>(null) }
 
     var showRewardAdForImport by remember { mutableStateOf(false) }
@@ -475,6 +484,33 @@ fun SettingsScreen() {
                         isCheckingKeys = false
                         testReports = reports
                         showTestDialog = true
+                    }
+                }
+            )
+        }
+
+        // Category NÃ¢ng Cao: Quáº£n LÃ½ Äa PhiÃªn (Sequential FIFO AI Queue)
+        SettingsCategoryCard(
+            isExpanded = expandedSectionIndex == 99,
+            onToggle = { expandedSectionIndex = if (expandedSectionIndex == 99) null else 99 },
+            icon = Icons.Default.FilterAlt,
+            iconBgColor = Color(0xFF8B5CF6),
+            title = "NÃ¢ng Cao: Quáº£n LÃ½ Äa PhiÃªn",
+            subtitle = "Táº¡o phiÃªn riÃªng, Whitelist & Thá»© tá»± Æ°u tiÃªn Key",
+            badgeText = "${sessions.size} phiÃªn"
+        ) {
+            MultiSessionManagementSection(
+                sessions = sessions,
+                keyPool = keyPool,
+                recentSenders = allRecentSenders,
+                onSaveSession = { session ->
+                    preferences.saveSession(session)
+                    Toast.makeText(context, "ÄÃ£ lÆ°u phiÃªn '${session.name}'!", Toast.LENGTH_SHORT).show()
+                },
+                onDeleteSession = { sessionId ->
+                    val deleted = preferences.deleteSession(sessionId)
+                    if (deleted) {
+                        Toast.makeText(context, "ÄÃ£ xÃ³a phiÃªn thÃ nh cÃ´ng!", Toast.LENGTH_SHORT).show()
                     }
                 }
             )

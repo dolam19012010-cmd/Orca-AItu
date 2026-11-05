@@ -27,6 +27,15 @@ interface SummaryDao {
     @Query("SELECT * FROM summary_history ORDER BY timestamp DESC LIMIT 1")
     fun getLatestSummaryFlow(): Flow<SummaryHistoryEntity?>
 
+    @Query("SELECT * FROM summary_history WHERE sessionId = :sessionId ORDER BY timestamp DESC LIMIT 1")
+    suspend fun getLatestSummaryForSession(sessionId: String): SummaryHistoryEntity?
+
+    @Query("SELECT * FROM summary_history WHERE sessionId = :sessionId ORDER BY timestamp DESC LIMIT 1")
+    fun getLatestSummaryForSessionFlow(sessionId: String): Flow<SummaryHistoryEntity?>
+
+    @Query("SELECT * FROM summary_history WHERE sessionId = :sessionId ORDER BY timestamp DESC")
+    fun getSummariesForSessionFlow(sessionId: String): Flow<List<SummaryHistoryEntity>>
+
     @Query("SELECT * FROM summary_history WHERE timestamp >= :fromTimestamp AND timestamp <= :toTimestamp ORDER BY timestamp ASC")
     suspend fun getSummariesInRange(fromTimestamp: Long, toTimestamp: Long): List<SummaryHistoryEntity>
 

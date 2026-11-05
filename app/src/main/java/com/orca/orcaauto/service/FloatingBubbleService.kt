@@ -1294,6 +1294,97 @@ class FloatingBubbleService : Service() {
 
         cardLayout.addView(headerRow)
 
+        // Horizontal Session Tabs Bar
+        val sessionsList = prefs.loadSessions()
+        val currentSessionId = prefs.getSelectedSessionId()
+
+        val sessionsScroll = HorizontalScrollView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dpToPx(3)
+                bottomMargin = dpToPx(5)
+            }
+            isHorizontalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+        }
+
+        val sessionsLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dpToPx(1), 0, dpToPx(1))
+        }
+
+        for (session in sessionsList) {
+            val isSelected = session.id == currentSessionId
+            val chipView = TextView(this).apply {
+                text = "${session.iconEmoji} ${session.name}"
+                textSize = 11.5f
+                typeface = if (isSelected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+                setTextColor(if (isSelected) Color.WHITE else Color.parseColor("#CBD5E1"))
+                background = GradientDrawable().apply {
+                    if (isSelected) {
+                        setColor(Color.parseColor("#2563EB"))
+                        cornerRadius = dpToPx(14).toFloat()
+                        setStroke(dpToPx(1), Color.parseColor("#93C5FD"))
+                    } else {
+                        setColor(Color.parseColor("#1AFFFFFF"))
+                        cornerRadius = dpToPx(14).toFloat()
+                        setStroke(dpToPx(1), Color.parseColor("#33FFFFFF"))
+                    }
+                }
+                setPadding(dpToPx(10), dpToPx(4), dpToPx(10), dpToPx(4))
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    rightMargin = dpToPx(6)
+                }
+
+                setOnClickListener {
+                    if (session.id != currentSessionId) {
+                        prefs.setSelectedSessionId(session.id)
+                        serviceScope.launch {
+                            val db = AppDatabase.getDatabase(this@FloatingBubbleService)
+                            val sessionSummary = db.summaryDao().getLatestSummaryForSession(session.id)
+                                ?: if (session.isMain) db.summaryDao().getLatestSummary() else null
+                            if (sessionSummary != null) {
+                                latestSummaryText = sessionSummary.summaryContent
+                                latestModelInfo = sessionSummary.modelInfo
+                            } else {
+                                latestSummaryText = "Chưa có báo cáo cho '${session.name}'.\n\nNhấn nút 'Gửi' hoặc gõ câu hỏi bên dưới để tóm tắt các tin nhắn thuộc phiên này."
+                                latestModelInfo = "${session.iconEmoji} ${session.name}"
+                            }
+                            withContext(Dispatchers.Main) {
+                                updateBubbleContent()
+                            }
+                        }
+                    }
+                }
+            }
+            sessionsLayout.addView(chipView)
+        }
+
+        // Add [+] Button to navigate to session settings
+        val addSessionBtn = TextView(this).apply {
+            text = "＋"
+            textSize = 13f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.parseColor("#38BDF8"))
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#1AFFFFFF"))
+                cornerRadius = dpToPx(14).toFloat()
+                setStroke(dpToPx(1), Color.parseColor("#4D38BDF8"))
+            }
+            setPadding(dpToPx(9), dpToPx(3), dpToPx(9), dpToPx(3))
+            setOnClickListener {
+                val intent = Intent(this@FloatingBubbleService, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    putExtra("navigate_to", "advanced_sessions")
+                }
+                startActivity(intent)
+                collapseExpandedCard(root)
+            }
+        }
+        sessionsLayout.addView(addSessionBtn)
+        sessionsScroll.addView(sessionsLayout)
+        cardLayout.addView(sessionsScroll)
+
         // Flexible Center ScrollView: expands to take all available height
         val scrollView = ScrollView(this).apply {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply {
@@ -1414,11 +1505,12 @@ class FloatingBubbleService : Service() {
         }
 
         val executeAiCall: (String) -> Unit = { queryText ->
-            if (queryText.isNotBlank() && !isCallingAi) {
+            if (!isCallingAi) {
                 isCallingAi = true
                 updateBubbleContent()
                 serviceScope.launch {
-                    val result = LiveAiChatHelper.sendUserPrompt(this@FloatingBubbleService, queryText)
+                    val promptToSend = queryText.ifBlank { "Tóm tắt các tin nhắn quan trọng gần đây" }
+                    val result = LiveAiChatHelper.sendUserPrompt(this@FloatingBubbleService, promptToSend)
                     isCallingAi = false
                     if (result.isSuccess) {
                         val (newSummary, key) = result.getOrThrow()
@@ -1459,9 +1551,7 @@ class FloatingBubbleService : Service() {
             setOnClickListener {
                 if (!isCallingAi) {
                     val q = queryEt.text.toString().trim()
-                    if (q.isNotBlank()) {
-                        executeAiCall(q)
-                    }
+                    executeAiCall(q)
                 }
             }
         }

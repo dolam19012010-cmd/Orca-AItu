@@ -17,6 +17,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -37,6 +38,7 @@ import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -73,6 +75,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.TabRowDefaults
@@ -147,6 +150,16 @@ fun HistoryScreen() {
         smartAlarms.associateBy { it.alarmId }
     }
 
+    val sessions by preferences.sessionsFlow.collectAsState()
+    val selectedSessionId by preferences.selectedSessionIdFlow.collectAsState()
+    val displayedSummaries = remember(shiftSummaries, selectedSessionId) {
+        if (selectedSessionId == com.orca.orcaauto.data.preferences.SummarySessionConfig.MAIN_SESSION_ID) {
+            shiftSummaries
+        } else {
+            shiftSummaries.filter { it.sessionId == selectedSessionId }
+        }
+    }
+
     var showClearConfirmDialog by remember { mutableStateOf(false) }
 
     Column(
@@ -195,7 +208,43 @@ fun HistoryScreen() {
             )
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Horizontal Session Tabs Bar
+        if (selectedTab == 0 && sessions.isNotEmpty()) {
+            LazyRow(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                items(sessions, key = { it.id }) { session ->
+                    val isSelected = session.id == selectedSessionId
+                    Surface(
+                        onClick = { preferences.setSelectedSessionId(session.id) },
+                        shape = RoundedCornerShape(16.dp),
+                        color = if (isSelected) PrimaryIndigo else GlassSurfaceDark,
+                        border = BorderStroke(1.dp, if (isSelected) AccentCyan else GlassBorderSubtle),
+                        modifier = Modifier.height(32.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(text = session.iconEmoji, fontSize = 12.sp)
+                            Text(
+                                text = session.name,
+                                fontSize = 12.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (isSelected) Color.White else TextSecondaryDark
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
 
         AnimatedContent(
             targetState = selectedTab,
@@ -207,17 +256,28 @@ fun HistoryScreen() {
             when (currentTab) {
                 0 -> {
                     // Tab 1: Shift Summaries with 2-Part Section View
-                    if (shiftSummaries.isEmpty()) {
+                    if (displayedSummaries.isEmpty()) {
+                        val activeSession = sessions.find { it.id == selectedSessionId }
+                        val emptyTitle = if (activeSession != null && !activeSession.isMain) {
+                            "Chưa có tóm tắt cho phiên '${activeSession.name}'"
+                        } else {
+                            "Chưa có bản tóm tắt ca nào"
+                        }
+                        val emptyDesc = if (activeSession != null && !activeSession.isMain) {
+                            "Các tin nhắn thuộc Whitelist của phiên này sẽ được hiển thị tại đây khi có tóm tắt mới."
+                        } else {
+                            "Báo cáo ca sẽ tự động gửi ra màn hình khóa vào 12:00 & 18:00\nhoặc khi bạn bấm 'Tóm tắt ngay' ở trang chủ."
+                        }
                         EmptyStateView(
-                            title = "Chưa có bản tóm tắt ca nào",
-                            desc = "Báo cáo ca sẽ tự động gửi ra màn hình khóa vào 12:00 & 18:00\nhoặc khi bạn bấm 'Tóm tắt ngay' ở trang chủ."
+                            title = emptyTitle,
+                            desc = emptyDesc
                         )
                     } else {
                         LazyColumn(
                             verticalArrangement = Arrangement.spacedBy(16.dp),
                             contentPadding = PaddingValues(bottom = 80.dp)
                         ) {
-                            items(shiftSummaries, key = { it.id }) { item ->
+                            items(displayedSummaries, key = { it.id }) { item ->
                                 TwoPartSummaryCard(
                                     item = item,
                                     allAlarmMap = allAlarmMap,

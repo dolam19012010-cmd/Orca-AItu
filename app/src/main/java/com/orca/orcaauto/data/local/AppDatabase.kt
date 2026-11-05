@@ -14,7 +14,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         DailyMemoryEntity::class,
         SmartAlarmEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -75,6 +75,14 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE summary_history ADD COLUMN sessionId TEXT NOT NULL DEFAULT 'session_main_default'")
+                db.execSQL("ALTER TABLE summary_history ADD COLUMN sessionName TEXT NOT NULL DEFAULT 'Phiên chính'")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_summary_history_sessionId ON summary_history(sessionId)")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -82,7 +90,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "orca_auto_v3.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
                     .fallbackToDestructiveMigrationOnDowngrade()
                     .build()
                 INSTANCE = instance

@@ -63,6 +63,12 @@ class UserPreferences private constructor(context: Context) {
     private val _filterRulesFlow = MutableStateFlow(loadAllFilterRules())
     val filterRulesFlow: StateFlow<Map<String, AppFilterRule>> = _filterRulesFlow.asStateFlow()
 
+    private val _sessionsFlow = MutableStateFlow(loadSessions())
+    val sessionsFlow: StateFlow<List<SummarySessionConfig>> = _sessionsFlow.asStateFlow()
+
+    private val _selectedSessionIdFlow = MutableStateFlow(getSelectedSessionId())
+    val selectedSessionIdFlow: StateFlow<String> = _selectedSessionIdFlow.asStateFlow()
+
     private fun loadKeyPool(): List<ApiKeyConfig> {
         val json = try {
             prefs.getString(KEY_API_KEY_POOL, null)
@@ -567,8 +573,110 @@ class UserPreferences private constructor(context: Context) {
         }
     }
 
+    fun loadSessions(): List<SummarySessionConfig> {
+        val json = try {
+            prefs.getString(KEY_SUMMARY_SESSIONS, null)
+        } catch (e: Throwable) {
+            null
+        }
+        val loadedList: List<SummarySessionConfig> = if (!json.isNullOrBlank()) {
+            val type = object : TypeToken<List<SummarySessionConfig>>() {}.type
+            try {
+                gson.fromJson(json, type) ?: emptyList()
+            } catch (e: Throwable) {
+                emptyList()
+            }
+        } else {
+            emptyList()
+        }
+
+        val result = loadedList.toMutableList()
+        val mainIndex = result.indexOfFirst { it.isMain || it.id == SummarySessionConfig.MAIN_SESSION_ID }
+        if (mainIndex == -1) {
+            result.add(0, SummarySessionConfig.createMainSession())
+        } else {
+            val existingMain = result[mainIndex]
+            result[mainIndex] = existingMain.copy(isMain = true, id = SummarySessionConfig.MAIN_SESSION_ID)
+        }
+
+        return result.sortedWith(
+            compareByDescending<SummarySessionConfig> { it.isMain }
+                .thenBy { it.createdAt }
+        )
+    }
+
+    fun saveSessions(sessions: List<SummarySessionConfig>) {
+        try {
+            val sanitized = sessions.toMutableList()
+            val mainIndex = sanitized.indexOfFirst { it.isMain || it.id == SummarySessionConfig.MAIN_SESSION_ID }
+            if (mainIndex == -1) {
+                sanitized.add(0, SummarySessionConfig.createMainSession())
+            }
+            val sorted = sanitized.sortedWith(
+                compareByDescending<SummarySessionConfig> { it.isMain }
+                    .thenBy { it.createdAt }
+            )
+            prefs.edit().putString(KEY_SUMMARY_SESSIONS, gson.toJson(sorted)).apply()
+            _sessionsFlow.value = sorted
+        } catch (e: Throwable) {
+            android.util.Log.e("UserPreferences", "Lỗi saveSessions: ${e.message}")
+        }
+    }
+
+    fun saveSession(session: SummarySessionConfig) {
+        val current = loadSessions().toMutableList()
+        val index = current.indexOfFirst { it.id == session.id }
+        if (index >= 0) {
+            current[index] = session
+        } else {
+            current.add(session)
+        }
+        saveSessions(current)
+    }
+
+    fun deleteSession(sessionId: String): Boolean {
+        if (sessionId == SummarySessionConfig.MAIN_SESSION_ID) return false
+        val current = loadSessions().toMutableList()
+        val removed = current.removeAll { it.id == sessionId && !it.isMain }
+        if (removed) {
+            saveSessions(current)
+            if (getSelectedSessionId() == sessionId) {
+                setSelectedSessionId(SummarySessionConfig.MAIN_SESSION_ID)
+            }
+        }
+        return removed
+    }
+
+    fun getSelectedSessionId(): String {
+        return try {
+            prefs.getString(KEY_SELECTED_SESSION_ID, SummarySessionConfig.MAIN_SESSION_ID)
+                ?: SummarySessionConfig.MAIN_SESSION_ID
+        } catch (e: Throwable) {
+            SummarySessionConfig.MAIN_SESSION_ID
+        }
+    }
+
+    fun setSelectedSessionId(sessionId: String) {
+        try {
+            prefs.edit().putString(KEY_SELECTED_SESSION_ID, sessionId).apply()
+            _selectedSessionIdFlow.value = sessionId
+        } catch (e: Throwable) {
+            android.util.Log.e("UserPreferences", "Lỗi setSelectedSessionId: ${e.message}")
+        }
+    }
+
+    fun getSelectedSession(): SummarySessionConfig {
+        val selectedId = getSelectedSessionId()
+        val all = loadSessions()
+        return all.find { it.id == selectedId }
+            ?: all.firstOrNull { it.isMain }
+            ?: SummarySessionConfig.createMainSession()
+    }
+
     companion object {
         private const val PREFS_FILENAME = "orca_secure_prefs"
+        private const val KEY_SUMMARY_SESSIONS = "key_summary_sessions"
+        private const val KEY_SELECTED_SESSION_ID = "key_selected_session_id"
         private const val KEY_GEMINI_API_KEY = "key_gemini_api_key"
         private const val KEY_API_KEY_POOL = "key_api_key_pool"
         private const val KEY_APP_ZALO = "key_app_zalo"
