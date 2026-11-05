@@ -17,9 +17,9 @@ class SequentialAiQueueAndSessionFilterTest {
     fun testSessionMessageFilter_MainSession_AllowsAll() {
         val mainSession = SummarySessionConfig.createMainSession()
         val notifs = listOf(
-            NotificationEntity(id = 1, appPackage = "com.zing.zalo", appName = "Zalo", sender = "Sếp Tuấn", content = "Nộp báo cáo"),
-            NotificationEntity(id = 2, appPackage = "org.telegram.messenger", appName = "Telegram", sender = "Nhóm Bạn", content = "Đi ăn trưa"),
-            NotificationEntity(id = 3, appPackage = "com.facebook.orca", appName = "Messenger", sender = "Khách hàng", content = "Gửi báo giá")
+            NotificationEntity(id = 1, appPackage = "com.zing.zalo", appName = "Zalo", sender = "S\u1EBFp Tu\u1EA5n", content = "N\u1ED9p b\u00E1o c\u00E1o"),
+            NotificationEntity(id = 2, appPackage = "org.telegram.messenger", appName = "Telegram", sender = "Nh\u00F3m B\u1EA1n", content = "\u0110i \u0103n tr\u01B0a"),
+            NotificationEntity(id = 3, appPackage = "com.facebook.orca", appName = "Messenger", sender = "Kh\u00E1ch h\u00E0ng", content = "G\u1EEDi b\u00E1o gi\u00E1")
         )
 
         val filtered = SessionMessageFilter.filter(notifs, mainSession)
@@ -30,46 +30,46 @@ class SequentialAiQueueAndSessionFilterTest {
     fun testSessionMessageFilter_StrictWhitelist_WildcardMatching() {
         val projectSession = SummarySessionConfig(
             id = "session_proj_1",
-            name = "Dự Án Alpha",
+            name = "D\u1EF1 \u00C1n Alpha",
             isMain = false,
             filterMode = ChatFilterMode.STRICT_WHITELIST,
-            whitelist = setOf("Sếp*", "*Dự Án Alpha*")
+            whitelist = setOf("S\u1EBFp*", "*D\u1EF1 \u00C1n Alpha*")
         )
 
         val notifs = listOf(
-            NotificationEntity(id = 1, appPackage = "com.zing.zalo", appName = "Zalo", sender = "Sếp Tuấn", content = "Giao việc"),
-            NotificationEntity(id = 2, appPackage = "com.zing.zalo", appName = "Zalo", sender = "Sếp Tổng", content = "Họp gấp"),
-            NotificationEntity(id = 3, appPackage = "org.telegram.messenger", appName = "Telegram", sender = "Nhóm Dự Án Alpha 2026", content = "Bug fix"),
-            NotificationEntity(id = 4, appPackage = "com.facebook.orca", appName = "Messenger", sender = "Bạn Thân", content = "Cà phê không")
+            NotificationEntity(id = 1, appPackage = "com.zing.zalo", appName = "Zalo", sender = "S\u1EBFp Tu\u1EA5n", content = "Giao vi\u1EC7c"),
+            NotificationEntity(id = 2, appPackage = "com.zing.zalo", appName = "Zalo", sender = "S\u1EBFp T\u1ED5ng", content = "H\u1ECDp g\u1EA5p"),
+            NotificationEntity(id = 3, appPackage = "org.telegram.messenger", appName = "Telegram", sender = "Nh\u00F3m D\u1EF1 \u00C1n Alpha 2026", content = "Bug fix"),
+            NotificationEntity(id = 4, appPackage = "com.facebook.orca", appName = "Messenger", sender = "B\u1EA1n Th\u00E2n", content = "C\u00E0 ph\u00EA kh\u00F4ng")
         )
 
         val filtered = SessionMessageFilter.filter(notifs, projectSession)
         assertEquals(3, filtered.size)
-        assertTrue(filtered.any { it.sender == "Sếp Tuấn" })
-        assertTrue(filtered.any { it.sender == "Sếp Tổng" })
-        assertTrue(filtered.any { it.sender == "Nhóm Dự Án Alpha 2026" })
-        assertFalse(filtered.any { it.sender == "Bạn Thân" })
+        assertTrue(filtered.any { it.sender == "S\u1EBFp Tu\u1EA5n" })
+        assertTrue(filtered.any { it.sender == "S\u1EBFp T\u1ED5ng" })
+        assertTrue(filtered.any { it.sender == "Nh\u00F3m D\u1EF1 \u00C1n Alpha 2026" })
+        assertFalse(filtered.any { it.sender == "B\u1EA1n Th\u00E2n" })
     }
 
     @Test
     fun testSessionMessageFilter_BanlistTakesPrecedence() {
         val workSession = SummarySessionConfig(
             id = "session_work",
-            name = "Công Việc",
+            name = "C\u00F4ng Vi\u1EC7c",
             isMain = false,
             filterMode = ChatFilterMode.NORMAL_WITH_BLOCK,
-            banlist = setOf("*Spam*", "Quảng Cáo*")
+            banlist = setOf("*Spam*", "Qu\u1EA3ng C\u00E1o*")
         )
 
         val notifs = listOf(
-            NotificationEntity(id = 1, appPackage = "com.zing.zalo", appName = "Zalo", sender = "Sếp Tuấn", content = "Họp"),
-            NotificationEntity(id = 2, appPackage = "com.zing.zalo", appName = "Zalo", sender = "Nhóm Spam Chợ", content = "Bán hàng"),
-            NotificationEntity(id = 3, appPackage = "com.zing.zalo", appName = "Zalo", sender = "Quảng Cáo Shopee", content = "Mã giảm giá")
+            NotificationEntity(id = 1, appPackage = "com.zing.zalo", appName = "Zalo", sender = "S\u1EBFp Tu\u1EA5n", content = "H\u1ECDp"),
+            NotificationEntity(id = 2, appPackage = "com.zing.zalo", appName = "Zalo", sender = "Nh\u00F3m Spam Ch\u1EE3", content = "B\u00E1n h\u00E0ng"),
+            NotificationEntity(id = 3, appPackage = "com.zing.zalo", appName = "Zalo", sender = "Qu\u1EA3ng C\u00E1o Shopee", content = "M\u00E3 gi\u1EA3m gi\u00E1")
         )
 
         val filtered = SessionMessageFilter.filter(notifs, workSession)
         assertEquals(1, filtered.size)
-        assertEquals("Sếp Tuấn", filtered[0].sender)
+        assertEquals("S\u1EBFp Tu\u1EA5n", filtered[0].sender)
     }
 
     @Test
@@ -79,7 +79,6 @@ class SequentialAiQueueAndSessionFilterTest {
         val key3 = ApiKeyConfig(id = "key_groq", rawKey = "gsk_3", provider = AiProviderType.GROQ, modelName = "llama-3.3-70b", endpointUrl = "http://groq")
         val globalPool = listOf(key1, key2, key3)
 
-        // Session prioritizes NVIDIA (Key 2) first, then Gemini (Key 1)
         val sessionWithCustomKeys = SummarySessionConfig(
             id = "sess_1",
             name = "Test",
@@ -90,20 +89,19 @@ class SequentialAiQueueAndSessionFilterTest {
         assertEquals(3, resolved.size)
         assertEquals("key_nvidia", resolved[0].id)
         assertEquals("key_gemini", resolved[1].id)
-        assertEquals("key_groq", resolved[2].id) // Fallback backup
+        assertEquals("key_groq", resolved[2].id)
     }
 
     @Test
     fun testOrderSessionsForBatch_MainFirstThenCreatedAtFifo() {
         val mainSession = SummarySessionConfig.createMainSession()
-        val custom1 = SummarySessionConfig(id = "c1", name = "Sếp", isMain = false, createdAt = 1000L)
-        val custom2 = SummarySessionConfig(id = "c2", name = "Dự Án", isMain = false, createdAt = 500L)
-        val custom3 = SummarySessionConfig(id = "c3", name = "Gia Đình", isMain = false, createdAt = 1500L)
+        val custom1 = SummarySessionConfig(id = "c1", name = "S\u1EBFp", isMain = false, createdAt = 1000L)
+        val custom2 = SummarySessionConfig(id = "c2", name = "D\u1EF1 \u00C1n", isMain = false, createdAt = 500L)
+        val custom3 = SummarySessionConfig(id = "c3", name = "Gia \u0110\u00ECnh", isMain = false, createdAt = 1500L)
 
         val unordered = listOf(custom1, custom3, mainSession, custom2)
         val ordered = SequentialAiQueue.orderSessionsForBatch(unordered)
 
-        // Main session first, then custom2 (500L), then custom1 (1000L), then custom3 (1500L)
         assertEquals(mainSession.id, ordered[0].id)
         assertEquals("c2", ordered[1].id)
         assertEquals("c1", ordered[2].id)

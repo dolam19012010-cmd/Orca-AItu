@@ -1,5 +1,6 @@
 package com.orca.orcaauto.ui.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -27,8 +28,6 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Key
-import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -63,12 +62,9 @@ import com.orca.orcaauto.ui.theme.AccentCyan
 import com.orca.orcaauto.ui.theme.AccentEmerald
 import com.orca.orcaauto.ui.theme.AccentRose
 import com.orca.orcaauto.ui.theme.CardBorder
-import com.orca.orcaauto.ui.theme.GlassBorder
 import com.orca.orcaauto.ui.theme.GlassBorderSubtle
-import com.orca.orcaauto.ui.theme.GlassSurfaceCard
 import com.orca.orcaauto.ui.theme.GlassSurfaceDark
 import com.orca.orcaauto.ui.theme.GlassSurfaceInner
-import com.orca.orcaauto.ui.theme.PrimaryIndigo
 import com.orca.orcaauto.ui.theme.SurfaceDark
 import com.orca.orcaauto.ui.theme.TextMutedDark
 import com.orca.orcaauto.ui.theme.TextPrimaryDark
@@ -97,16 +93,16 @@ fun MultiSessionManagementSection(
         ) {
             Column(modifier = Modifier.padding(12.dp)) {
                 Text(
-                    text = "💡 Hệ thống Đa Phiên Tuần Tự (FIFO):",
+                    text = "\uD83D\uDCA1 H\u1EC7 th\u1ED1ng \u0110a Phi\u00EAn Tu\u1EA7n T\u1EF1 (FIFO):",
                     style = MaterialTheme.typography.bodySmall,
                     color = AccentCyan,
                     fontWeight = FontWeight.Bold
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "Mặc định ứng dụng chạy 'Phiên chính'. Bạn có thể tạo thêm phiên riêng (Dự án, Sếp, Gia đình...) với Whitelist riêng và thứ tự ưu tiên Key riêng. Hệ thống gọi AI tuần tự, phiên nào yêu cầu trước chạy trước, tuyệt đối không chạy đè lên nhau.",
+                    text = "M\u1EB7c \u0111\u1ECBnh \u1EE9ng d\u1EE5ng ch\u1EA1y 'Phi\u00EAn ch\u00EDnh'. B\u1EA1n c\u00F3 th\u1EC3 t\u1EA1o th\u00EAm phi\u00EAn ri\u00EAng (D\u1EF1 \u00E1n, S\u1EBFp, Gia \u0111\u00ECnh...) v\u1EDBi Whitelist ri\u00EAng v\u00E0 th\u1EE9 t\u1EF1 \u01B0u ti\u00EAn Key ri\u00EAng. H\u1EC7 th\u1ED1ng g\u1ECDi AI tu\u1EA7n t\u1EF1, phi\u00EAn n\u00E0o y\u00EAu c\u1EA7u tr\u01B0\u1EDBc ch\u1EA1y tr\u01B0\u1EDBc, tuy\u1EC7t \u0111\u1ED1i kh\u00F4ng ch\u1EA1y \u0111\u00E8 l\u00EAn nhau.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = TextSecondaryDark,
+                    color = Color(0xFFCBD5E1),
                     lineHeight = 18.sp
                 )
             }
@@ -117,9 +113,9 @@ fun MultiSessionManagementSection(
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = GlassSurfaceDark),
-                border = androidx.compose.foundation.BorderStroke(
+                border = BorderStroke(
                     1.dp,
-                    if (session.isMain) AccentCyan.copy(alpha = 0.5f) else GlassBorderSubtle
+                    if (session.isMain) AccentCyan.copy(alpha = 0.6f) else GlassBorderSubtle
                 ),
                 shape = RoundedCornerShape(12.dp)
             ) {
@@ -138,19 +134,20 @@ fun MultiSessionManagementSection(
                                 text = session.name,
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.Bold,
-                                color = TextPrimaryDark
+                                color = Color.White
                             )
                             if (session.isMain) {
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Surface(
-                                    color = PrimaryIndigo.copy(alpha = 0.3f),
+                                    color = Color(0xFF2563EB).copy(alpha = 0.25f),
                                     shape = RoundedCornerShape(6.dp),
-                                    border = androidx.compose.foundation.BorderStroke(0.8.dp, PrimaryIndigo)
+                                    border = BorderStroke(0.8.dp, Color(0xFF3B82F6))
                                 ) {
                                     Text(
-                                        text = "Chính",
-                                        color = AccentCyan,
+                                        text = "Ch\u00EDnh",
+                                        color = Color(0xFF93C5FD),
                                         fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
                                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                     )
                                 }
@@ -159,24 +156,23 @@ fun MultiSessionManagementSection(
 
                         Spacer(modifier = Modifier.height(4.dp))
 
-                        // Subtitle descriptions
                         val whitelistDesc = when {
-                            session.isMain && session.whitelist.isEmpty() -> "Toàn bộ tin nhắn"
-                            session.whitelist.isEmpty() -> "Chưa chọn người/nhóm"
-                            else -> "${session.whitelist.size} người/nhóm theo dõi"
+                            session.isMain && session.whitelist.isEmpty() -> "To\u00E0n b\u1ED9 tin nh\u1EAFn"
+                            session.whitelist.isEmpty() -> "Ch\u01B0a ch\u1ECDn ng\u01B0\u1EDDi/nh\u00F3m"
+                            else -> "${session.whitelist.size} ng\u01B0\u1EDDi/nh\u00F3m theo d\u00F5i"
                         }
 
                         val keyPriorityDesc = if (session.keyPriorityIds.isEmpty()) {
-                            "Dùng Key Pool mặc định"
+                            "D\u00F9ng Key Pool m\u1EB7c \u0111\u1ECBnh"
                         } else {
                             val count = session.keyPriorityIds.size
-                            "$count Key ưu tiên riêng"
+                            "$count Key \u01B0u ti\u00EAn ri\u00EAng"
                         }
 
                         Text(
-                            text = "• $whitelistDesc\n• $keyPriorityDesc",
+                            text = "\u2022 $whitelistDesc\n\u2022 $keyPriorityDesc",
                             style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondaryDark,
+                            color = Color(0xFFA1A1AA),
                             fontSize = 11.sp,
                             lineHeight = 16.sp
                         )
@@ -186,9 +182,9 @@ fun MultiSessionManagementSection(
                         IconButton(onClick = { editingSession = session }) {
                             Icon(
                                 imageVector = Icons.Default.Edit,
-                                contentDescription = "Sửa phiên",
+                                contentDescription = "S\u1EEDa phi\u00EAn",
                                 tint = AccentCyan,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(20.dp)
                             )
                         }
 
@@ -196,9 +192,9 @@ fun MultiSessionManagementSection(
                             IconButton(onClick = { onDeleteSession(session.id) }) {
                                 Icon(
                                     imageVector = Icons.Default.Delete,
-                                    contentDescription = "Xóa phiên",
+                                    contentDescription = "X\u00F3a phi\u00EAn",
                                     tint = AccentRose,
-                                    modifier = Modifier.size(18.dp)
+                                    modifier = Modifier.size(20.dp)
                                 )
                             }
                         }
@@ -213,20 +209,19 @@ fun MultiSessionManagementSection(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(10.dp),
             colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentCyan),
-            border = androidx.compose.foundation.BorderStroke(1.dp, AccentCyan.copy(alpha = 0.5f))
+            border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.6f))
         ) {
             Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
             Spacer(modifier = Modifier.width(6.dp))
-            Text(text = "Tạo Phiên Mới", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            Text(text = "T\u1EA1o Phi\u00EAn M\u1EDBi", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
         }
     }
 
-    // Dialog for creating a new session
     if (showCreateDialog) {
         SessionConfigDialog(
             session = SummarySessionConfig(
                 name = "",
-                iconEmoji = "💼",
+                iconEmoji = "\uD83D\uDCBC",
                 filterMode = ChatFilterMode.STRICT_WHITELIST
             ),
             isNew = true,
@@ -240,7 +235,6 @@ fun MultiSessionManagementSection(
         )
     }
 
-    // Dialog for editing an existing session
     editingSession?.let { session ->
         SessionConfigDialog(
             session = session,
@@ -268,22 +262,21 @@ fun SessionConfigDialog(
 ) {
     var name by remember { mutableStateOf(session.name) }
     var selectedEmoji by remember { mutableStateOf(session.iconEmoji) }
-    var filterMode by remember { mutableStateOf(session.filterMode) }
     val whitelist = remember { mutableStateListOf<String>().apply { addAll(session.whitelist) } }
     val prioritizedKeyIds = remember { mutableStateListOf<String>().apply { addAll(session.keyPriorityIds) } }
     var customInput by remember { mutableStateOf("") }
 
-    val availableEmojis = listOf("⚡", "💼", "🚀", "👥", "🏠", "🎯", "📌", "🔥", "💬", "⭐")
+    val availableEmojis = listOf("\u26A1", "\uD83D\uDCBC", "\uD83D\uDE80", "\uD83D\uDC65", "\uD83C\uDFE0", "\uD83C\uDFAF", "\uD83D\uDCCC", "\uD83D\uDD25", "\uD83D\uDCAC", "\u2B50")
 
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = SurfaceDark,
         title = {
             Text(
-                text = if (isNew) "Tạo Phiên Mới" else "Cấu Hình: ${session.name}",
+                text = if (isNew) "T\u1EA1o Phi\u00EAn M\u1EDBi" else "C\u1EA5u H\u00ECnh: ${session.name}",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
-                color = TextPrimaryDark
+                color = Color.White
             )
         },
         text = {
@@ -295,7 +288,7 @@ fun SessionConfigDialog(
             ) {
                 // 1. Emoji & Name Row
                 Text(
-                    text = "1. Tên Phiên & Biểu Tượng:",
+                    text = "1. T\u00EAn Phi\u00EAn & Bi\u1EC3u T\u01B0\u1EE3ng:",
                     style = MaterialTheme.typography.bodySmall,
                     color = AccentCyan,
                     fontWeight = FontWeight.Bold
@@ -307,13 +300,14 @@ fun SessionConfigDialog(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     availableEmojis.take(6).forEach { emoji ->
+                        val isSelectedEmoji = selectedEmoji == emoji
                         Surface(
                             onClick = { selectedEmoji = emoji },
                             shape = CircleShape,
-                            color = if (selectedEmoji == emoji) PrimaryIndigo else GlassSurfaceDark,
-                            border = androidx.compose.foundation.BorderStroke(
+                            color = if (isSelectedEmoji) Color(0xFF2563EB) else GlassSurfaceDark,
+                            border = BorderStroke(
                                 1.dp,
-                                if (selectedEmoji == emoji) AccentCyan else GlassBorderSubtle
+                                if (isSelectedEmoji) Color(0xFF93C5FD) else GlassBorderSubtle
                             ),
                             modifier = Modifier.size(36.dp)
                         ) {
@@ -327,12 +321,14 @@ fun SessionConfigDialog(
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("Tên phiên (vd: Dự Án Alpha, Sếp Tuấn)") },
+                    label = { Text("T\u00EAn phi\u00EAn (vd: D\u1EF1 \u00C1n Alpha, S\u1EBFp Tu\u1EA5n)") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = TextPrimaryDark,
-                        unfocusedTextColor = TextPrimaryDark,
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedLabelColor = AccentCyan,
+                        unfocusedLabelColor = Color(0xFFA1A1AA),
                         focusedBorderColor = AccentCyan,
                         unfocusedBorderColor = CardBorder
                     )
@@ -342,18 +338,17 @@ fun SessionConfigDialog(
 
                 // 2. Whitelist contacts
                 Text(
-                    text = "2. Người / Nhóm Chat Được Gom (Whitelist):",
+                    text = "2. Ng\u01B0\u1EDDi / Nh\u00F3m Chat \u0110\u01B0\u1EE3c Gom (Whitelist):",
                     style = MaterialTheme.typography.bodySmall,
                     color = AccentCyan,
                     fontWeight = FontWeight.Bold
                 )
 
-                // Quick tap suggestions from recent senders
                 if (recentSenders.isNotEmpty()) {
                     Text(
-                        text = "Chạm nhanh người gửi gần đây để thêm:",
+                        text = "Ch\u1EA1m nhanh ng\u01B0\u1EDDi g\u1EEDi g\u1EA7n \u0111\u00E2y \u0111\u1EC3 th\u00EAm:",
                         fontSize = 11.sp,
-                        color = TextMutedDark
+                        color = Color(0xFFA1A1AA)
                     )
                     FlowRow(
                         modifier = Modifier.fillMaxWidth(),
@@ -371,10 +366,10 @@ fun SessionConfigDialog(
                                     }
                                 },
                                 shape = RoundedCornerShape(12.dp),
-                                color = if (isAdded) AccentEmerald.copy(alpha = 0.25f) else GlassSurfaceDark,
-                                border = androidx.compose.foundation.BorderStroke(
+                                color = if (isAdded) Color(0xFF10B981).copy(alpha = 0.25f) else GlassSurfaceDark,
+                                border = BorderStroke(
                                     1.dp,
-                                    if (isAdded) AccentEmerald else GlassBorderSubtle
+                                    if (isAdded) Color(0xFF10B981) else GlassBorderSubtle
                                 ),
                                 modifier = Modifier.height(28.dp)
                             ) {
@@ -386,7 +381,7 @@ fun SessionConfigDialog(
                                         Icon(
                                             imageVector = Icons.Default.Check,
                                             contentDescription = null,
-                                            tint = AccentEmerald,
+                                            tint = Color(0xFF10B981),
                                             modifier = Modifier.size(12.dp)
                                         )
                                         Spacer(modifier = Modifier.width(4.dp))
@@ -394,7 +389,7 @@ fun SessionConfigDialog(
                                     Text(
                                         text = sender,
                                         fontSize = 11.sp,
-                                        color = if (isAdded) Color.White else TextSecondaryDark
+                                        color = if (isAdded) Color.White else Color(0xFFCBD5E1)
                                     )
                                 }
                             }
@@ -402,7 +397,6 @@ fun SessionConfigDialog(
                     }
                 }
 
-                // Manual add with wildcard support
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
@@ -410,12 +404,12 @@ fun SessionConfigDialog(
                     OutlinedTextField(
                         value = customInput,
                         onValueChange = { customInput = it },
-                        placeholder = { Text("Nhập tên hoặc dùng * (vd: *Dự Án*)", fontSize = 11.sp) },
+                        placeholder = { Text("Nh\u1EADp t\u00EAn ho\u1EB7c d\u00F9ng * (vd: *D\u1EF1 \u00C1n*)", fontSize = 11.sp) },
                         singleLine = true,
                         modifier = Modifier.weight(1f),
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = TextPrimaryDark,
-                            unfocusedTextColor = TextPrimaryDark,
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
                             focusedBorderColor = AccentCyan,
                             unfocusedBorderColor = CardBorder
                         )
@@ -428,14 +422,16 @@ fun SessionConfigDialog(
                                 customInput = ""
                             }
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = PrimaryIndigo),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF2563EB),
+                            contentColor = Color.White
+                        ),
                         shape = RoundedCornerShape(8.dp)
                     ) {
-                        Text("Thêm", fontSize = 11.sp)
+                        Text("Th\u00EAm", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
                     }
                 }
 
-                // Current whitelist chips
                 if (whitelist.isNotEmpty()) {
                     FlowRow(
                         modifier = Modifier.fillMaxWidth(),
@@ -445,8 +441,8 @@ fun SessionConfigDialog(
                         whitelist.forEach { item ->
                             Surface(
                                 shape = RoundedCornerShape(12.dp),
-                                color = PrimaryIndigo.copy(alpha = 0.35f),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, PrimaryIndigo)
+                                color = Color(0xFF2563EB).copy(alpha = 0.25f),
+                                border = BorderStroke(1.dp, Color(0xFF3B82F6))
                             ) {
                                 Row(
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -456,7 +452,7 @@ fun SessionConfigDialog(
                                     Spacer(modifier = Modifier.width(4.dp))
                                     Icon(
                                         imageVector = Icons.Default.Close,
-                                        contentDescription = "Xóa",
+                                        contentDescription = "X\u00F3a",
                                         tint = AccentRose,
                                         modifier = Modifier
                                             .size(14.dp)
@@ -472,26 +468,25 @@ fun SessionConfigDialog(
 
                 // 3. API Key Priority Reordering
                 Text(
-                    text = "3. Thứ Tự Ưu Tiên API Key (Sequential Queue):",
+                    text = "3. Th\u1EE9 T\u1EF1 \u01AFu Ti\u00EAn API Key (Sequential Queue):",
                     style = MaterialTheme.typography.bodySmall,
                     color = AccentCyan,
                     fontWeight = FontWeight.Bold
                 )
 
                 Text(
-                    text = "Hệ thống sẽ gọi Key Ưu tiên 1 trước. Nếu Key này lỗi, tự động chuyển sang Key tiếp theo.",
+                    text = "H\u1EC7 th\u1ED1ng s\u1EBD g\u1ECDi Key \u01AFu ti\u00EAn 1 tr\u01B0\u1EDBc. N\u1EBFu Key n\u00E0y l\u1ED7i, t\u1EF1 \u0111\u1ED9ng chuy\u1EC3n sang Key ti\u1EBFp theo.",
                     fontSize = 11.sp,
-                    color = TextMutedDark
+                    color = Color(0xFFA1A1AA)
                 )
 
                 if (keyPool.isEmpty()) {
                     Text(
-                        text = "⚠️ Chưa có API Key nào trong Key Pool. Hãy vào mục 'Universal AI Key' để thêm.",
+                        text = "\u26A0\uFE0F Ch\u01B0a c\u00F3 API Key n\u00E0o trong Key Pool. H\u00E3y v\u00E0o m\u1EE5c 'Universal AI Key' \u0111\u1EC3 th\u00EAm.",
                         fontSize = 11.sp,
                         color = AccentRose
                     )
                 } else {
-                    // Display all keys in keyPool with order controls
                     keyPool.forEachIndexed { _, keyConfig ->
                         val priorityIndex = prioritizedKeyIds.indexOf(keyConfig.id)
                         val isPrioritized = priorityIndex >= 0
@@ -499,11 +494,11 @@ fun SessionConfigDialog(
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             colors = CardDefaults.cardColors(
-                                containerColor = if (isPrioritized) PrimaryIndigo.copy(alpha = 0.2f) else GlassSurfaceDark
+                                containerColor = if (isPrioritized) Color(0xFF2563EB).copy(alpha = 0.2f) else GlassSurfaceDark
                             ),
-                            border = androidx.compose.foundation.BorderStroke(
+                            border = BorderStroke(
                                 0.8.dp,
-                                if (isPrioritized) AccentCyan.copy(alpha = 0.6f) else GlassBorderSubtle
+                                if (isPrioritized) Color(0xFF60A5FA) else GlassBorderSubtle
                             ),
                             shape = RoundedCornerShape(8.dp)
                         ) {
@@ -519,7 +514,7 @@ fun SessionConfigDialog(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Surface(
-                                        color = if (isPrioritized) PrimaryIndigo else Color.DarkGray,
+                                        color = if (isPrioritized) Color(0xFF2563EB) else Color(0xFF3F3F46),
                                         shape = RoundedCornerShape(4.dp)
                                     ) {
                                         Text(
@@ -533,22 +528,21 @@ fun SessionConfigDialog(
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Column {
                                         Text(
-                                            text = "${keyConfig.provider.displayName} • ${keyConfig.modelName}",
+                                            text = "${keyConfig.provider.displayName} \u2022 ${keyConfig.modelName}",
                                             style = MaterialTheme.typography.bodySmall,
-                                            color = TextPrimaryDark,
+                                            color = Color.White,
                                             fontWeight = FontWeight.Medium
                                         )
                                         Text(
                                             text = keyConfig.maskedKey,
                                             fontSize = 10.sp,
-                                            color = TextMutedDark
+                                            color = Color(0xFFA1A1AA)
                                         )
                                     }
                                 }
 
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     if (isPrioritized) {
-                                        // Up button
                                         IconButton(
                                             onClick = {
                                                 if (priorityIndex > 0) {
@@ -562,13 +556,12 @@ fun SessionConfigDialog(
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Default.ArrowUpward,
-                                                contentDescription = "Tăng ưu tiên",
+                                                contentDescription = "T\u0103ng \u01B0u ti\u00EAn",
                                                 tint = if (priorityIndex > 0) AccentCyan else Color.Gray,
                                                 modifier = Modifier.size(16.dp)
                                             )
                                         }
 
-                                        // Down button
                                         IconButton(
                                             onClick = {
                                                 if (priorityIndex < prioritizedKeyIds.size - 1) {
@@ -582,30 +575,28 @@ fun SessionConfigDialog(
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Default.ArrowDownward,
-                                                contentDescription = "Giảm ưu tiên",
+                                                contentDescription = "Gi\u1EA3m \u01B0u ti\u00EAn",
                                                 tint = if (priorityIndex < prioritizedKeyIds.size - 1) AccentCyan else Color.Gray,
                                                 modifier = Modifier.size(16.dp)
                                             )
                                         }
 
-                                        // Remove from priority
                                         IconButton(
                                             onClick = { prioritizedKeyIds.remove(keyConfig.id) },
                                             modifier = Modifier.size(28.dp)
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Default.Close,
-                                                contentDescription = "Bỏ ưu tiên",
+                                                contentDescription = "B\u1ECF \u01B0u ti\u00EAn",
                                                 tint = AccentRose,
                                                 modifier = Modifier.size(16.dp)
                                             )
                                         }
                                     } else {
-                                        // Add to priority button
                                         TextButton(
                                             onClick = { prioritizedKeyIds.add(keyConfig.id) }
                                         ) {
-                                            Text("+ Ưu tiên", fontSize = 11.sp, color = AccentCyan)
+                                            Text("+ \u01AFu ti\u00EAn", fontSize = 11.sp, color = AccentCyan)
                                         }
                                     }
                                 }
@@ -618,7 +609,7 @@ fun SessionConfigDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    val finalName = name.trim().ifBlank { if (isNew) "Phiên mới" else session.name }
+                    val finalName = name.trim().ifBlank { if (isNew) "Phi\u00EAn m\u1EDBi" else session.name }
                     val updated = session.copy(
                         name = finalName,
                         iconEmoji = selectedEmoji,
@@ -628,14 +619,18 @@ fun SessionConfigDialog(
                     )
                     onSave(updated)
                 },
-                colors = ButtonDefaults.buttonColors(containerColor = PrimaryIndigo)
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFF2563EB),
+                    contentColor = Color.White
+                ),
+                shape = RoundedCornerShape(8.dp)
             ) {
-                Text("Lưu Phiên")
+                Text("L\u01B0u Phi\u00EAn", fontWeight = FontWeight.Bold, color = Color.White)
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Hủy", color = TextSecondaryDark)
+                Text("H\u1EE7y", color = Color(0xFFA1A1AA))
             }
         }
     )

@@ -7,7 +7,7 @@ import java.util.UUID
 data class SummarySessionConfig(
     val id: String = UUID.randomUUID().toString(),
     val name: String,
-    val iconEmoji: String = "⚡",
+    val iconEmoji: String = "\u26A1",
     val isMain: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
     val filterMode: ChatFilterMode = ChatFilterMode.NORMAL_WITH_BLOCK,
@@ -24,8 +24,8 @@ data class SummarySessionConfig(
         fun createMainSession(): SummarySessionConfig {
             return SummarySessionConfig(
                 id = MAIN_SESSION_ID,
-                name = "Phiên chính",
-                iconEmoji = "⚡",
+                name = "Phi\u00EAn ch\u00EDnh",
+                iconEmoji = "\u26A1",
                 isMain = true,
                 createdAt = 0L, // Created first
                 filterMode = ChatFilterMode.NORMAL_WITH_BLOCK,

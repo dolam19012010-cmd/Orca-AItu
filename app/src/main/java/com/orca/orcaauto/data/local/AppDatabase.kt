@@ -78,7 +78,7 @@ abstract class AppDatabase : RoomDatabase() {
         private val MIGRATION_6_7 = object : Migration(6, 7) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE summary_history ADD COLUMN sessionId TEXT NOT NULL DEFAULT 'session_main_default'")
-                db.execSQL("ALTER TABLE summary_history ADD COLUMN sessionName TEXT NOT NULL DEFAULT 'Phiên chính'")
+                db.execSQL("ALTER TABLE summary_history ADD COLUMN sessionName TEXT NOT NULL DEFAULT 'Phi\u00EAn ch\u00EDnh'")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_summary_history_sessionId ON summary_history(sessionId)")
             }
         }

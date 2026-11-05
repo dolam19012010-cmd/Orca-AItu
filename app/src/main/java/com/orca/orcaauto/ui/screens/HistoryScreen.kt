@@ -222,8 +222,8 @@ fun HistoryScreen() {
                     Surface(
                         onClick = { preferences.setSelectedSessionId(session.id) },
                         shape = RoundedCornerShape(16.dp),
-                        color = if (isSelected) PrimaryIndigo else GlassSurfaceDark,
-                        border = BorderStroke(1.dp, if (isSelected) AccentCyan else GlassBorderSubtle),
+                        color = if (isSelected) Color(0xFF2563EB) else GlassSurfaceDark,
+                        border = BorderStroke(1.dp, if (isSelected) Color(0xFF60A5FA) else GlassBorderSubtle),
                         modifier = Modifier.height(32.dp)
                     ) {
                         Row(
@@ -236,7 +236,7 @@ fun HistoryScreen() {
                                 text = session.name,
                                 fontSize = 12.sp,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                color = if (isSelected) Color.White else TextSecondaryDark
+                                color = if (isSelected) Color.White else Color(0xFFCBD5E1)
                             )
                         }
                     }

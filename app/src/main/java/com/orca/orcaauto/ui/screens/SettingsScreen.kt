@@ -495,9 +495,9 @@ fun SettingsScreen() {
             onToggle = { expandedSectionIndex = if (expandedSectionIndex == 99) null else 99 },
             icon = Icons.Default.FilterAlt,
             iconBgColor = Color(0xFF8B5CF6),
-            title = "NÃ¢ng Cao: Quáº£n LÃ½ Äa PhiÃªn",
-            subtitle = "Táº¡o phiÃªn riÃªng, Whitelist & Thá»© tá»± Æ°u tiÃªn Key",
-            badgeText = "${sessions.size} phiÃªn"
+            title = "N\u00E2ng Cao: Qu\u1EA3n L\u00FD \u0110a Phi\u00EAn",
+            subtitle = "T\u1EA1o phi\u00EAn ri\u00EAng, Whitelist & Th\u1EE9 t\u1EF1 \u01B0u ti\u00EAn Key",
+            badgeText = "${sessions.size} phi\u00EAn"
         ) {
             MultiSessionManagementSection(
                 sessions = sessions,
@@ -505,12 +505,12 @@ fun SettingsScreen() {
                 recentSenders = allRecentSenders,
                 onSaveSession = { session ->
                     preferences.saveSession(session)
-                    Toast.makeText(context, "ÄÃ£ lÆ°u phiÃªn '${session.name}'!", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "\u0110\u00E3 l\u01B0u phi\u00EAn '${session.name}'!", Toast.LENGTH_SHORT).show()
                 },
                 onDeleteSession = { sessionId ->
                     val deleted = preferences.deleteSession(sessionId)
                     if (deleted) {
-                        Toast.makeText(context, "ÄÃ£ xÃ³a phiÃªn thÃ nh cÃ´ng!", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "\u0110\u00E3 x\u00F3a phi\u00EAn th\u00E0nh c\u00F4ng!", Toast.LENGTH_SHORT).show()
                     }
                 }
             )

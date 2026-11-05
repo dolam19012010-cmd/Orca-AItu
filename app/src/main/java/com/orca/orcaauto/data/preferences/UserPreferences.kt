@@ -596,7 +596,14 @@ class UserPreferences private constructor(context: Context) {
             result.add(0, SummarySessionConfig.createMainSession())
         } else {
             val existingMain = result[mainIndex]
-            result[mainIndex] = existingMain.copy(isMain = true, id = SummarySessionConfig.MAIN_SESSION_ID)
+            val safeName = if (existingMain.name.isBlank() || existingMain.name.contains("Phi")) "Phi\u00EAn ch\u00EDnh" else existingMain.name
+            val safeEmoji = if (existingMain.iconEmoji.isBlank() || existingMain.iconEmoji.contains("?") || existingMain.iconEmoji.length > 4) "\u26A1" else existingMain.iconEmoji
+            result[mainIndex] = existingMain.copy(
+                isMain = true,
+                id = SummarySessionConfig.MAIN_SESSION_ID,
+                name = safeName,
+                iconEmoji = safeEmoji
+            )
         }
 
         return result.sortedWith(

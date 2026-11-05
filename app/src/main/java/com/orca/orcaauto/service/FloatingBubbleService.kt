@@ -1317,21 +1317,21 @@ class FloatingBubbleService : Service() {
             val isSelected = session.id == currentSessionId
             val chipView = TextView(this).apply {
                 text = "${session.iconEmoji} ${session.name}"
-                textSize = 11.5f
+                textSize = 12f
                 typeface = if (isSelected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-                setTextColor(if (isSelected) Color.WHITE else Color.parseColor("#CBD5E1"))
+                setTextColor(if (isSelected) Color.WHITE else Color.parseColor("#E4E4E7"))
                 background = GradientDrawable().apply {
                     if (isSelected) {
                         setColor(Color.parseColor("#2563EB"))
                         cornerRadius = dpToPx(14).toFloat()
                         setStroke(dpToPx(1), Color.parseColor("#93C5FD"))
                     } else {
-                        setColor(Color.parseColor("#1AFFFFFF"))
+                        setColor(Color.parseColor("#27272A"))
                         cornerRadius = dpToPx(14).toFloat()
-                        setStroke(dpToPx(1), Color.parseColor("#33FFFFFF"))
+                        setStroke(dpToPx(1), Color.parseColor("#52525B"))
                     }
                 }
-                setPadding(dpToPx(10), dpToPx(4), dpToPx(10), dpToPx(4))
+                setPadding(dpToPx(12), dpToPx(5), dpToPx(12), dpToPx(5))
                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                     rightMargin = dpToPx(6)
                 }
@@ -1347,7 +1347,7 @@ class FloatingBubbleService : Service() {
                                 latestSummaryText = sessionSummary.summaryContent
                                 latestModelInfo = sessionSummary.modelInfo
                             } else {
-                                latestSummaryText = "Chưa có báo cáo cho '${session.name}'.\n\nNhấn nút 'Gửi' hoặc gõ câu hỏi bên dưới để tóm tắt các tin nhắn thuộc phiên này."
+                                latestSummaryText = "Ch\u01B0a c\u00F3 b\u00E1o c\u00E1o cho '${session.name}'.\n\nNh\u1EA5n n\u00FAt 'G\u1EEDi' b\u00EAn d\u01B0\u1EDBi \u0111\u1EC3 t\u00F3m t\u1EAFt c\u00E1c tin nh\u1EAFn thu\u1ED9c phi\u00EAn n\u00E0y."
                                 latestModelInfo = "${session.iconEmoji} ${session.name}"
                             }
                             withContext(Dispatchers.Main) {
@@ -1367,11 +1367,11 @@ class FloatingBubbleService : Service() {
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.parseColor("#38BDF8"))
             background = GradientDrawable().apply {
-                setColor(Color.parseColor("#1AFFFFFF"))
+                setColor(Color.parseColor("#27272A"))
                 cornerRadius = dpToPx(14).toFloat()
-                setStroke(dpToPx(1), Color.parseColor("#4D38BDF8"))
+                setStroke(dpToPx(1), Color.parseColor("#0284C7"))
             }
-            setPadding(dpToPx(9), dpToPx(3), dpToPx(9), dpToPx(3))
+            setPadding(dpToPx(10), dpToPx(4), dpToPx(10), dpToPx(4))
             setOnClickListener {
                 val intent = Intent(this@FloatingBubbleService, MainActivity::class.java).apply {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -1400,9 +1400,16 @@ class FloatingBubbleService : Service() {
             setPadding(0, dpToPx(2), 0, dpToPx(4))
         }
 
-        // Section 1: Clean Advice Box
+        // Section 1: Clean Advice Box or Direct Message View
         val cleanAdvice = SummaryParser.cleanAdviceText(parsed.conciseAdvice)
-        if (cleanAdvice.isNotBlank()) {
+        val allTasks = parsed.tasksToDo + parsed.tasksPlanned + parsed.tasksDone
+        val effectiveAdvice = when {
+            cleanAdvice.isNotBlank() -> cleanAdvice
+            allTasks.isEmpty() && latestSummaryText.isNotBlank() -> latestSummaryText
+            else -> ""
+        }
+
+        if (effectiveAdvice.isNotBlank()) {
             val sec1Box = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 background = GradientDrawable().apply {
@@ -1417,7 +1424,7 @@ class FloatingBubbleService : Service() {
             }
 
             val adviceTv = TextView(this).apply {
-                text = cleanAdvice
+                text = effectiveAdvice
                 setTextColor(Color.WHITE)
                 textSize = 12.5f
                 setLineSpacing(dpToPx(2).toFloat(), 1.15f)
@@ -1427,7 +1434,6 @@ class FloatingBubbleService : Service() {
         }
 
         // Render all tasks directly with state-driven styling (Active / Done / Cancelled)
-        val allTasks = parsed.tasksToDo + parsed.tasksPlanned + parsed.tasksDone
         if (allTasks.isEmpty()) {
             val emptyBox = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
