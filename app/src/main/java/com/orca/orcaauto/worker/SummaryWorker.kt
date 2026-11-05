@@ -41,91 +41,84 @@ class SummaryWorker(
                 return Result.success()
             }
 
-            Log.i(TAG, "Tìm thấy ${notificationsIn24h.size} tin nhắn trong 24h qua. Chuẩn bị prompt...")
+            Log.i(TAG, "Tìm thấy ${notificationsIn24h.size} tin nhắn trong 24h qua. Tiến hành tóm tắt tuần tự cho các phiên...")
 
-            // 2. Build structured prompt with real-time timestamp, fixed user context, and previous summary reference
-            val fixedContext = preferences.getCustomFixedContext()
-            val persona = preferences.getPromptPersona()
-            val latestSummaryRecord = database.summaryDao().getLatestSummary()
-            val previousSummary = if (preferences.isRecentSummaryContextEnabled()) latestSummaryRecord?.summaryContent.orEmpty() else ""
-            val activeAlarms = if (preferences.isLongTermTasksContextEnabled()) database.smartAlarmDao().getActiveAlarms() else emptyList()
-            val cancelledTasks = if (preferences.isLongTermTasksContextEnabled()) database.smartAlarmDao().getCancelledAlarms() else emptyList()
-            val completedTasks = if (preferences.isLongTermTasksContextEnabled()) database.smartAlarmDao().getCompletedAlarms() else emptyList()
-            val taskNotes = preferences.getTaskNotes()
-            val prompt = GeminiPromptBuilder.buildSummaryPrompt(
-                notifications = notificationsIn24h,
-                customFixedContext = fixedContext,
-                persona = persona,
-                previousSummary = previousSummary,
-                activeAlarms = activeAlarms,
-                cancelledTasks = cancelledTasks,
-                completedTasks = completedTasks,
-                taskNotes = taskNotes,
-                timezoneId = preferences.getUserTimezone()
-            )
+            // 2. Load all sessions and order strictly for batch execution (Main session first, then by creation date)
+            val allSessions = preferences.loadSessions()
+            val orderedSessions = com.orca.orcaauto.domain.ai.SequentialAiQueue.orderSessionsForBatch(allSessions)
+            val activeSessionId = preferences.getSelectedSessionId()
 
-            // 3. Call Universal AI Client with Multi-Key Failover
-            val client = UniversalAiClient()
-            val result = client.executeWithFailover(keyPool, prompt)
+            var anySessionSuccess = false
+            var displaySummaryContent: String? = null
+            var displayModelInfo: String? = null
+            var displayMessageCount = 0
 
-            if (result.isSuccess) {
-                val (cleanSummary, usedKeyConfig) = result.getOrThrow()
-                val currentTime = SimpleDateFormat("HH:mm - dd/MM/yyyy", Locale.getDefault()).format(Date())
-                val timeSlotWithProvider = "$currentTime [${usedKeyConfig.provider.displayName}]"
-                val modelInfo = "${usedKeyConfig.provider.displayName} • ${usedKeyConfig.modelName}"
+            for (session in orderedSessions) {
+                // Check if session has matching messages
+                val sessionMsgs = com.orca.orcaauto.domain.filter.SessionMessageFilter.filter(notificationsIn24h, session)
+                if (sessionMsgs.isEmpty()) {
+                    Log.i(TAG, "Phiên '${session.name}' không có tin nhắn phù hợp trong 24h qua. Bỏ qua.")
+                    continue
+                }
 
-                // 4. Save summary record into history with modelInfo
-                val summaryRecord = SummaryHistoryEntity(
-                    timestamp = System.currentTimeMillis(),
-                    targetTimeSlot = timeSlotWithProvider,
-                    messageCount = notificationsIn24h.size,
-                    summaryContent = cleanSummary,
-                    status = "SUCCESS",
-                    modelInfo = modelInfo
-                )
-                database.summaryDao().insert(summaryRecord)
+                Log.i(TAG, "Bắt đầu tóm tắt tuần tự cho phiên '${session.name}' (${sessionMsgs.size} tin nhắn)...")
+                val result = com.orca.orcaauto.domain.LiveAiChatHelper.summarizeSession(applicationContext, session)
 
-                // 5. Mark messages as processed in Room DB
-                val processedIds = notificationsIn24h.map { it.id }
-                database.notificationDao().markAsProcessed(processedIds)
+                if (result.isSuccess) {
+                    anySessionSuccess = true
+                    val (cleanSummary, usedKeyConfig) = result.getOrThrow()
+                    val modelInfo = "${usedKeyConfig.provider.displayName} • ${usedKeyConfig.modelName}"
 
-                // 6. Only trigger Status Bar Notification if requested or if Floating Bubble is not available
+                    // Prioritize display for the currently active session, or fallback to main session
+                    if (session.id == activeSessionId || (displaySummaryContent == null && session.isMain)) {
+                        displaySummaryContent = cleanSummary
+                        displayModelInfo = modelInfo
+                        displayMessageCount = sessionMsgs.size
+                    }
+                    Log.i(TAG, "Tóm tắt phiên '${session.name}' thành công bằng [${usedKeyConfig.provider.displayName}]!")
+                } else {
+                    val err = result.exceptionOrNull()?.message
+                    Log.w(TAG, "Tóm tắt phiên '${session.name}' thất bại: $err")
+                }
+            }
+
+            if (anySessionSuccess && displaySummaryContent != null && displayModelInfo != null) {
+                // 3. Trigger Status Bar Notification if requested or if Floating Bubble is not available
                 val isOverlayActive = com.orca.orcaauto.service.FloatingBubbleService.isOverlayPermissionGranted(applicationContext)
-                val userPrefs = com.orca.orcaauto.data.preferences.UserPreferences.getInstance(applicationContext)
-                val shouldShowStatusBarNotif = userPrefs.isSummaryStatusBarNotificationEnabled() || !isOverlayActive
+                val shouldShowStatusBarNotif = preferences.isSummaryStatusBarNotificationEnabled() || !isOverlayActive
 
                 if (shouldShowStatusBarNotif) {
                     try {
-                        val parsed = com.orca.orcaauto.domain.filter.SummaryParser.parse(cleanSummary)
+                        val parsed = com.orca.orcaauto.domain.filter.SummaryParser.parse(displaySummaryContent)
                         val timeShort = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
                         com.orca.orcaauto.service.SummaryNotificationHelper.showSummaryReportNotification(
                             context = applicationContext,
                             timeSlot = timeShort,
-                            messageCount = notificationsIn24h.size,
+                            messageCount = displayMessageCount,
                             parsed = parsed,
-                            rawSummary = cleanSummary,
-                            modelInfo = modelInfo
+                            rawSummary = displaySummaryContent,
+                            modelInfo = displayModelInfo
                         )
                     } catch (e: Exception) {
                         Log.w(TAG, "Không thể gửi Heads-up Notification: ${e.message}")
                     }
                 }
 
-                // 7. Pop up Floating Chat Bubble (Bong bóng nổi) if permission is granted
+                // 4. Pop up Floating Chat Bubble (Bong bóng nổi) if permission is granted
                 try {
                     preferences.setHasUnreadSummary(true)
                     if (isOverlayActive) {
-                        com.orca.orcaauto.service.FloatingBubbleService.show(applicationContext, cleanSummary, modelInfo, wakeToState1 = true)
+                        com.orca.orcaauto.service.FloatingBubbleService.show(applicationContext, displaySummaryContent, displayModelInfo, wakeToState1 = true)
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "Không thể hiển thị Bong bóng nổi: ${e.message}")
                 }
 
-                Log.i(TAG, "Tóm tắt AI thành công bằng [${usedKeyConfig.provider.displayName}]! Đã xử lý ${processedIds.size} tin nhắn.")
+                Result.success()
+            } else if (anySessionSuccess) {
                 Result.success()
             } else {
-                val error = result.exceptionOrNull()
-                Log.w(TAG, "Toàn bộ các Key trong Key Pool đều thất bại: ${error?.message}. Dữ liệu được bảo toàn trong Room DB. Tự động thử lại sau 15 phút.")
+                Log.w(TAG, "Toàn bộ các phiên đều thất bại. Tự động thử lại sau 15 phút.")
                 Result.retry()
             }
         } catch (e: Exception) {

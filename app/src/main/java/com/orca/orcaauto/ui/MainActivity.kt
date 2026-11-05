@@ -62,8 +62,11 @@ import com.orca.orcaauto.ui.theme.TextPrimaryDark
 
 class MainActivity : ComponentActivity() {
 
+    private val navTargetState = mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        handleNavigationIntent(intent)
 
         try {
             setContent {
@@ -72,13 +75,26 @@ class MainActivity : ComponentActivity() {
                         modifier = Modifier.fillMaxSize(),
                         color = MaterialTheme.colorScheme.background
                     ) {
-                        MainAppNavHost()
+                        MainAppNavHost(navigationTarget = navTargetState.value)
                     }
                 }
             }
         } catch (e: Throwable) {
             android.util.Log.e("MainActivity", "Lỗi render giao diện: ${e.message}", e)
             showEmergencyErrorUi(e)
+        }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleNavigationIntent(intent)
+    }
+
+    private fun handleNavigationIntent(intent: android.content.Intent?) {
+        val target = intent?.getStringExtra("navigate_to")
+        if (!target.isNullOrBlank()) {
+            navTargetState.value = target
         }
     }
 
@@ -97,13 +113,21 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun MainAppNavHost() {
+fun MainAppNavHost(navigationTarget: String? = null) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val preferences = remember { UserPreferences.getInstance(context) }
 
     // Screen.History is the default landing / home screen
     var currentScreen by remember { mutableStateOf<Screen>(Screen.History) }
+
+    androidx.compose.runtime.LaunchedEffect(navigationTarget) {
+        when (navigationTarget) {
+            "advanced_sessions", "settings" -> currentScreen = Screen.Settings
+            "history" -> currentScreen = Screen.History
+            "dashboard" -> currentScreen = Screen.Dashboard
+        }
+    }
 
     // System Permissions missing check for the Settings badge indicator
     var isMissingPermissions by remember { mutableStateOf(false) }
@@ -239,7 +263,9 @@ fun MainAppNavHost() {
                     when (targetScreen) {
                         is Screen.Dashboard -> DashboardScreen()
                         is Screen.History -> HistoryScreen()
-                        is Screen.Settings -> SettingsScreen()
+                        is Screen.Settings -> SettingsScreen(
+                            initialExpandedCategory = if (navigationTarget == "advanced_sessions") 99 else null
+                        )
                     }
                 }
             }

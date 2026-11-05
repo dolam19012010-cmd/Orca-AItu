@@ -1,4 +1,4 @@
-﻿package com.orca.orcaauto.ui.screens
+package com.orca.orcaauto.ui.screens
 
 import android.net.Uri
 import android.widget.Toast
@@ -281,7 +281,7 @@ private fun SettingsCategoryCard(
 }
 
 @Composable
-fun SettingsScreen() {
+fun SettingsScreen(initialExpandedCategory: Int? = null) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
@@ -397,7 +397,13 @@ fun SettingsScreen() {
             )
         }
 
-        var expandedSectionIndex by remember { mutableStateOf<Int?>(null) }
+        var expandedSectionIndex by remember { mutableStateOf<Int?>(initialExpandedCategory) }
+
+        androidx.compose.runtime.LaunchedEffect(initialExpandedCategory) {
+            if (initialExpandedCategory != null) {
+                expandedSectionIndex = initialExpandedCategory
+            }
+        }
 
         // Category 0: Ứng dụng quét thông báo
         SettingsCategoryCard(

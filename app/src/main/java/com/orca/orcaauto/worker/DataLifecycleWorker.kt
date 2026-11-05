@@ -62,8 +62,11 @@ class DataLifecycleWorker(
                     Viết thật súc tích, mạch lạc, không rườm rà.
                 """.trimIndent()
 
-                val client = UniversalAiClient()
-                val result = client.executeWithFailover(keyPool, rollupPrompt)
+                val result = com.orca.orcaauto.domain.ai.SequentialAiQueue.execute(
+                    context = applicationContext,
+                    session = com.orca.orcaauto.data.preferences.SummarySessionConfig.createMainSession(),
+                    prompt = rollupPrompt
+                )
 
                 if (result.isSuccess) {
                     val (condensed, _) = result.getOrThrow()
