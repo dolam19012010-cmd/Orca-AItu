@@ -107,4 +107,25 @@ class SequentialAiQueueAndSessionFilterTest {
         assertEquals("c1", ordered[2].id)
         assertEquals("c3", ordered[3].id)
     }
+
+    @Test
+    fun testSessionMessageFilter_AppMatching() {
+        val telegramSession = SummarySessionConfig(
+            id = "sess_tele",
+            name = "Telegram Only",
+            isMain = false,
+            filterMode = ChatFilterMode.STRICT_WHITELIST,
+            whitelist = setOf("Telegram")
+        )
+
+        val notifs = listOf(
+            NotificationEntity(id = 1, appPackage = "com.zing.zalo", appName = "Zalo", sender = "Tu\u1EA5n", content = "Tin 1"),
+            NotificationEntity(id = 2, appPackage = "org.telegram.messenger", appName = "Telegram", sender = "Alice", content = "Tin 2"),
+            NotificationEntity(id = 3, appPackage = "org.telegram.messenger", appName = "Telegram", sender = "Bob", content = "Tin 3")
+        )
+
+        val filtered = SessionMessageFilter.filter(notifs, telegramSession)
+        assertEquals(2, filtered.size)
+        assertTrue(filtered.all { it.appName == "Telegram" })
+    }
 }

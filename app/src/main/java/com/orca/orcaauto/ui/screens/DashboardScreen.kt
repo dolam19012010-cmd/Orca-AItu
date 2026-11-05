@@ -143,14 +143,16 @@ fun DashboardScreen() {
             },
             onOpenBubbleClick = {
                 scope.launch {
-                    val latest = database.summaryDao().getLatestSummary()
-                    if (latest == null) {
-                        Toast.makeText(context, "Chưa có báo cáo nào trong lịch sử. Hãy bấm 'Tóm Tắt AI Ngay'!", Toast.LENGTH_LONG).show()
-                        return@launch
-                    }
-                    val summaryText = latest.summaryContent
-                    com.orca.orcaauto.service.FloatingBubbleService.show(context, summaryText)
-                    Toast.makeText(context, "Đã mở bong bóng chat!", Toast.LENGTH_SHORT).show()
+                    val selectedId = preferences.getSelectedSessionId()
+                    val sessionRecord = database.summaryDao().getLatestSummaryForSession(selectedId)
+                    val activeSession = preferences.getSelectedSession()
+                    com.orca.orcaauto.service.FloatingBubbleService.show(
+                        context = context,
+                        summaryContent = sessionRecord?.summaryContent.orEmpty(),
+                        modelInfo = sessionRecord?.modelInfo ?: "${activeSession.iconEmoji} ${activeSession.name}",
+                        sessionId = selectedId
+                    )
+                    Toast.makeText(context, "Đã mở bong bóng chat (${activeSession.name})!", Toast.LENGTH_SHORT).show()
                 }
             }
         )

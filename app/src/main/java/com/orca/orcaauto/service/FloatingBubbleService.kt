@@ -260,15 +260,31 @@ class FloatingBubbleService : Service() {
             UserPreferences.getInstance(this).setHasUnreadSummary(true)
         }
 
-        // Always ensure we have latest summary if memory is blank
-        if (latestSummaryText.isBlank()) {
-            serviceScope.launch {
-                val latest = AppDatabase.getDatabase(this@FloatingBubbleService).summaryDao().getLatestSummary()
-                if (latest != null && latest.summaryContent.isNotBlank()) {
-                    latestSummaryText = latest.summaryContent
-                    if (latest.modelInfo.isNotBlank()) latestModelInfo = latest.modelInfo
-                    if (isExpanded) updateBubbleContent()
-                }
+        val targetSessionId = intent?.getStringExtra(EXTRA_SESSION_ID)
+        if (!targetSessionId.isNullOrBlank()) {
+            UserPreferences.getInstance(this).setSelectedSessionId(targetSessionId)
+        }
+
+        // Synchronize latest summary strictly for the active session clone
+        serviceScope.launch {
+            val prefs = UserPreferences.getInstance(this@FloatingBubbleService)
+            val currentSessionId = prefs.getSelectedSessionId()
+            val db = AppDatabase.getDatabase(this@FloatingBubbleService)
+            val sessionRecord = db.summaryDao().getLatestSummaryForSession(currentSessionId)
+
+            if (summary.isNotBlank()) {
+                latestSummaryText = summary
+                if (model.isNotBlank()) latestModelInfo = model
+            } else if (sessionRecord != null && sessionRecord.summaryContent.isNotBlank()) {
+                latestSummaryText = sessionRecord.summaryContent
+                latestModelInfo = sessionRecord.modelInfo
+            } else {
+                val activeSession = prefs.getSelectedSession()
+                latestSummaryText = "Chưa có báo cáo cho '${activeSession.name}'.\n\nNhấn nút 'Gửi' bên dưới để tóm tắt các tin nhắn thuộc phiên này."
+                latestModelInfo = "${activeSession.iconEmoji} ${activeSession.name}"
+            }
+            withContext(Dispatchers.Main) {
+                if (isExpanded) updateBubbleContent()
             }
         }
 
@@ -2859,6 +2875,7 @@ class FloatingBubbleService : Service() {
         const val EXTRA_WAKE_TO_STATE_1 = "extra_wake_to_state_1"
         const val EXTRA_SUMMARY_CONTENT = "extra_summary_content"
         const val EXTRA_MODEL_INFO = "extra_model_info"
+        const val EXTRA_SESSION_ID = "extra_session_id"
 
         fun isOverlayPermissionGranted(context: Context): Boolean {
             return Settings.canDrawOverlays(context)
@@ -2884,12 +2901,15 @@ class FloatingBubbleService : Service() {
             }
         }
 
-        fun show(context: Context, summaryContent: String = "", modelInfo: String = "", wakeToState1: Boolean = true) {
+        fun show(context: Context, summaryContent: String = "", modelInfo: String = "", sessionId: String = "", wakeToState1: Boolean = true) {
             if (!isOverlayPermissionGranted(context)) return
             try {
                 val intent = Intent(context, FloatingBubbleService::class.java).apply {
                     putExtra(EXTRA_SUMMARY_CONTENT, summaryContent)
                     putExtra(EXTRA_MODEL_INFO, modelInfo)
+                    if (sessionId.isNotBlank()) {
+                        putExtra(EXTRA_SESSION_ID, sessionId)
+                    }
                     if (wakeToState1) {
                         action = ACTION_WAKE_TO_STATE_1
                         putExtra(EXTRA_WAKE_TO_STATE_1, true)

@@ -514,6 +514,13 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
                     Toast.makeText(context, "\u0110\u00E3 l\u01B0u phi\u00EAn '${session.name}'!", Toast.LENGTH_SHORT).show()
                 },
                 onDeleteSession = { sessionId ->
+                    scope.launch {
+                        try {
+                            com.orca.orcaauto.data.local.AppDatabase.getDatabase(context).summaryDao().deleteBySessionId(sessionId)
+                        } catch (e: Exception) {
+                            android.util.Log.w("SettingsScreen", "Lỗi xóa dữ liệu phiên: ${e.message}")
+                        }
+                    }
                     val deleted = preferences.deleteSession(sessionId)
                     if (deleted) {
                         Toast.makeText(context, "\u0110\u00E3 x\u00F3a phi\u00EAn th\u00E0nh c\u00F4ng!", Toast.LENGTH_SHORT).show()

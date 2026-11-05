@@ -52,6 +52,7 @@ class SummaryWorker(
             var displaySummaryContent: String? = null
             var displayModelInfo: String? = null
             var displayMessageCount = 0
+            var displaySessionId: String = activeSessionId
 
             for (session in orderedSessions) {
                 // Check if session has matching messages
@@ -74,6 +75,7 @@ class SummaryWorker(
                         displaySummaryContent = cleanSummary
                         displayModelInfo = modelInfo
                         displayMessageCount = sessionMsgs.size
+                        displaySessionId = session.id
                     }
                     Log.i(TAG, "Tóm tắt phiên '${session.name}' thành công bằng [${usedKeyConfig.provider.displayName}]!")
                 } else {
@@ -108,7 +110,13 @@ class SummaryWorker(
                 try {
                     preferences.setHasUnreadSummary(true)
                     if (isOverlayActive) {
-                        com.orca.orcaauto.service.FloatingBubbleService.show(applicationContext, displaySummaryContent, displayModelInfo, wakeToState1 = true)
+                        com.orca.orcaauto.service.FloatingBubbleService.show(
+                            context = applicationContext,
+                            summaryContent = displaySummaryContent,
+                            modelInfo = displayModelInfo,
+                            sessionId = displaySessionId,
+                            wakeToState1 = true
+                        )
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "Không thể hiển thị Bong bóng nổi: ${e.message}")

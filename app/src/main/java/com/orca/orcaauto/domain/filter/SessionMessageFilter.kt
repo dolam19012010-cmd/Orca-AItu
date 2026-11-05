@@ -42,7 +42,8 @@ object SessionMessageFilter {
             val isBanned = session.banlist.any { banPattern ->
                 val normPattern = NotificationFilter.normalize(banPattern)
                 if (normPattern.isBlank()) false
-                else NotificationFilter.matchesGlobPattern(senderNorm, normPattern)
+                else NotificationFilter.matchesGlobPattern(senderNorm, normPattern) ||
+                     NotificationFilter.matchesGlobPattern(appNameNorm, normPattern)
             }
             if (isBanned) return false
         }
@@ -56,7 +57,8 @@ object SessionMessageFilter {
                     session.whitelist.any { wlPattern ->
                         val normPattern = NotificationFilter.normalize(wlPattern)
                         if (normPattern.isBlank()) false
-                        else NotificationFilter.matchesGlobPattern(senderNorm, normPattern)
+                        else NotificationFilter.matchesGlobPattern(senderNorm, normPattern) ||
+                             NotificationFilter.matchesGlobPattern(appNameNorm, normPattern)
                     }
                 }
             }
@@ -67,7 +69,8 @@ object SessionMessageFilter {
                     session.whitelist.any { wlPattern ->
                         val normPattern = NotificationFilter.normalize(wlPattern)
                         if (normPattern.isBlank()) false
-                        else NotificationFilter.matchesGlobPattern(senderNorm, normPattern)
+                        else NotificationFilter.matchesGlobPattern(senderNorm, normPattern) ||
+                             NotificationFilter.matchesGlobPattern(appNameNorm, normPattern)
                     }
                 }
             }

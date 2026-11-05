@@ -44,4 +44,7 @@ interface SummaryDao {
 
     @Query("DELETE FROM summary_history WHERE id = :id")
     suspend fun deleteById(id: Long)
+
+    @Query("DELETE FROM summary_history WHERE sessionId = :sessionId")
+    suspend fun deleteBySessionId(sessionId: String): Int
 }
