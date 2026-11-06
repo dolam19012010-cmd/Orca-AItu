@@ -55,6 +55,12 @@ class SummaryWorker(
             var displaySessionId: String = activeSessionId
 
             for (session in orderedSessions) {
+                // If custom session has auto-summary disabled, skip scheduled run
+                if (!session.isMain && !session.isScheduled) {
+                    Log.i(TAG, "Phiên '${session.name}' đã tắt tự động tóm tắt theo ca. Bỏ qua.")
+                    continue
+                }
+
                 // Check if session has matching messages
                 val sessionMsgs = com.orca.orcaauto.domain.filter.SessionMessageFilter.filter(notificationsIn24h, session)
                 if (sessionMsgs.isEmpty()) {
@@ -99,7 +105,8 @@ class SummaryWorker(
                             messageCount = displayMessageCount,
                             parsed = parsed,
                             rawSummary = displaySummaryContent,
-                            modelInfo = displayModelInfo
+                            modelInfo = displayModelInfo,
+                            sessionId = displaySessionId
                         )
                     } catch (e: Exception) {
                         Log.w(TAG, "Không thể gửi Heads-up Notification: ${e.message}")

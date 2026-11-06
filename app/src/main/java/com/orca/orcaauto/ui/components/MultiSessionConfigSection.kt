@@ -41,6 +41,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -170,9 +172,10 @@ fun MultiSessionManagementSection(
                         }
 
                         val instructionDesc = if (session.customInstruction.isNotBlank()) "\n\u2022 Ch\u1EC9 th\u1ECB AI: ${session.customInstruction.take(30)}..." else ""
+                        val scheduledDesc = if (!session.isMain && !session.isScheduled) "\n\u2022 Ca \u0111\u1ECBnh k\u1EF3: T\u1EAFt (Ch\u1EC9 t\u00F3m t\u1EAFt th\u1EE7 c\u00F4ng)" else ""
 
                         Text(
-                            text = "\u2022 $whitelistDesc\n\u2022 $keyPriorityDesc$instructionDesc",
+                            text = "\u2022 $whitelistDesc\n\u2022 $keyPriorityDesc$instructionDesc$scheduledDesc",
                             style = MaterialTheme.typography.bodySmall,
                             color = Color(0xFFA1A1AA),
                             fontSize = 11.sp,
@@ -268,6 +271,7 @@ fun SessionConfigDialog(
     val prioritizedKeyIds = remember { mutableStateListOf<String>().apply { addAll(session.keyPriorityIds) } }
     var customInput by remember { mutableStateOf("") }
     var customInstruction by remember { mutableStateOf(session.customInstruction) }
+    var isScheduled by remember { mutableStateOf(session.isScheduled) }
 
     val availableEmojis = listOf("\u26A1", "\uD83D\uDCBC", "\uD83D\uDE80", "\uD83D\uDC65", "\uD83C\uDFE0", "\uD83C\uDFAF", "\uD83D\uDCCC", "\uD83D\uDD25", "\uD83D\uDCAC", "\u2B50")
 
@@ -639,6 +643,37 @@ fun SessionConfigDialog(
                         unfocusedBorderColor = GlassBorderSubtle
                     )
                 )
+
+                HorizontalDivider(color = GlassBorderSubtle)
+
+                // 5. Automatic Shift Summary Toggle
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "5. T\u1EF1 \u0110\u1ED9ng T\u00F3m T\u1EAFt Theo Ca:",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = AccentCyan,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "T\u1EF1 \u0111\u1ED9ng t\u00F3m t\u1EAFt theo c\u00E1c m\u1ED1c gi\u1EDD ca (12:00, 18:00) n\u1EBFu phi\u00EAn c\u00F3 tin nh\u1EAFn m\u1EDBi.",
+                            fontSize = 11.sp,
+                            color = Color(0xFFA1A1AA)
+                        )
+                    }
+                    Switch(
+                        checked = isScheduled,
+                        onCheckedChange = { isScheduled = it },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = Color(0xFF2563EB)
+                        )
+                    )
+                }
             }
         },
         confirmButton = {
@@ -651,7 +686,8 @@ fun SessionConfigDialog(
                         filterMode = if (whitelist.isNotEmpty()) ChatFilterMode.STRICT_WHITELIST else session.filterMode,
                         whitelist = whitelist.toSet(),
                         keyPriorityIds = prioritizedKeyIds.toList(),
-                        customInstruction = customInstruction.trim()
+                        customInstruction = customInstruction.trim(),
+                        isScheduled = isScheduled
                     )
                     onSave(updated)
                 },

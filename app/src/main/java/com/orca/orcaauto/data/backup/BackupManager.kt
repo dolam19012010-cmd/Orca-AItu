@@ -29,7 +29,8 @@ data class OrcaBackupData(
     val telegramEnabled: Boolean = true,
     val messengerEnabled: Boolean = true,
     val summaries: List<SummaryHistoryEntity> = emptyList(),
-    val dailyMemories: List<DailyMemoryEntity> = emptyList()
+    val dailyMemories: List<DailyMemoryEntity> = emptyList(),
+    val sessions: List<com.orca.orcaauto.data.preferences.SummarySessionConfig> = emptyList()
 )
 
 object BackupManager {
@@ -66,7 +67,8 @@ object BackupManager {
             telegramEnabled = prefs.isTelegramEnabled(),
             messengerEnabled = prefs.isMessengerEnabled(),
             summaries = summaries,
-            dailyMemories = dailyMemories
+            dailyMemories = dailyMemories,
+            sessions = prefs.loadSessions()
         )
     }
 
@@ -128,13 +130,13 @@ object BackupManager {
             }
 
             // 2. Restore Persona Context & Schedule
-            if (backup.customFixedContext.isNotBlank()) {
+            if (!backup.customFixedContext.isNullOrBlank()) {
                 prefs.setCustomFixedContext(backup.customFixedContext)
             }
-            if (backup.promptPersonaId.isNotBlank()) {
+            if (!backup.promptPersonaId.isNullOrBlank()) {
                 prefs.setPromptPersona(com.orca.orcaauto.domain.prompt.PromptPersona.fromId(backup.promptPersonaId))
             }
-            if (backup.scheduledHours.isNotEmpty()) {
+            if (!backup.scheduledHours.isNullOrEmpty()) {
                 prefs.setScheduledHours(backup.scheduledHours)
                 WorkScheduler.scheduleDailySummaries(context)
             }
@@ -146,13 +148,27 @@ object BackupManager {
 
             // 4. Restore Room summaries
             var summaryCount = 0
-            if (backup.summaries.isNotEmpty()) {
+            if (!backup.summaries.isNullOrEmpty()) {
                 db.summaryDao().insertAll(backup.summaries)
                 summaryCount = backup.summaries.size
             }
 
-            if (backup.dailyMemories.isNotEmpty()) {
+            if (!backup.dailyMemories.isNullOrEmpty()) {
                 db.dailyMemoryDao().insertAll(backup.dailyMemories)
+            }
+
+            // 5. Restore Sessions
+            if (!backup.sessions.isNullOrEmpty()) {
+                val currentSessions = prefs.loadSessions().toMutableList()
+                for (session in backup.sessions) {
+                    val existingIndex = currentSessions.indexOfFirst { it.id == session.id }
+                    if (existingIndex >= 0) {
+                        currentSessions[existingIndex] = session
+                    } else {
+                        currentSessions.add(session)
+                    }
+                }
+                prefs.saveSessions(currentSessions)
             }
 
             // Save new auto-snapshot immediately
@@ -180,7 +196,8 @@ object BackupManager {
                 promptPersonaId = prefs.getPromptPersona().id,
                 zaloEnabled = prefs.isZaloEnabled(),
                 telegramEnabled = prefs.isTelegramEnabled(),
-                messengerEnabled = prefs.isMessengerEnabled()
+                messengerEnabled = prefs.isMessengerEnabled(),
+                sessions = prefs.loadSessions()
             )
             val file = File(context.filesDir, AUTO_SNAPSHOT_FILENAME)
             file.writeText(gson.toJson(data), Charsets.UTF_8)
@@ -204,15 +221,18 @@ object BackupManager {
                     if (backup != null && backup.keyPool.isNotEmpty()) {
                         Log.i(TAG, "Phát hiện snapshot cũ sau khi cập nhật! Đang tự động phục hồi cấu hình...")
                         prefs.saveKeyPoolExternal(backup.keyPool)
-                        if (backup.customFixedContext.isNotBlank()) {
+                        if (!backup.customFixedContext.isNullOrBlank()) {
                             prefs.setCustomFixedContext(backup.customFixedContext)
                         }
-                        if (backup.promptPersonaId.isNotBlank()) {
+                        if (!backup.promptPersonaId.isNullOrBlank()) {
                             prefs.setPromptPersona(com.orca.orcaauto.domain.prompt.PromptPersona.fromId(backup.promptPersonaId))
                         }
-                        if (backup.scheduledHours.isNotEmpty()) {
+                        if (!backup.scheduledHours.isNullOrEmpty()) {
                             prefs.setScheduledHours(backup.scheduledHours)
                             WorkScheduler.scheduleDailySummaries(context)
+                        }
+                        if (!backup.sessions.isNullOrEmpty()) {
+                            prefs.saveSessions(backup.sessions)
                         }
                     }
                 }

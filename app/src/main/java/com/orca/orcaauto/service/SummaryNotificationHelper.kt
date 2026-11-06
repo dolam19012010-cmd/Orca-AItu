@@ -27,18 +27,22 @@ object SummaryNotificationHelper {
         messageCount: Int,
         parsed: ParsedSummary,
         rawSummary: String = "",
-        modelInfo: String = ""
+        modelInfo: String = "",
+        sessionId: String = ""
     ) {
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         createReportChannel(notificationManager)
 
         val urgentCount = parsed.tasksToDo.size
-        val title = "🎯 Báo Cáo AI [$timeSlot]: $urgentCount Việc Cần Làm!"
+        val title = "\uD83C\uDFAF B\u00E1o C\u00E1o AI [$timeSlot]: $urgentCount Vi\u1EC7c C\u1EA7n L\u00E0m!"
 
         // 1. PendingIntent for opening History in MainActivity
         val contentIntent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             putExtra("navigate_to", "history")
+            if (sessionId.isNotBlank()) {
+                putExtra("target_session_id", sessionId)
+            }
         }
         val contentPendingIntent = PendingIntent.getActivity(
             context,
@@ -51,6 +55,9 @@ object SummaryNotificationHelper {
         val bubbleIntent = Intent(context, FloatingBubbleService::class.java).apply {
             putExtra(FloatingBubbleService.EXTRA_SUMMARY_CONTENT, rawSummary.ifBlank { parsed.rawCleanText })
             putExtra(FloatingBubbleService.EXTRA_MODEL_INFO, modelInfo)
+            if (sessionId.isNotBlank()) {
+                putExtra(FloatingBubbleService.EXTRA_SESSION_ID, sessionId)
+            }
         }
         val bubblePendingIntent = PendingIntent.getService(
             context,

@@ -50,9 +50,12 @@ object LiveAiChatHelper {
         // 2. Filter notifications according to the session rules
         val sessionNotifications = SessionMessageFilter.filter(allNotifications, session)
 
-        if (sessionNotifications.isEmpty()) {
+        val isExplicitUserQuery = !userQueryOrInstruction.isNullOrBlank() &&
+                userQueryOrInstruction.trim() != "T\u00F3m t\u1EAFt c\u00E1c tin nh\u1EAFn quan tr\u1ECDng g\u1EA7n \u0111\u00E2y"
+
+        if (sessionNotifications.isEmpty() && !isExplicitUserQuery) {
             return@withContext Result.failure(
-                IllegalStateException("Không có tin nhắn nào thuộc phiên '${session.name}' trong 24 giờ qua.")
+                IllegalStateException("Kh\u00F4ng c\u00F3 tin nh\u1EAFn n\u00E0o thu\u1ED9c phi\u00EAn '${session.name}' trong 24 gi\u1EDD qua.")
             )
         }
 

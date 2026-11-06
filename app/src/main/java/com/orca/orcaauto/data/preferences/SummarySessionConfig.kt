@@ -14,7 +14,7 @@ data class SummarySessionConfig(
     val whitelist: Set<String> = emptySet(),
     val banlist: Set<String> = emptySet(),
     val keyPriorityIds: List<String> = emptyList(),
-    val isScheduled: Boolean = false,
+    val isScheduled: Boolean = true,
     val scheduledHours: List<String> = listOf("18:00"),
     val customInstruction: String = ""
 ) {

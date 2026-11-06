@@ -96,6 +96,10 @@ class MainActivity : ComponentActivity() {
         if (!target.isNullOrBlank()) {
             navTargetState.value = target
         }
+        val targetSessionId = intent?.getStringExtra("target_session_id")
+        if (!targetSessionId.isNullOrBlank()) {
+            UserPreferences.getInstance(this).setSelectedSessionId(targetSessionId)
+        }
     }
 
     private fun showEmergencyErrorUi(throwable: Throwable) {
