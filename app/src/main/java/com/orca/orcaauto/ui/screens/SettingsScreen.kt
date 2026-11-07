@@ -40,6 +40,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -111,6 +112,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -120,6 +122,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.orca.orcaauto.R
+import com.orca.orcaauto.data.preferences.SummarySessionConfig
 import com.orca.orcaauto.data.preferences.UserPreferences
 import com.orca.orcaauto.data.remote.ApiKeyConfig
 import com.orca.orcaauto.data.remote.ApiDebugLogManager
@@ -302,6 +305,12 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
     val wallpaperMode by preferences.wallpaperModeFlow.collectAsState()
     val filterRules by preferences.filterRulesFlow.collectAsState()
     val sessions by preferences.sessionsFlow.collectAsState()
+    val selectedSessionId by preferences.selectedSessionIdFlow.collectAsState()
+    val currentSession = sessions.find { it.id == selectedSessionId } ?: sessions.firstOrNull() ?: SummarySessionConfig.createMainSession()
+
+    var showCreateSessionDialog by remember { mutableStateOf(false) }
+    var newSessionNameInput by remember { mutableStateOf("") }
+    var newSessionEmojiInput by remember { mutableStateOf("\u26A1") }
     val allRecentSenders = remember(filterRules) {
         listOf(
             UserPreferences.PACKAGE_ZALO,
@@ -397,6 +406,149 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
             )
         }
 
+        // Top-level Session Switcher Bar (App-Cloning Độc Lập)
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = GlassSurfaceDark),
+            border = BorderStroke(1.dp, GlassBorder)
+        ) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "\uD83C\uDFAD Phi\u00EAn C\u1EA5u H\u00ECnh",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = TextPrimaryDark,
+                            fontSize = 14.5.sp
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Box(
+                            modifier = Modifier
+                                .background(AccentCyan.copy(alpha = 0.15f), RoundedCornerShape(6.dp))
+                                .border(0.5.dp, AccentCyan.copy(alpha = 0.4f), RoundedCornerShape(6.dp))
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = "App-Cloning",
+                                color = AccentCyan,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    Text(
+                        text = "${sessions.size} phi\u00EAn",
+                        fontSize = 11.5.sp,
+                        color = TextSecondaryDark
+                    )
+                }
+
+                Text(
+                    text = "M\u1ED7i phi\u00EAn l\u00E0 m\u1ED9t b\u1EA3n c\u1EA5u h\u00ECnh ri\u00EAng bi\u1EC7t (App qu\u00E9t, Ca t\u00F3m t\u1EAFt, V\u0103n phong, B\u1ED1i c\u1EA3nh). Chuy\u1EC3n phi\u00EAn \u0111\u1EC3 xem v\u00E0 s\u1EEDa c\u00E0i \u0111\u1EB7t:",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondaryDark,
+                    fontSize = 11.5.sp
+                )
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    sessions.forEach { session ->
+                        val isSelected = session.id == currentSession.id
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(
+                                    if (isSelected) PrimaryIndigo else SurfaceVariantDark.copy(alpha = 0.6f)
+                                )
+                                .border(
+                                    1.dp,
+                                    if (isSelected) AccentCyan else CardBorder,
+                                    RoundedCornerShape(10.dp)
+                                )
+                                .clickable {
+                                    preferences.setSelectedSessionId(session.id)
+                                }
+                                .padding(horizontal = 12.dp, vertical = 8.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = session.iconEmoji.ifBlank { "\u26A1" },
+                                    fontSize = 13.sp
+                                )
+                                Text(
+                                    text = session.name,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isSelected) Color.White else TextPrimaryDark,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                                if (isSelected) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = null,
+                                        tint = AccentCyan,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(SurfaceVariantDark.copy(alpha = 0.3f))
+                            .border(BorderStroke(1.dp, AccentCyan.copy(alpha = 0.6f)), RoundedCornerShape(10.dp))
+                            .clickable {
+                                newSessionNameInput = "Phi\u00EAn ${sessions.size + 1}"
+                                newSessionEmojiInput = "\u26A1"
+                                showCreateSessionDialog = true
+                            }
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = null,
+                                tint = AccentCyan,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = "T\u1EA1o Phi\u00EAn M\u1EDBi",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = AccentCyan,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         var expandedSectionIndex by remember { mutableStateOf<Int?>(initialExpandedCategory) }
 
         androidx.compose.runtime.LaunchedEffect(initialExpandedCategory) {
@@ -412,17 +564,29 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
             icon = Icons.Default.Notifications,
             iconBgColor = Color(0xFF3B82F6),
             title = "Ứng Dụng Quét Thông Báo",
-            subtitle = "Zalo, Telegram, Facebook Messenger",
+            subtitle = "${currentSession.name}: Zalo, Telegram, Facebook Messenger",
             badgeText = "${listOf(zaloEnabled, telegramEnabled, messengerEnabled).count { it }}/3 Bật"
         ) {
             AppMonitoredSection(
-                zaloEnabled = zaloEnabled,
-                telegramEnabled = telegramEnabled,
-                messengerEnabled = messengerEnabled,
+                zaloEnabled = currentSession.zaloEnabled,
+                telegramEnabled = currentSession.telegramEnabled,
+                messengerEnabled = currentSession.messengerEnabled,
                 filterRules = filterRules,
-                onToggleZalo = { preferences.setZaloEnabled(it) },
-                onToggleTelegram = { preferences.setTelegramEnabled(it) },
-                onToggleMessenger = { preferences.setMessengerEnabled(it) },
+                onToggleZalo = {
+                    val updated = currentSession.copy(zaloEnabled = it)
+                    preferences.saveSession(updated)
+                    if (currentSession.isMain) preferences.setZaloEnabled(it)
+                },
+                onToggleTelegram = {
+                    val updated = currentSession.copy(telegramEnabled = it)
+                    preferences.saveSession(updated)
+                    if (currentSession.isMain) preferences.setTelegramEnabled(it)
+                },
+                onToggleMessenger = {
+                    val updated = currentSession.copy(messengerEnabled = it)
+                    preferences.saveSession(updated)
+                    if (currentSession.isMain) preferences.setMessengerEnabled(it)
+                },
                 onOpenFilterDialog = { pkg -> appForFilterDialog = pkg }
             )
         }
@@ -433,21 +597,26 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
             onToggle = { expandedSectionIndex = if (expandedSectionIndex == 1) null else 1 },
             icon = Icons.Default.Schedule,
             iconBgColor = Color(0xFF10B981),
-            title = "Khung Giờ Tóm Tắt Tự Động",
-            subtitle = "Lên lịch AI quét thông báo và gửi báo cáo",
-            badgeText = "${scheduledHours.size} mốc giờ"
+            title = "Khung Gi\u1EDD T\u00F3m T\u1EAFt T\u1EF1 \u0110\u1ED9ng",
+            subtitle = "L\u00EAn l\u1ECBch AI qu\u00E9t th\u00F4ng b\u00E1o cho [${currentSession.name}]",
+            badgeText = "${currentSession.scheduledHours.size} m\u1ED1c (${currentSession.name})"
         ) {
             ScheduledHoursSection(
-                scheduledHours = scheduledHours,
+                scheduledHours = currentSession.scheduledHours,
                 onAddHourClick = {
                     newHourInput = ""
                     showAddHourDialog = true
                 },
                 onRemoveHour = { hourStr ->
-                    preferences.removeScheduledHour(hourStr)
-                    WorkScheduler.cancelScheduledHour(context, hourStr)
+                    val updatedHours = currentSession.scheduledHours.filterNot { it == hourStr }
+                    val updated = currentSession.copy(scheduledHours = updatedHours)
+                    preferences.saveSession(updated)
+                    if (currentSession.isMain) {
+                        preferences.removeScheduledHour(hourStr)
+                        WorkScheduler.cancelScheduledHour(context, hourStr)
+                    }
                     WorkScheduler.scheduleDailySummaries(context)
-                    Toast.makeText(context, "Đã xóa mốc giờ $hourStr", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "\u0110\u00E3 x\u00F3a m\u1ED1c gi\u1EDD $hourStr c\u1EE7a [${currentSession.name}]", Toast.LENGTH_SHORT).show()
                 }
             )
         }
@@ -495,14 +664,14 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
             )
         }
 
-        // Category NÃ¢ng Cao: Quáº£n LÃ½ Äa PhiÃªn (Sequential FIFO AI Queue)
+        // Category Quáº£n LÃ½ Äa PhiÃªn (App Cloning)
         SettingsCategoryCard(
             isExpanded = expandedSectionIndex == 99,
             onToggle = { expandedSectionIndex = if (expandedSectionIndex == 99) null else 99 },
             icon = Icons.Default.FilterAlt,
             iconBgColor = Color(0xFF8B5CF6),
-            title = "N\u00E2ng Cao: Qu\u1EA3n L\u00FD \u0110a Phi\u00EAn",
-            subtitle = "T\u1EA1o phi\u00EAn ri\u00EAng, Whitelist & Th\u1EE9 t\u1EF1 \u01B0u ti\u00EAn Key",
+            title = "Qu\u1EA3n L\u00FD \u0110a Phi\u00EAn (App Cloning)",
+            subtitle = "Nh\u00E2n b\u1EA3n c\u1EA5u h\u00ECnh \u0111\u1ED9c l\u1EADp, B\u1ED9 l\u1ECDc ng\u01B0\u1EDDi g\u1EEDi & \u01AFu ti\u00EAn Key",
             badgeText = "${sessions.size} phi\u00EAn"
         ) {
             MultiSessionManagementSection(
@@ -530,20 +699,23 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
         }
 
         // Category 3: Phong cách văn phong trợ lý AI
+        val currentSessionPersona = PromptPersona.fromId(currentSession.promptPersonaId) ?: PromptPersona.GENTLE_ASSISTANT
         SettingsCategoryCard(
             isExpanded = expandedSectionIndex == 3,
             onToggle = { expandedSectionIndex = if (expandedSectionIndex == 3) null else 3 },
             icon = Icons.Default.Psychology,
             iconBgColor = Color(0xFF27272A),
-            title = "Phong Cách Văn Phong AI",
-            subtitle = "Chu đáo, Nghiêm túc, Tối giản, Hóm hỉnh...",
-            badgeText = currentPersona.title
+            title = "Phong C\u00E1ch V\u0103n Phong AI",
+            subtitle = "Chu \u0111\u00E1o, Nghi\u00EAm t\u00FAc, T\u1ED1i gi\u1EA3n, H\u00F3m h\u1EC9nh...",
+            badgeText = "${currentSessionPersona.title} (${currentSession.name})"
         ) {
             PersonaStyleSection(
-                currentPersona = currentPersona,
+                currentPersona = currentSessionPersona,
                 onSelectPersona = { persona ->
-                    preferences.setPromptPersona(persona)
-                    Toast.makeText(context, "Đã chọn: ${persona.title}", Toast.LENGTH_SHORT).show()
+                    val updated = currentSession.copy(promptPersonaId = persona.id)
+                    preferences.saveSession(updated)
+                    if (currentSession.isMain) preferences.setPromptPersona(persona)
+                    Toast.makeText(context, "\u0110\u00E3 ch\u1ECDn: ${persona.title} cho [${currentSession.name}]", Toast.LENGTH_SHORT).show()
                 }
             )
         }
@@ -554,12 +726,12 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
             onToggle = { expandedSectionIndex = if (expandedSectionIndex == 4) null else 4 },
             icon = Icons.Default.Visibility,
             iconBgColor = Color(0xFF06B6D4),
-            title = "Trí Nhớ Ngữ Cảnh AI",
-            subtitle = "Tóm tắt ca gần nhất, Việc dài hạn & Bối cảnh cố định"
+            title = "Tr\u00ED Nh\u1EDB Ng\u1EEF C\u1EA3nh AI",
+            subtitle = "B\u1ED1i c\u1EA3nh ri\u00EAng [${currentSession.name}], ca g\u1EA7n nh\u1EA5t & vi\u1EC7c qu\u00E1 h\u1EA1n"
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    text = "Tùy chọn ngữ cảnh truyền vào mỗi lần AI phân tích.",
+                    text = "T\u00F9y ch\u1ECDn ng\u1EEF c\u1EA3nh truy\u1EC1n v\u00E0o m\u1ED7i l\u1EA7n AI ph\u00E2n t\u00EDch cho phi\u00EAn [${currentSession.name}].",
                     style = MaterialTheme.typography.bodySmall,
                     color = TextSecondaryDark
                 )
@@ -632,11 +804,53 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
                     )
                 }
 
+                // Toggle 3: Auto-complete overdue tasks
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(SurfaceVariantDark.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                        .border(1.dp, CardBorder, RoundedCornerShape(10.dp))
+                        .padding(10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "T\u1EF1 \u0111\u1ED9ng ho\u00E0n th\u00E0nh vi\u1EC7c qu\u00E1 h\u1EA1n",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold,
+                            color = TextPrimaryDark
+                        )
+                        Text(
+                            text = "Vi\u1EC7c c\u00F3 h\u1EA1n tr\u01B0\u1EDBc hi\u1EC7n t\u1EA1i s\u1EBD t\u1EF1 \u0111\u01B0\u1EE3c x\u1EBFp v\u00E0o \u0110\u00C3 L\u00C0M (DONE)",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = TextSecondaryDark,
+                            fontSize = 11.sp
+                        )
+                    }
+                    Switch(
+                        checked = currentSession.autoCompleteOverdue,
+                        onCheckedChange = { isChecked ->
+                            val updated = currentSession.copy(autoCompleteOverdue = isChecked)
+                            preferences.saveSession(updated)
+                            Toast.makeText(context, if (isChecked) "\u0110\u00E3 b\u1EADt t\u1EF1 ho\u00E0n th\u00E0nh qu\u00E1 h\u1EA1n cho [${currentSession.name}]" else "\u0110\u00E3 t\u1EAFt t\u1EF1 ho\u00E0n th\u00E0nh qu\u00E1 h\u1EA1n cho [${currentSession.name}]", Toast.LENGTH_SHORT).show()
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = BackgroundDark,
+                            checkedTrackColor = PrimaryIndigo
+                        )
+                    )
+                }
+
                 FixedContextSection(
-                    customFixedContext = customFixedContext,
+                    customFixedContext = currentSession.customFixedContext,
                     onSaveContext = { newContext ->
-                        preferences.setCustomFixedContext(newContext)
-                        Toast.makeText(context, "Đã lưu bối cảnh cố định thành công!", Toast.LENGTH_SHORT).show()
+                        val updated = currentSession.copy(customFixedContext = newContext)
+                        preferences.saveSession(updated)
+                        if (currentSession.isMain) {
+                            preferences.setCustomFixedContext(newContext)
+                        }
+                        Toast.makeText(context, "\u0110\u00E3 l\u01B0u b\u1ED1i c\u1EA3nh cho [${currentSession.name}]!", Toast.LENGTH_SHORT).show()
                     }
                 )
             }
@@ -897,13 +1111,20 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
             confirmButton = {
                 Button(
                     onClick = {
-                        val added = preferences.addScheduledHour(newHourInput)
-                        if (added) {
+                        val formatted = newHourInput.trim()
+                        if (formatted.matches(Regex("^([01]?[0-9]|2[0-3]):[0-5][0-9]$"))) {
+                            val normalized = if (formatted.length == 4) "0$formatted" else formatted
+                            val updatedHours = (currentSession.scheduledHours + normalized).distinct().sorted()
+                            val updated = currentSession.copy(scheduledHours = updatedHours)
+                            preferences.saveSession(updated)
+                            if (currentSession.isMain) {
+                                preferences.addScheduledHour(normalized)
+                            }
                             WorkScheduler.scheduleDailySummaries(context)
-                            Toast.makeText(context, "Đã thêm khung giờ $newHourInput", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "\u0110\u00E3 th\u00EAm khung gi\u1EDD $normalized cho [${currentSession.name}]", Toast.LENGTH_SHORT).show()
                             showAddHourDialog = false
                         } else {
-                            Toast.makeText(context, "Định dạng không hợp lệ (HH:mm) hoặc giờ đã tồn tại!", Toast.LENGTH_LONG).show()
+                            Toast.makeText(context, "\u0110\u1ECBnh d\u1EA1ng kh\u00F4ng h\u1EE3p l\u1EC7 (HH:mm)!", Toast.LENGTH_LONG).show()
                         }
                     },
                     colors = ButtonDefaults.buttonColors(
@@ -911,12 +1132,108 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
                         contentColor = BackgroundDark
                     )
                 ) {
-                    Text("Xác Nhận", color = BackgroundDark, fontWeight = FontWeight.Bold)
+                    Text("X\u00E1c Nh\u1EADn", color = BackgroundDark, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showAddHourDialog = false }) {
-                    Text("Hủy", color = TextSecondaryDark)
+                    Text("H\u1EE7y", color = TextSecondaryDark)
+                }
+            },
+            containerColor = SurfaceDark
+        )
+    }
+
+    // Modal Dialog: Create New Cloned Session
+    if (showCreateSessionDialog) {
+        val emojis = listOf("\u26A1", "\uD83D\uDCBC", "\uD83D\uDCDA", "\uD83C\uDFE0", "\uD83C\uDFAF", "\uD83D\uDCAC", "\uD83E\uDD16", "\uD83D\uDD25")
+        AlertDialog(
+            onDismissRequest = { showCreateSessionDialog = false },
+            title = {
+                Text("T\u1EA1o Phi\u00EAn M\u1EDBi (App-Cloning)", fontWeight = FontWeight.Bold, color = TextPrimaryDark)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "Phi\u00EAn m\u1EDBi l\u00E0 m\u1ED9t b\u1EA3n c\u1EA5u h\u00ECnh ho\u00E0n to\u00E0n \u0111\u1ED9c l\u1EADp: b\u1ED1i c\u1EA3nh ri\u00EAng, c\u00E0i \u0111\u1EB7t ri\u00EAng, kh\u00F4ng b\u1ECB tr\u00F9ng l\u1EB7p.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondaryDark
+                    )
+
+                    OutlinedTextField(
+                        value = newSessionNameInput,
+                        onValueChange = { newSessionNameInput = it },
+                        singleLine = true,
+                        label = { Text("T\u00EAn phi\u00EAn (v\u00ED d\u1EE5: C\u00F4ng Vi\u1EC7c, H\u1ECDc T\u1EADp)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = PrimaryIndigo,
+                            unfocusedBorderColor = CardBorder,
+                            focusedTextColor = TextPrimaryDark,
+                            unfocusedTextColor = TextPrimaryDark
+                        )
+                    )
+
+                    Text(
+                        text = "Bi\u1EC3u t\u01B0\u1EE3ng:",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = TextSecondaryDark
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        emojis.forEach { emoji ->
+                            val isSelected = newSessionEmojiInput == emoji
+                            Box(
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (isSelected) PrimaryIndigo else SurfaceVariantDark.copy(alpha = 0.5f))
+                                    .border(1.dp, if (isSelected) AccentCyan else CardBorder, RoundedCornerShape(8.dp))
+                                    .clickable { newSessionEmojiInput = emoji },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(emoji, fontSize = 16.sp)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val name = newSessionNameInput.trim().ifBlank { "Phi\u00EAn ${sessions.size + 1}" }
+                        val newSession = SummarySessionConfig(
+                            id = java.util.UUID.randomUUID().toString(),
+                            name = name,
+                            iconEmoji = newSessionEmojiInput.trim().ifBlank { "\u26A1" },
+                            isMain = false,
+                            zaloEnabled = false,
+                            telegramEnabled = false,
+                            messengerEnabled = false,
+                            scheduledHours = listOf("12:00", "18:00"),
+                            customFixedContext = "",
+                            promptPersonaId = "gentle_assistant",
+                            autoCompleteOverdue = false
+                        )
+                        preferences.saveSession(newSession)
+                        preferences.setSelectedSessionId(newSession.id)
+                        showCreateSessionDialog = false
+                        Toast.makeText(context, "\u0110\u00E3 t\u1EA1o v\u00E0 chuy\u1EC3n sang [${newSession.name}]!", Toast.LENGTH_SHORT).show()
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = PrimaryIndigo,
+                        contentColor = BackgroundDark
+                    )
+                ) {
+                    Text("T\u1EA1o & K\u00EDch Ho\u1EA1t", color = BackgroundDark, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCreateSessionDialog = false }) {
+                    Text("H\u1EE7y", color = TextSecondaryDark)
                 }
             },
             containerColor = SurfaceDark
@@ -2057,9 +2374,11 @@ private fun TimezoneAndBackupSection(
                         },
                         shape = RoundedCornerShape(6.dp),
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                        modifier = Modifier.height(28.dp)
+                        modifier = Modifier.height(28.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentCyan),
+                        border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.6f))
                     ) {
-                        Text("Tùy Chỉnh Khác", fontSize = 11.sp)
+                        Text("T\u00F9y Ch\u1EC9nh Kh\u00E1c", fontSize = 11.sp, color = AccentCyan)
                     }
                 }
             }
@@ -2136,9 +2455,11 @@ private fun TimezoneAndBackupSection(
                 OutlinedButton(
                     onClick = onRestoreClick,
                     modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(10.dp)
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimaryDark),
+                    border = BorderStroke(1.dp, CardBorder)
                 ) {
-                    Text("Phục Hồi (Restore)", fontSize = 12.sp)
+                    Text("Ph\u1EE5c H\u1ED3i (Restore)", fontSize = 12.sp, color = TextPrimaryDark)
                 }
             }
         }
@@ -3311,7 +3632,8 @@ private fun ApiDebugConsoleDialog(
                 // Actions Toolbar: Ping test, Copy All, Clear
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Button(
                         onClick = {
@@ -3338,7 +3660,8 @@ private fun ApiDebugConsoleDialog(
                                 }
                             }
                         },
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1.3f),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
                         enabled = !isRunningPingTest,
                         shape = RoundedCornerShape(8.dp),
                         colors = ButtonDefaults.buttonColors(
@@ -3349,7 +3672,7 @@ private fun ApiDebugConsoleDialog(
                         if (isRunningPingTest) {
                             CircularProgressIndicator(modifier = Modifier.size(14.dp), color = BackgroundDark, strokeWidth = 2.dp)
                         } else {
-                            Text("⚡ Ping Test API", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = BackgroundDark)
+                            Text("⚡ Ping Test", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = BackgroundDark, maxLines = 1, softWrap = false)
                         }
                     }
 
@@ -3359,10 +3682,12 @@ private fun ApiDebugConsoleDialog(
                             clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(text))
                             Toast.makeText(context, "Đã sao chép toàn bộ nhật ký debug vào Clipboard!", Toast.LENGTH_SHORT).show()
                         },
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
                         shape = RoundedCornerShape(8.dp),
                         border = androidx.compose.foundation.BorderStroke(1.dp, GlassBorder)
                     ) {
-                        Text("📋 Sao chép", fontSize = 11.5.sp, color = TextPrimaryDark)
+                        Text("📋 Chép", fontSize = 11.sp, color = TextPrimaryDark, maxLines = 1, softWrap = false)
                     }
 
                     OutlinedButton(
@@ -3370,10 +3695,12 @@ private fun ApiDebugConsoleDialog(
                             ApiDebugLogManager.clear()
                             Toast.makeText(context, "Đã xóa sạch nhật ký debug!", Toast.LENGTH_SHORT).show()
                         },
+                        modifier = Modifier.weight(0.8f),
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
                         shape = RoundedCornerShape(8.dp),
                         border = androidx.compose.foundation.BorderStroke(1.dp, CardBorder)
                     ) {
-                        Text("🗑️ Xóa", fontSize = 11.5.sp, color = AccentRose)
+                        Text("🗑️ Xóa", fontSize = 11.sp, color = AccentRose, maxLines = 1, softWrap = false)
                     }
                 }
 
@@ -3453,7 +3780,10 @@ private fun ApiDebugConsoleDialog(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Row(
+                                        modifier = Modifier.weight(1f, fill = false),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
                                         Box(
                                             modifier = Modifier
                                                 .background(badgeColor.copy(alpha = 0.2f), RoundedCornerShape(4.dp))
@@ -3464,7 +3794,9 @@ private fun ApiDebugConsoleDialog(
                                                 text = log.httpCode?.let { "HTTP $it" } ?: if (log.isSuccess) "OK" else "LỖI",
                                                 color = badgeColor,
                                                 fontSize = 10.sp,
-                                                fontWeight = FontWeight.Bold
+                                                fontWeight = FontWeight.Bold,
+                                                maxLines = 1,
+                                                softWrap = false
                                             )
                                         }
                                         Spacer(modifier = Modifier.width(6.dp))
@@ -3473,13 +3805,18 @@ private fun ApiDebugConsoleDialog(
                                             style = MaterialTheme.typography.titleSmall,
                                             fontWeight = FontWeight.Bold,
                                             color = TextPrimaryDark,
-                                            fontSize = 11.5.sp
+                                            fontSize = 11.5.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
                                     }
+                                    Spacer(modifier = Modifier.width(8.dp))
                                     Text(
                                         text = "${log.durationMs}ms | ${log.formattedTime}",
                                         fontSize = 10.sp,
-                                        color = TextSecondaryDark
+                                        color = TextSecondaryDark,
+                                        maxLines = 1,
+                                        softWrap = false
                                     )
                                 }
 

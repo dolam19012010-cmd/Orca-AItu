@@ -25,7 +25,8 @@ object GeminiPromptBuilder {
         cancelledTasks: List<SmartAlarmEntity> = emptyList(),
         completedTasks: List<SmartAlarmEntity> = emptyList(),
         taskNotes: Map<String, String> = emptyMap(),
-        timezoneId: String = "Asia/Ho_Chi_Minh"
+        timezoneId: String = "Asia/Ho_Chi_Minh",
+        autoCompleteOverdue: Boolean = false
     ): String {
         val groupedByApp = notifications.groupBy { it.appName }
 
@@ -50,7 +51,11 @@ object GeminiPromptBuilder {
         contentBuilder.append("⏰ Thời điểm hiện tại: $nowFormatted (Múi giờ: ${tz.id}, GMT$offsetStr).\n")
         contentBuilder.append("• Đối chiếu mốc thời gian trong tin nhắn với thời điểm hiện tại để tính đúng ngày giờ và ước tính mốc báo thức đề xuất hợp lý.\n")
         contentBuilder.append("• Nếu việc cần làm chưa có giờ cụ thể, hãy ghi 'Hạn: Hôm nay (Chờ chốt giờ)' hoặc giờ ước tính kèm ngày.\n")
-        contentBuilder.append("• Đối với những việc chưa xong mà đã quá hạn hoặc hoàn thành thụ động theo thời gian: Vẫn giữ lại theo dõi thêm 1 đến 2 phiên sau khi quá hạn, tránh vội vàng xóa bỏ làm trôi việc của người dùng.\n\n")
+        if (autoCompleteOverdue) {
+            contentBuilder.append("• [TỰ ĐỘNG HOÀN THÀNH KHI QUÁ HẠN]: Bất kỳ việc nào đã quá hạn so với thời điểm hiện tại thì BẮT BUỘC tự động xếp vào mục [### 🟢 NHIỆM VỤ ĐÃ LÀM (DONE)] với ghi chú '(Tự động hết hạn)'. Tuyệt đối không giữ lại ở mục PHẢI LÀM.\n\n")
+        } else {
+            contentBuilder.append("• Đối với những việc chưa xong mà đã quá hạn hoặc hoàn thành thụ động theo thời gian: Vẫn giữ lại theo dõi thêm 1 đến 2 phiên sau khi quá hạn, tránh vội vàng xóa bỏ làm trôi việc của người dùng.\n\n")
+        }
 
         // 3. Active Alarms Sync (Chống tạo lặp)
         if (activeAlarms.isNotEmpty()) {

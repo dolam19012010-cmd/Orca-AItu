@@ -590,7 +590,13 @@ class UserPreferences private constructor(context: Context) {
             emptyList()
         }
 
-        val result = loadedList.toMutableList()
+        val result = loadedList.map { s ->
+            s.copy(
+                promptPersonaId = if (s.promptPersonaId.isNullOrBlank()) "gentle_assistant" else s.promptPersonaId,
+                customFixedContext = s.customFixedContext ?: "",
+                scheduledHours = s.scheduledHours ?: listOf("12:00", "18:00")
+            )
+        }.toMutableList()
         val mainIndex = result.indexOfFirst { it.isMain || it.id == SummarySessionConfig.MAIN_SESSION_ID }
         if (mainIndex == -1) {
             result.add(0, SummarySessionConfig.createMainSession())

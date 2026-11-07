@@ -272,6 +272,7 @@ fun SessionConfigDialog(
     var customInput by remember { mutableStateOf("") }
     var customInstruction by remember { mutableStateOf(session.customInstruction) }
     var isScheduled by remember { mutableStateOf(session.isScheduled) }
+    var autoCompleteOverdue by remember { mutableStateOf(session.autoCompleteOverdue) }
 
     val availableEmojis = listOf("\u26A1", "\uD83D\uDCBC", "\uD83D\uDE80", "\uD83D\uDC65", "\uD83C\uDFE0", "\uD83C\uDFAF", "\uD83D\uDCCC", "\uD83D\uDD25", "\uD83D\uDCAC", "\u2B50")
 
@@ -674,6 +675,37 @@ fun SessionConfigDialog(
                         )
                     )
                 }
+
+                HorizontalDivider(color = GlassBorderSubtle)
+
+                // 6. Auto-complete Overdue Tasks Toggle
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "6. T\u1EF1 \u0110\u1ED9ng Ho\u00E0n Th\u00E0nh Khi Qu\u00E1 H\u1EA1n:",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = AccentEmerald,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Khi vi\u1EC7c tr\u00F4i qua h\u1EA1n ch\u00F3t, AI t\u1EF1 \u0111\u1ED9ng chuy\u1EC3n sang m\u1EE5c '\u0110\u00C3 L\u00C0M' thay v\u00EC ti\u1EBFp t\u1EE5c gi\u1EEF l\u1EA1i theo d\u00F5i.",
+                            fontSize = 11.sp,
+                            color = Color(0xFFA1A1AA)
+                        )
+                    }
+                    Switch(
+                        checked = autoCompleteOverdue,
+                        onCheckedChange = { autoCompleteOverdue = it },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = Color(0xFF10B981)
+                        )
+                    )
+                }
             }
         },
         confirmButton = {
@@ -687,7 +719,8 @@ fun SessionConfigDialog(
                         whitelist = whitelist.toSet(),
                         keyPriorityIds = prioritizedKeyIds.toList(),
                         customInstruction = customInstruction.trim(),
-                        isScheduled = isScheduled
+                        isScheduled = isScheduled,
+                        autoCompleteOverdue = autoCompleteOverdue
                     )
                     onSave(updated)
                 },

@@ -26,7 +26,7 @@ object WorkScheduler {
     fun scheduleDailySummaries(context: Context) {
         val workManager = WorkManager.getInstance(context)
         val preferences = com.orca.orcaauto.data.preferences.UserPreferences.getInstance(context)
-        val hoursList = preferences.getScheduledHours()
+        val hoursList = (preferences.getScheduledHours() + preferences.loadSessions().filter { it.isScheduled }.flatMap { it.scheduledHours }).distinct().sorted()
 
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)

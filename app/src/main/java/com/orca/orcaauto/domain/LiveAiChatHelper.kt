@@ -60,8 +60,12 @@ object LiveAiChatHelper {
         }
 
         // 3. Build tailored prompt with user's supplemental instruction and previous summary reference
-        val fixedContext = prefs.getCustomFixedContext()
-        val persona = prefs.getPromptPersona()
+        val fixedContext = if (session.customFixedContext.isNotBlank()) session.customFixedContext else prefs.getCustomFixedContext()
+        val persona = if (session.promptPersonaId.isNotBlank()) {
+            com.orca.orcaauto.domain.prompt.PromptPersona.fromId(session.promptPersonaId)
+        } else {
+            prefs.getPromptPersona()
+        }
         val latestSummaryRecord = db.summaryDao().getLatestSummaryForSession(session.id)
         val previousSummary = if (prefs.isRecentSummaryContextEnabled()) latestSummaryRecord?.summaryContent.orEmpty() else ""
         val activeAlarms = if (prefs.isLongTermTasksContextEnabled()) db.smartAlarmDao().getActiveAlarms() else emptyList()
@@ -88,7 +92,8 @@ object LiveAiChatHelper {
             cancelledTasks = cancelledTasks,
             completedTasks = completedTasks,
             taskNotes = taskNotes,
-            timezoneId = prefs.getUserTimezone()
+            timezoneId = prefs.getUserTimezone(),
+            autoCompleteOverdue = session.autoCompleteOverdue
         )
 
         // 4. Execute strictly sequentially through SequentialAiQueue (FIFO with session key priorities)

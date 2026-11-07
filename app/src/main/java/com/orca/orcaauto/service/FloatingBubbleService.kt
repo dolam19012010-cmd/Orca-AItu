@@ -530,19 +530,20 @@ class FloatingBubbleService : Service() {
         val maxY = screenHeight - bubbleSize - dpToPx(32) // Giảm bớt giới hạn dưới, cho phép kéo xuống thấp hơn
 
         val isLeft = isAttachedLeft
+        val halfBubble = bubbleSize / 2
         val currentX = when (currentBubbleState) {
             BubbleState.STATE_1_ACTIVE -> if (isLeft) dpToPx(8) else screenWidth - bubbleSize - dpToPx(8)
-            BubbleState.STATE_2_DIMMED -> if (isLeft) -dpToPx(32) else screenWidth - bubbleSize + dpToPx(32)
-            BubbleState.STATE_3_HIDDEN -> if (isLeft) -dpToPx(44) else screenWidth
+            BubbleState.STATE_2_DIMMED -> if (isLeft) -halfBubble else (screenWidth - halfBubble)
+            BubbleState.STATE_3_HIDDEN -> if (isLeft) -bubbleSize else screenWidth
         }
         val currentAlpha = when (currentBubbleState) {
             BubbleState.STATE_1_ACTIVE -> 1.0f
-            BubbleState.STATE_2_DIMMED -> 0.20f
+            BubbleState.STATE_2_DIMMED -> 0.45f
             BubbleState.STATE_3_HIDDEN -> 0.0f
         }
         val currentScale = when (currentBubbleState) {
             BubbleState.STATE_1_ACTIVE -> 1.0f
-            BubbleState.STATE_2_DIMMED -> 0.85f
+            BubbleState.STATE_2_DIMMED -> 0.95f
             BubbleState.STATE_3_HIDDEN -> 0.85f
         }
 
@@ -830,22 +831,23 @@ class FloatingBubbleService : Service() {
 
         val bubbleView = activeBubbleView ?: bubbleRootView
 
+        val halfBubble = bubbleSize / 2
         // State 1: Nhô hẳn ra ngoài mép 8dp, sáng rõ 100%, scale 1.0f
-        // State 2: Thụt sâu vào mép (chỉ nhô ~12dp), mờ sâu 20% (alpha 0.20f), scale 0.85f
-        // State 3: Giấu bóng ngoài mép màn hình (startX = -44dp hoặc screenWidth), alpha 0.0f, scale 0.85f
+        // State 2: Nép đúng 1 nửa hình tròn (bán nguyệt) ra mép, alpha 0.45f, scale 0.95f
+        // State 3: Giấu bóng ngoài mép màn hình, alpha 0.0f, scale 0.85f
         val targetX = when (newState) {
             BubbleState.STATE_1_ACTIVE -> if (isLeft) dpToPx(8) else (screenWidth - bubbleSize - dpToPx(8))
-            BubbleState.STATE_2_DIMMED -> if (isLeft) -dpToPx(32) else (screenWidth - bubbleSize + dpToPx(32))
-            BubbleState.STATE_3_HIDDEN -> if (isLeft) -dpToPx(44) else screenWidth
+            BubbleState.STATE_2_DIMMED -> if (isLeft) -halfBubble else (screenWidth - halfBubble)
+            BubbleState.STATE_3_HIDDEN -> if (isLeft) -bubbleSize else screenWidth
         }
         val targetAlpha = when (newState) {
             BubbleState.STATE_1_ACTIVE -> 1.0f
-            BubbleState.STATE_2_DIMMED -> 0.20f
+            BubbleState.STATE_2_DIMMED -> 0.45f
             BubbleState.STATE_3_HIDDEN -> 0.0f
         }
         val targetScale = when (newState) {
             BubbleState.STATE_1_ACTIVE -> 1.0f
-            BubbleState.STATE_2_DIMMED -> 0.85f
+            BubbleState.STATE_2_DIMMED -> 0.95f
             BubbleState.STATE_3_HIDDEN -> 0.85f
         }
 
@@ -1773,6 +1775,8 @@ class FloatingBubbleService : Service() {
             typeface = Typeface.DEFAULT_BOLD
             if (isCompleted || isCancelled) {
                 paintFlags = paintFlags or android.graphics.Paint.STRIKE_THRU_TEXT_FLAG
+            } else {
+                paintFlags = paintFlags and android.graphics.Paint.STRIKE_THRU_TEXT_FLAG.inv()
             }
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
@@ -1780,12 +1784,12 @@ class FloatingBubbleService : Service() {
 
         taskRow.addView(titleRow)
 
-        // Badge row
+        // Badge row (Deadline & Source)
         val badgeRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = dpToPx(6)
+                topMargin = dpToPx(5)
                 leftMargin = dpToPx(20)
             }
         }
@@ -1795,6 +1799,8 @@ class FloatingBubbleService : Service() {
                 text = "⏰ ${task.deadline}"
                 setTextColor(if (isPlanned) Color.parseColor("#FDE68A") else Color.parseColor("#FCA5A5"))
                 textSize = 10f
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
                 typeface = Typeface.DEFAULT_BOLD
                 background = GradientDrawable().apply {
                     setColor(if (isPlanned) Color.parseColor("#2E2005") else Color.parseColor("#2D1519"))
@@ -1814,6 +1820,8 @@ class FloatingBubbleService : Service() {
                 text = "💬 ${task.source}"
                 setTextColor(Color.parseColor("#94A3B8"))
                 textSize = 10f
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
                 background = GradientDrawable().apply {
                     setColor(Color.parseColor("#0F172A"))
                     cornerRadius = dpToPx(4).toFloat()
@@ -1827,13 +1835,28 @@ class FloatingBubbleService : Service() {
             badgeRow.addView(sourcePill)
         }
 
-        // Quick Alarm pill button or Cancelled status pill
+        if (badgeRow.childCount > 0) {
+            taskRow.addView(badgeRow)
+        }
+
+        // Action row (Status pill or Alarm button in dedicated row to prevent vertical squishing)
+        val actionRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dpToPx(4)
+                leftMargin = dpToPx(20)
+            }
+        }
+
         var alarmPill: TextView? = null
         if (isCancelled) {
             val cancelledPill = TextView(this).apply {
                 text = "↺ Đã hủy (Nhấn giữ khôi phục)"
                 setTextColor(Color.parseColor("#EF4444"))
                 textSize = 10f
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
                 typeface = Typeface.DEFAULT_BOLD
                 background = GradientDrawable().apply {
                     setColor(Color.parseColor("#26EF4444"))
@@ -1846,12 +1869,14 @@ class FloatingBubbleService : Service() {
                     Toast.makeText(this@FloatingBubbleService, "Nhấn giữ để khôi phục nhiệm vụ đã hủy", Toast.LENGTH_SHORT).show()
                 }
             }
-            badgeRow.addView(cancelledPill)
+            actionRow.addView(cancelledPill)
         } else if (!isCompleted) {
             val pill = TextView(this).apply {
                 text = if (isAlarmActive) "✓ Đã đặt $proposedTime" else "🔔 Đặt $proposedTime"
                 setTextColor(if (isAlarmActive) Color.parseColor("#10B981") else Color.parseColor("#38BDF8"))
                 textSize = 10f
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
                 typeface = Typeface.DEFAULT_BOLD
                 background = GradientDrawable().apply {
                     setColor(if (isAlarmActive) Color.parseColor("#062E24") else Color.parseColor("#082F49"))
@@ -1897,10 +1922,12 @@ class FloatingBubbleService : Service() {
                 }
             }
             alarmPill = pill
-            badgeRow.addView(pill)
+            actionRow.addView(pill)
         }
 
-        taskRow.addView(badgeRow)
+        if (actionRow.childCount > 0) {
+            taskRow.addView(actionRow)
+        }
         container.addView(taskRow)
 
         // Unified Gesture Handler for taskRow:
@@ -2790,10 +2817,11 @@ class FloatingBubbleService : Service() {
 
         lastCollapsedY = lastCollapsedY.coerceIn(minY, maxY)
         val isLeft = isAttachedLeft
+        val halfBubble = bubbleSize / 2
         lastCollapsedX = when (currentBubbleState) {
             BubbleState.STATE_1_ACTIVE -> if (isLeft) dpToPx(8) else (screenWidth - bubbleSize - dpToPx(8))
-            BubbleState.STATE_2_DIMMED -> if (isLeft) -dpToPx(32) else (screenWidth - bubbleSize + dpToPx(32))
-            BubbleState.STATE_3_HIDDEN -> if (isLeft) -dpToPx(44) else screenWidth
+            BubbleState.STATE_2_DIMMED -> if (isLeft) -halfBubble else (screenWidth - halfBubble)
+            BubbleState.STATE_3_HIDDEN -> if (isLeft) -bubbleSize else screenWidth
         }
 
         if (isExpanded) {

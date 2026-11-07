@@ -888,7 +888,7 @@ private fun SwipeableTaskItemRow(
     onRequestRestore: () -> Unit = {},
     onRequestUncomplete: () -> Unit = {}
 ) {
-    val isCompleted = alarmEntity?.status == SmartAlarmStatus.COMPLETED
+    val isCompleted = alarmEntity?.status == SmartAlarmStatus.COMPLETED || task.status == TaskStatus.DONE
     val isCancelled = alarmEntity?.status == SmartAlarmStatus.CANCELLED
     val isAlarmActive = alarmEntity?.status == SmartAlarmStatus.ACTIVE
     val context = LocalContext.current

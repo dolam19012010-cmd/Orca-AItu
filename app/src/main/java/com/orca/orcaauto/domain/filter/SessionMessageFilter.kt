@@ -17,11 +17,6 @@ object SessionMessageFilter {
         notifications: List<NotificationEntity>,
         session: SummarySessionConfig
     ): List<NotificationEntity> {
-        // If main session and no custom rules set, allow all notifications
-        if (session.isMain && session.whitelist.isEmpty() && session.banlist.isEmpty()) {
-            return notifications
-        }
-
         return notifications.filter { entity ->
             isNotificationAllowed(entity, session)
         }
@@ -36,6 +31,23 @@ object SessionMessageFilter {
     ): Boolean {
         val senderNorm = NotificationFilter.normalize(entity.sender)
         val appNameNorm = NotificationFilter.normalize(entity.appName)
+        val appPkgLower = entity.appPackage.lowercase()
+
+        // 0. Check Session-specific app switches
+        if (!session.zaloEnabled && (appNameNorm.contains("zalo") || appPkgLower.contains("zalo"))) {
+            return false
+        }
+        if (!session.telegramEnabled && (appNameNorm.contains("telegram") || appPkgLower.contains("telegram"))) {
+            return false
+        }
+        if (!session.messengerEnabled && (appNameNorm.contains("messenger") || appPkgLower.contains("orca") || appPkgLower.contains("facebook"))) {
+            return false
+        }
+
+        // If no whitelist/banlist rules are set, accept message (if app is enabled above)
+        if (session.whitelist.isEmpty() && session.banlist.isEmpty()) {
+            return true
+        }
 
         // 1. Check banlist first: if matches any pattern in banlist, immediately reject
         if (session.banlist.isNotEmpty()) {

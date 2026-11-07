@@ -15,8 +15,14 @@ data class SummarySessionConfig(
     val banlist: Set<String> = emptySet(),
     val keyPriorityIds: List<String> = emptyList(),
     val isScheduled: Boolean = true,
-    val scheduledHours: List<String> = listOf("18:00"),
-    val customInstruction: String = ""
+    val scheduledHours: List<String> = listOf("12:00", "18:00"),
+    val customInstruction: String = "",
+    val zaloEnabled: Boolean = true,
+    val telegramEnabled: Boolean = true,
+    val messengerEnabled: Boolean = true,
+    val promptPersonaId: String = "gentle_assistant",
+    val customFixedContext: String = "",
+    val autoCompleteOverdue: Boolean = false
 ) {
     companion object {
         const val MAIN_SESSION_ID = "session_main_default"
@@ -33,7 +39,14 @@ data class SummarySessionConfig(
                 banlist = emptySet(),
                 keyPriorityIds = emptyList(), // Uses default key pool
                 isScheduled = true,
-                scheduledHours = listOf("12:00", "18:00")
+                scheduledHours = listOf("12:00", "18:00"),
+                customInstruction = "",
+                zaloEnabled = true,
+                telegramEnabled = true,
+                messengerEnabled = true,
+                promptPersonaId = "gentle_assistant",
+                customFixedContext = "",
+                autoCompleteOverdue = false
             )
         }
     }
