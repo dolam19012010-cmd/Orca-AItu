@@ -131,7 +131,6 @@ import com.orca.orcaauto.data.remote.UniversalAiClient
 import com.orca.orcaauto.domain.prompt.PromptPersona
 import com.orca.orcaauto.service.FloatingBubbleService
 import com.orca.orcaauto.service.OemSurvivalHelper
-import com.orca.orcaauto.ui.components.MockRewardAdDialog
 import com.orca.orcaauto.ui.components.MultiSessionManagementSection
 import com.orca.orcaauto.ui.components.OnboardingGuideDialog
 import com.orca.orcaauto.ui.theme.AccentCyan
@@ -320,16 +319,28 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
     }
     var appForFilterDialog by remember { mutableStateOf<String?>(null) }
 
-    var showRewardAdForImport by remember { mutableStateOf(false) }
-    var pendingImportUri by remember { mutableStateOf<Uri?>(null) }
-    var showRewardAdForDynamic by remember { mutableStateOf(false) }
-
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         if (uri != null) {
-            pendingImportUri = uri
-            showRewardAdForImport = true
+            scope.launch(Dispatchers.IO) {
+                try {
+                    val inputStream = context.contentResolver.openInputStream(uri)
+                    val destFile = java.io.File(context.filesDir, "custom_wallpaper.jpg")
+                    destFile.outputStream().use { out ->
+                        inputStream?.copyTo(out)
+                    }
+                    withContext(Dispatchers.Main) {
+                        preferences.setWallpaperPath(destFile.absolutePath)
+                        preferences.setWallpaperMode(WallpaperMode.CLEAR)
+                        Toast.makeText(context, "\u0110\u00E3 \u00E1p d\u1EE5ng \u1EA3nh n\u1EC1n! (M\u1EB7c \u0111\u1ECBnh: Trong su\u1ED1t)", Toast.LENGTH_SHORT).show()
+                    }
+                } catch (e: Throwable) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, "L\u1ED7i l\u01B0u \u1EA3nh: ${e.message}", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
         }
     }
 
@@ -875,12 +886,8 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
                     Toast.makeText(context, "Đã gỡ bỏ ảnh nền tùy chỉnh", Toast.LENGTH_SHORT).show()
                 },
                 onRequestSwitchMode = { targetMode: WallpaperMode ->
-                    if (targetMode == WallpaperMode.DYNAMIC) {
-                        showRewardAdForDynamic = true
-                    } else {
-                        preferences.setWallpaperMode(targetMode)
-                        Toast.makeText(context, "Đã chuyển sang chế độ: ${targetMode.title}", Toast.LENGTH_SHORT).show()
-                    }
+                    preferences.setWallpaperMode(targetMode)
+                    Toast.makeText(context, "\u0110\u00E3 chuy\u1EC3n sang ch\u1EBF \u0111\u1ED9: ${targetMode.title}", Toast.LENGTH_SHORT).show()
                 }
             )
         }
@@ -1007,58 +1014,6 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
         ) {
             AppInfoSection()
         }
-    }
-
-    if (showRewardAdForImport && pendingImportUri != null) {
-        MockRewardAdDialog(
-            actionTitle = "Áp Dụng Hình Nền Mới",
-            description = "Xem video ngắn 5 giây để kích hoạt ảnh nền cá nhân của bạn.",
-            onDismiss = {
-                showRewardAdForImport = false
-                pendingImportUri = null
-            },
-            onRewardGranted = {
-                val uri = pendingImportUri
-                if (uri != null) {
-                    scope.launch(Dispatchers.IO) {
-                        try {
-                            val inputStream = context.contentResolver.openInputStream(uri)
-                            val destFile = java.io.File(context.filesDir, "custom_wallpaper.jpg")
-                            destFile.outputStream().use { out ->
-                                inputStream?.copyTo(out)
-                            }
-                            withContext(Dispatchers.Main) {
-                                preferences.setWallpaperPath(destFile.absolutePath)
-                                // Per requirement: whenever a new image is imported, default to CLEAR ("trong")
-                                preferences.setWallpaperMode(WallpaperMode.CLEAR)
-                                Toast.makeText(context, "Đã áp dụng ảnh nền! (Mặc định: Trong suốt)", Toast.LENGTH_SHORT).show()
-                                showRewardAdForImport = false
-                                pendingImportUri = null
-                            }
-                        } catch (e: Throwable) {
-                            withContext(Dispatchers.Main) {
-                                Toast.makeText(context, "Lỗi lưu ảnh: ${e.message}", Toast.LENGTH_SHORT).show()
-                                showRewardAdForImport = false
-                                pendingImportUri = null
-                            }
-                        }
-                    }
-                }
-            }
-        )
-    }
-
-    if (showRewardAdForDynamic) {
-        MockRewardAdDialog(
-            actionTitle = "Mở Khóa Chế Độ Động (3D Parallax)",
-            description = "Tính năng đặc biệt: Hiệu ứng con quay hồi chuyển 3D Parallax & Hạt phát sáng.",
-            onDismiss = { showRewardAdForDynamic = false },
-            onRewardGranted = {
-                preferences.setWallpaperMode(WallpaperMode.DYNAMIC)
-                Toast.makeText(context, "Đã kích hoạt Chế Độ Động (3D Parallax)!", Toast.LENGTH_SHORT).show()
-                showRewardAdForDynamic = false
-            }
-        )
     }
 
     if (keyToEditModel != null) {
