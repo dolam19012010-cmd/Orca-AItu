@@ -60,6 +60,10 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.PendingActions
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import com.orca.orcaauto.domain.voice.VoiceBriefingManager
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -140,7 +144,14 @@ fun HistoryScreen() {
     val database = remember { AppDatabase.getDatabase(context) }
     val preferences = remember { com.orca.orcaauto.data.preferences.UserPreferences.getInstance(context) }
     val wallpaperPath by preferences.wallpaperPathFlow.collectAsState()
+    val voiceManager = remember { VoiceBriefingManager.getInstance(context) }
     var selectedTab by remember { mutableIntStateOf(0) }
+
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose {
+            voiceManager.stop()
+        }
+    }
 
     val shiftSummaries by database.summaryDao().getAllSummariesFlow().collectAsState(initial = emptyList())
     val recentNotifications by database.notificationDao().getRecentNotificationsFlow().collectAsState(initial = emptyList())
@@ -444,6 +455,7 @@ fun HistoryScreen() {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TwoPartSummaryCard(
     item: SummaryHistoryEntity,
@@ -457,6 +469,12 @@ fun TwoPartSummaryCard(
     var taskToConfirmCancel by remember { mutableStateOf<Pair<TaskItem, String>?>(null) }
     var taskToConfirmRestore by remember { mutableStateOf<Pair<TaskItem, String>?>(null) }
     var taskToConfirmUncomplete by remember { mutableStateOf<Pair<TaskItem, String>?>(null) }
+
+    val voiceManager = remember { VoiceBriefingManager.getInstance(context) }
+    val isSpeaking by voiceManager.isSpeakingFlow.collectAsState()
+    val currentSpeakingId by voiceManager.currentSummaryIdFlow.collectAsState()
+    val isThisCardSpeaking = isSpeaking && currentSpeakingId == item.id
+    val haptic = LocalHapticFeedback.current
 
     fun getAlarmInfoForTask(task: TaskItem): Pair<String, SmartAlarmEntity?> {
         val parsedDt = SystemAlarmHelper.parseDateTimeFromText(task.deadline)
@@ -571,29 +589,81 @@ fun TwoPartSummaryCard(
                     )
                 }
             } else {
-                // ================= PHẦN 1: GÓC NHÌN PHẢN BIỆN & LỜI KHUYÊN =================
+                // ================= PHẦN 1: GÓC NHÌN PHẢN BIỆN & LỜI KHUYÊN (Nhấn giữ để nghe giọng đọc) =================
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .border(1.dp, PrimaryIndigo.copy(alpha = 0.35f), RoundedCornerShape(12.dp)),
+                        .border(
+                            width = 1.dp,
+                            color = if (isThisCardSpeaking) AccentCyan else PrimaryIndigo.copy(alpha = 0.35f),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                        .combinedClickable(
+                            onClick = {
+                                if (isThisCardSpeaking) {
+                                    voiceManager.stop()
+                                }
+                            },
+                            onLongClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                voiceManager.speakSummary(item.id, parsed)
+                            }
+                        ),
                     shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = GlassSurfaceCard)
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isThisCardSpeaking) GlassSurfaceInner else GlassSurfaceCard
+                    )
                 ) {
                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Default.Lightbulb,
-                                contentDescription = null,
-                                tint = AccentCyan,
-                                modifier = Modifier.size(15.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "💡 Lời khuyên & Lưu ý",
-                                color = AccentCyan,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold
-                            )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.Lightbulb,
+                                    contentDescription = null,
+                                    tint = AccentCyan,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "💡 Lời khuyên & Lưu ý",
+                                    color = AccentCyan,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+
+                            if (isThisCardSpeaking) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .background(AccentCyan.copy(alpha = 0.2f), RoundedCornerShape(10.dp))
+                                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                                        contentDescription = "Đang đọc",
+                                        tint = AccentCyan,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "Đang đọc (Chạm dừng)",
+                                        color = AccentCyan,
+                                        fontSize = 10.5.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            } else {
+                                Text(
+                                    text = "Nhấn giữ để nghe 🎧",
+                                    color = TextMutedDark,
+                                    fontSize = 10.5.sp
+                                )
+                            }
                         }
 
                         if (parsed.conciseAdvice.isNotBlank()) {

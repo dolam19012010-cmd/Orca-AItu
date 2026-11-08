@@ -1118,6 +1118,9 @@ class FloatingBubbleService : Service() {
     }
 
     private fun collapseExpandedCard(root: FrameLayout) {
+        try {
+            com.orca.orcaauto.domain.voice.VoiceBriefingManager.getInstance(this).stop()
+        } catch (_: Exception) {}
         if (isCollapsing || !isExpanded) return
         isCollapsing = true
         hideDismissTarget(immediate = true)
@@ -1437,6 +1440,23 @@ class FloatingBubbleService : Service() {
                 setPadding(dpToPx(12), dpToPx(10), dpToPx(12), dpToPx(10))
                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                     bottomMargin = dpToPx(8)
+                }
+                isClickable = true
+                isLongClickable = true
+                setOnLongClickListener {
+                    try {
+                        performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                        com.orca.orcaauto.domain.voice.VoiceBriefingManager.getInstance(this@FloatingBubbleService).speakSummary(0L, parsed)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Voice briefing failed", e)
+                    }
+                    true
+                }
+                setOnClickListener {
+                    val vm = com.orca.orcaauto.domain.voice.VoiceBriefingManager.getInstance(this@FloatingBubbleService)
+                    if (vm.isSpeakingFlow.value) {
+                        vm.stop()
+                    }
                 }
             }
 
@@ -2841,6 +2861,9 @@ class FloatingBubbleService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        try {
+            com.orca.orcaauto.domain.voice.VoiceBriefingManager.getInstance(this).stop()
+        } catch (_: Exception) {}
         serviceScope.cancel()
         bubbleLifecycleHandler.removeCallbacks(toState2Runnable)
         bubbleLifecycleHandler.removeCallbacks(toState3Runnable)
