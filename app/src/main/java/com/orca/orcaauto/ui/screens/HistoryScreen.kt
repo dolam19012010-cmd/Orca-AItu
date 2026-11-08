@@ -329,16 +329,18 @@ fun HistoryScreen() {
                                 OutlinedButton(
                                     onClick = { showClearConfirmDialog = true },
                                     shape = RoundedCornerShape(8.dp),
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentRose),
+                                    border = BorderStroke(1.dp, AccentRose.copy(alpha = 0.5f))
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.Delete,
-                                        contentDescription = "Xóa",
+                                        contentDescription = "X\u00F3a",
                                         tint = AccentRose,
                                         modifier = Modifier.size(14.dp)
                                     )
                                     Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Xóa sạch", color = AccentRose, fontSize = 11.sp)
+                                    Text("X\u00F3a s\u1EA1ch", color = AccentRose, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                 }
                             }
 
@@ -434,7 +436,7 @@ fun HistoryScreen() {
             },
             dismissButton = {
                 TextButton(onClick = { showClearConfirmDialog = false }) {
-                    Text("Hủy", color = TextMutedDark)
+                    Text("H\u1EE7y", color = TextSecondaryDark)
                 }
             },
             containerColor = SurfaceDark
@@ -1300,9 +1302,11 @@ fun TaskAlarmConfigDialog(
                                         },
                                         shape = RoundedCornerShape(6.dp),
                                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                        modifier = Modifier.height(28.dp)
+                                        modifier = Modifier.height(28.dp),
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentCyan),
+                                        border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.6f))
                                     ) {
-                                        Text("📅 Mở thêm vào Lịch Google / Máy", fontSize = 10.5.sp, color = AccentCyan)
+                                        Text("\uD83D\uDCC5 M\u1EDF th\u00EAm v\u00E0o L\u1ECBch Google / M\u00E1y", fontSize = 10.5.sp, color = AccentCyan)
                                     }
                                 }
                             }
@@ -1318,7 +1322,9 @@ fun TaskAlarmConfigDialog(
                                     onClick = { adjustMinutes(delta) },
                                     shape = RoundedCornerShape(8.dp),
                                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                    modifier = Modifier.height(32.dp)
+                                    modifier = Modifier.height(32.dp),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimaryDark),
+                                    border = BorderStroke(1.dp, CardBorder)
                                 ) {
                                     Text(
                                         text = if (delta > 0) "+${delta}p" else "${delta}p",
@@ -1562,7 +1568,7 @@ fun TaskAlarmConfigDialog(
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Đóng", color = TextMutedDark)
+                Text("\u0110\u00F3ng", color = TextSecondaryDark)
             }
         }
     )

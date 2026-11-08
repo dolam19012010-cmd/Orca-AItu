@@ -59,6 +59,7 @@ import com.orca.orcaauto.ui.theme.PrimaryIndigo
 import com.orca.orcaauto.ui.theme.SurfaceDark
 import com.orca.orcaauto.ui.theme.TextMutedDark
 import com.orca.orcaauto.ui.theme.TextPrimaryDark
+import com.orca.orcaauto.ui.theme.TextSecondaryDark
 
 class MainActivity : ComponentActivity() {
 
@@ -238,13 +239,13 @@ fun MainAppNavHost(navigationTarget: String? = null) {
                             label = {
                                 Text(
                                     text = screen.title,
-                                    color = if (selected) AccentCyan else TextMutedDark
+                                    color = if (selected) AccentCyan else TextSecondaryDark
                                 )
                             },
                             colors = NavigationBarItemDefaults.colors(
                                 selectedIconColor = AccentCyan,
-                                unselectedIconColor = TextMutedDark,
-                                indicatorColor = PrimaryIndigo.copy(alpha = 0.25f)
+                                unselectedIconColor = TextSecondaryDark,
+                                indicatorColor = AccentCyan.copy(alpha = 0.2f)
                             )
                         )
                     }

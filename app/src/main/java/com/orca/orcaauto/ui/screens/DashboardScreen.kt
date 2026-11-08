@@ -3,6 +3,7 @@ package com.orca.orcaauto.ui.screens
 import android.content.Context
 import android.widget.Toast
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -272,11 +273,13 @@ private fun ExecutiveQuickActionsCard(
                 OutlinedButton(
                     onClick = onOpenBubbleClick,
                     modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(10.dp)
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimaryDark),
+                    border = BorderStroke(1.dp, GlassBorder)
                 ) {
                     Icon(imageVector = Icons.Default.ChatBubbleOutline, contentDescription = null, modifier = Modifier.size(18.dp), tint = AccentCyan)
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Mở Bong Bóng", fontSize = 12.sp, color = TextPrimaryDark)
+                    Text("M\u1EDF Bong B\u00F3ng", fontSize = 12.sp, color = TextPrimaryDark)
                 }
             }
         }
@@ -339,9 +342,11 @@ private fun SystemStatusCockpitCard(
                 OutlinedButton(
                     onClick = onOpenNotificationSettings,
                     shape = RoundedCornerShape(8.dp),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentCyan),
+                    border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.5f))
                 ) {
-                    Text(if (isNotificationGranted) "Kiểm tra" else "Cấp quyền", fontSize = 11.sp, color = AccentCyan)
+                    Text(if (isNotificationGranted) "Ki\u1EC3m tra" else "C\u1EA5p quy\u1EC1n", fontSize = 11.sp, color = AccentCyan)
                 }
             }
 

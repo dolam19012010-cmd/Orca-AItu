@@ -412,7 +412,7 @@ fun SessionConfigDialog(
                     OutlinedTextField(
                         value = customInput,
                         onValueChange = { customInput = it },
-                        placeholder = { Text("Nh\u1EADp t\u00EAn ho\u1EB7c d\u00F9ng * (vd: *D\u1EF1 \u00C1n*)", fontSize = 11.sp) },
+                        placeholder = { Text("Nh\u1EADp t\u00EAn ho\u1EB7c d\u00F9ng * (vd: *D\u1EF1 \u00C1n*)", fontSize = 11.sp, color = TextMutedDark) },
                         singleLine = true,
                         modifier = Modifier.weight(1f),
                         colors = OutlinedTextFieldDefaults.colors(

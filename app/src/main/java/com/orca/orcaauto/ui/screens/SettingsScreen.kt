@@ -508,7 +508,7 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
                                     text = session.name,
                                     fontSize = 12.sp,
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (isSelected) Color.White else TextPrimaryDark,
+                                    color = if (isSelected) BackgroundDark else TextPrimaryDark,
                                     maxLines = 1,
                                     softWrap = false
                                 )
@@ -516,7 +516,7 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
                                     Icon(
                                         imageVector = Icons.Default.Check,
                                         contentDescription = null,
-                                        tint = AccentCyan,
+                                        tint = BackgroundDark,
                                         modifier = Modifier.size(13.dp)
                                     )
                                 }
@@ -994,11 +994,13 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
                 OutlinedButton(
                     onClick = { showIntroDialog = true },
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(10.dp)
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimaryDark),
+                    border = BorderStroke(1.dp, GlassBorder)
                 ) {
                     Icon(imageVector = Icons.Default.Info, contentDescription = null, modifier = Modifier.size(16.dp), tint = AccentCyan)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("📖 Mở Cẩm Nang Hướng Dẫn Chi Tiết", fontSize = 12.5.sp, color = TextPrimaryDark)
+                    Text("\uD83D\uDCD6 M\u1EDF C\u1EA9m Nang H\u01B0\u1EDBng D\u1EABn Chi Ti\u1EBFt", fontSize = 12.5.sp, color = TextPrimaryDark)
                 }
             }
         }
@@ -1273,15 +1275,17 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
                             val clipText = clipboardManager.getText()?.text.orEmpty()
                             if (clipText.isNotBlank()) {
                                 restoreJsonInput = clipText
-                                Toast.makeText(context, "Đã dán từ bộ nhớ tạm!", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "\u0110\u00E3 d\u00E1n t\u1EEB b\u1ED9 nh\u1EDB t\u1EA1m!", Toast.LENGTH_SHORT).show()
                             } else {
-                                Toast.makeText(context, "Bộ nhớ tạm đang trống!", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "B\u1ED9 nh\u1EDB t\u1EA1m \u0111ang tr\u1ED1ng!", Toast.LENGTH_SHORT).show()
                             }
                         },
                         modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(8.dp)
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentCyan),
+                        border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.6f))
                     ) {
-                        Text("📋 Dán Từ Clipboard", fontSize = 12.sp)
+                        Text("\uD83D\uDCCB D\u00E1n T\u1EEB Clipboard", fontSize = 12.sp, color = AccentCyan, fontWeight = FontWeight.Bold)
                     }
                     OutlinedTextField(
                         value = restoreJsonInput,
@@ -1509,11 +1513,14 @@ private fun MultiKeyPoolSection(
 
                         DropdownMenu(
                             expanded = isModelMenuExpanded,
-                            onDismissRequest = { isModelMenuExpanded = false }
+                            onDismissRequest = { isModelMenuExpanded = false },
+                            modifier = Modifier
+                                .background(SurfaceDark)
+                                .border(1.dp, CardBorder, RoundedCornerShape(8.dp))
                         ) {
                             detectedConfig.provider.supportedModels.forEach { modelOption ->
                                 DropdownMenuItem(
-                                    text = { Text(modelOption) },
+                                    text = { Text(modelOption, color = TextPrimaryDark) },
                                     onClick = {
                                         selectedModel = modelOption
                                         isModelMenuExpanded = false
@@ -1549,26 +1556,28 @@ private fun MultiKeyPoolSection(
                 ) {
                     Icon(imageVector = Icons.Default.Add, contentDescription = null, tint = BackgroundDark)
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Thêm Key", color = BackgroundDark, fontWeight = FontWeight.Bold)
+                    Text("Th\u00EAm Key", color = BackgroundDark, fontWeight = FontWeight.Bold)
                 }
 
                 OutlinedButton(
                     onClick = onTestAllKeys,
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(10.dp),
-                    enabled = !isCheckingKeys
+                    enabled = !isCheckingKeys,
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentCyan),
+                    border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.6f))
                 ) {
                     if (isCheckingKeys) {
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = AccentCyan)
                     } else {
-                        Icon(imageVector = Icons.AutoMirrored.Filled.Send, contentDescription = null)
+                        Icon(imageVector = Icons.AutoMirrored.Filled.Send, contentDescription = null, tint = AccentCyan)
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Test Tất Cả")
+                        Text("Ki\u1EC3m Tra T\u1EA5t C\u1EA3", color = AccentCyan, fontWeight = FontWeight.Bold)
                     }
                 }
             }
         }
-}
+    }
 
 @Composable
 private fun PersonaStyleSection(
@@ -1787,11 +1796,13 @@ private fun ScheduledHoursSection(
             OutlinedButton(
                 onClick = onAddHourClick,
                 shape = RoundedCornerShape(8.dp),
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentCyan),
+                border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.6f))
             ) {
-                Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp), tint = AccentCyan)
                 Spacer(modifier = Modifier.width(4.dp))
-                Text("Thêm", fontSize = 12.sp, maxLines = 1)
+                Text("Th\u00EAm", fontSize = 12.sp, color = AccentCyan, fontWeight = FontWeight.Bold, maxLines = 1)
             }
         }
 
@@ -2143,9 +2154,11 @@ private fun WallpaperSection(
                                 onClick = onClearWallpaper,
                                 shape = RoundedCornerShape(8.dp),
                                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                                modifier = Modifier.height(32.dp)
+                                modifier = Modifier.height(32.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentRose),
+                                border = BorderStroke(1.dp, AccentRose.copy(alpha = 0.6f))
                             ) {
-                                Text("Gỡ Bỏ", fontSize = 11.5.sp, color = AccentRose)
+                                Text("G\u1EE1 B\u1ECF", fontSize = 11.5.sp, color = AccentRose, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -2264,9 +2277,11 @@ private fun PermissionsSection(
                 }
             },
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(10.dp)
+            shape = RoundedCornerShape(10.dp),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimaryDark),
+            border = BorderStroke(1.dp, GlassBorder)
         ) {
-            Text("🚀 Cài Đặt Tự Khởi Chạy Cùng Máy (Autostart)", fontSize = 12.sp, color = TextPrimaryDark)
+            Text("\uD83D\uDE80 C\u00E0i \u0110\u1EB7t T\u1EF1 Kh\u1EDFi Ch\u1EA1y C\u00F9ng M\u00E1y (Autostart)", fontSize = 12.sp, color = TextPrimaryDark)
         }
     }
 }
@@ -2362,7 +2377,7 @@ private fun TimezoneAndBackupSection(
                         Text(
                             text = label,
                             fontSize = 11.sp,
-                            color = if (isSelected) Color.White else TextPrimaryDark,
+                            color = if (isSelected) BackgroundDark else TextPrimaryDark,
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                         )
                     }
@@ -2514,9 +2529,11 @@ private fun PermissionStatusRow(
             OutlinedButton(
                 onClick = onGrant,
                 shape = RoundedCornerShape(6.dp),
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentCyan),
+                border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.6f))
             ) {
-                Text("Cấp quyền", fontSize = 10.sp, color = AccentCyan)
+                Text("C\u1EA5p quy\u1EC1n", fontSize = 10.sp, color = AccentCyan)
             }
         }
     }
@@ -2782,7 +2799,7 @@ private fun EditKeyModelDialog(
                             Text(
                                 text = sug,
                                 fontSize = 11.sp,
-                                color = if (isSelected) Color.White else TextPrimaryDark,
+                                color = if (isSelected) BackgroundDark else TextPrimaryDark,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                             )
                         }
@@ -3129,10 +3146,13 @@ private fun AppChatFilterDialog(
                                 newChatInput = ""
                             }
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = PrimaryIndigo),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = PrimaryIndigo,
+                            contentColor = BackgroundDark
+                        ),
                         shape = RoundedCornerShape(8.dp)
                     ) {
-                        Text("+ Thêm", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text("+ Th\u00EAm", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = BackgroundDark)
                     }
                 Text(
                     text = "💡 Mẹo: Dùng dấu * ở 2 đầu (vd: *Dự Án*) để tìm bao quát bất kể icon. Gõ không có dấu * (vd: Chi) để chặn đích danh 1 người.",
@@ -3183,10 +3203,13 @@ private fun AppChatFilterDialog(
                     )
                     onSaveRule(updatedRule)
                 },
-                colors = ButtonDefaults.buttonColors(containerColor = PrimaryIndigo),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = PrimaryIndigo,
+                    contentColor = BackgroundDark
+                ),
                 shape = RoundedCornerShape(8.dp)
             ) {
-                Text("Lưu Cấu Hình", fontWeight = FontWeight.Bold)
+                Text("L\u01B0u C\u1EA5u H\u00ECnh", fontWeight = FontWeight.Bold, color = BackgroundDark)
             }
         },
         dismissButton = {
@@ -3365,9 +3388,10 @@ private fun BubbleConfigSection(
                 onClick = onRestartBubble,
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(10.dp),
-                border = androidx.compose.foundation.BorderStroke(1.dp, PrimaryIndigo)
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentCyan),
+                border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.6f))
             ) {
-                Text("🚀 Khởi Động / Mở Bong Bóng Chat Ngay", fontSize = 12.5.sp, color = AccentCyan, fontWeight = FontWeight.SemiBold)
+                Text("\uD83D\uDE80 Kh\u1EDFi \u0110\u1ED9ng / M\u1EDF Bong B\u00F3ng Chat Ngay", fontSize = 12.5.sp, color = AccentCyan, fontWeight = FontWeight.SemiBold)
             }
         }
     }

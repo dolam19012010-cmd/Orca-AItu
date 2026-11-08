@@ -24,6 +24,8 @@ private val DarkColorScheme = darkColorScheme(
     onBackground = TextPrimaryDark,
     onSurface = TextPrimaryDark,
     onSurfaceVariant = TextSecondaryDark,
+    outline = GlassBorder,
+    outlineVariant = GlassBorderSubtle,
     error = AccentRose
 )
 
