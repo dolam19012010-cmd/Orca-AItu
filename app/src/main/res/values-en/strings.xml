@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">Orca AItu</string>
+    <string name="app_short_name">AItu</string>
+    <string name="service_name">AItu Background Engine</string>
+    <string name="notification_channel_name">AItu Service</string>
+    <string name="notification_channel_desc">Maintains notification scanning and background process protection</string>
+    <string name="notification_running_title">AItu is running</string>
+    <string name="notification_running_desc">Protecting background engine and monitoring task notifications</string>
+</resources>

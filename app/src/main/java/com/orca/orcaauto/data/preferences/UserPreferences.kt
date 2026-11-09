@@ -5,7 +5,9 @@ import android.content.SharedPreferences
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.orca.orcaauto.data.remote.ApiKeyConfig
+import com.orca.orcaauto.domain.prompt.AiLanguage
 import com.orca.orcaauto.domain.prompt.PromptPersona
+import com.orca.orcaauto.ui.locale.AppLanguage
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -68,6 +70,12 @@ class UserPreferences private constructor(context: Context) {
 
     private val _selectedSessionIdFlow = MutableStateFlow(getSelectedSessionId())
     val selectedSessionIdFlow: StateFlow<String> = _selectedSessionIdFlow.asStateFlow()
+
+    private val _appLanguageFlow = MutableStateFlow(getAppLanguage())
+    val appLanguageFlow: StateFlow<AppLanguage> = _appLanguageFlow.asStateFlow()
+
+    private val _aiLanguageFlow = MutableStateFlow(getAiLanguage())
+    val aiLanguageFlow: StateFlow<AiLanguage> = _aiLanguageFlow.asStateFlow()
 
     private fun loadKeyPool(): List<ApiKeyConfig> {
         val json = try {
@@ -686,8 +694,42 @@ class UserPreferences private constructor(context: Context) {
             ?: SummarySessionConfig.createMainSession()
     }
 
+    fun getAppLanguage(): AppLanguage {
+        val code = prefs.getString(KEY_APP_LANGUAGE, AppLanguage.VIETNAMESE.code)
+        return AppLanguage.fromCode(code)
+    }
+
+    fun setAppLanguage(language: AppLanguage) {
+        try {
+            prefs.edit().putString(KEY_APP_LANGUAGE, language.code).apply()
+            _appLanguageFlow.value = language
+        } catch (e: Throwable) {
+            android.util.Log.e("UserPreferences", "Lỗi setAppLanguage: ${e.message}")
+        }
+    }
+
+    fun getAiLanguage(): AiLanguage {
+        val code = prefs.getString(KEY_AI_LANGUAGE, AiLanguage.AUTO.code)
+        return AiLanguage.fromCode(code)
+    }
+
+    fun setAiLanguage(language: AiLanguage) {
+        try {
+            prefs.edit().putString(KEY_AI_LANGUAGE, language.code).apply()
+            _aiLanguageFlow.value = language
+        } catch (e: Throwable) {
+            android.util.Log.e("UserPreferences", "Lỗi setAiLanguage: ${e.message}")
+        }
+    }
+
+    fun getEffectiveAiLanguage(): AppLanguage {
+        return getAiLanguage().resolve(getAppLanguage())
+    }
+
     companion object {
         private const val PREFS_FILENAME = "orca_secure_prefs"
+        private const val KEY_APP_LANGUAGE = "key_app_language"
+        private const val KEY_AI_LANGUAGE = "key_ai_language"
         private const val KEY_SUMMARY_SESSIONS = "key_summary_sessions"
         private const val KEY_SELECTED_SESSION_ID = "key_selected_session_id"
         private const val KEY_GEMINI_API_KEY = "key_gemini_api_key"

@@ -140,4 +140,53 @@ class SummaryParserTest {
         assertTrue(parsed.reasoningNotes?.contains("Neo thời gian") == true)
         assertTrue(parsed.reasoningNotes?.contains("Hiện tại là 20:30") == true)
     }
+
+    @Test
+    fun testParseEnglishAiOutput() {
+        val englishAiOutput = """
+            <scratchpad>
+            1. Time Anchor: Current time is 10:00 Monday.
+            2. Intent Filtering: Client email has clear action items.
+            </scratchpad>
+            === PART 1: GENTLE MESSAGE & SUBTLE NOTES ===
+            1. [Gentle Message]: You have 2 key tasks to tackle today. Stay focused!
+            2. [Subtle Notes]: John requested an urgent update before the sprint demo.
+
+            === PART 2: TASK DISPATCH BOARD ===
+            ### 🔴 TO-DO TASKS
+            - Submit quarterly tax report | Source: Finance Team | Due: 15:00 Today
+            - Review pull request for billing service | Source: Sarah | Deadline: 17:00
+
+            ### 🟢 COMPLETED TASKS (DONE)
+            - Deployed v2.5 to production | Source: DevOps | Time: Completed at 09:30
+
+            ### 🟡 PLANNED TASKS
+            - Team retrospectives meeting | Source: Manager | Target: Tomorrow 10:00
+        """.trimIndent()
+
+        val parsed = SummaryParser.parse(englishAiOutput)
+        assertFalse(parsed.rawCleanText.contains("<scratchpad>"))
+        assertTrue(parsed.reasoningNotes?.contains("Time Anchor") == true)
+        assertTrue(parsed.conciseAdvice.contains("You have 2 key tasks"))
+        assertEquals(1, parsed.criticalQuestions.size)
+        assertTrue(parsed.criticalQuestions[0].contains("sprint demo"))
+
+        assertEquals(2, parsed.tasksToDo.size)
+        assertEquals("Submit quarterly tax report", parsed.tasksToDo[0].title)
+        assertEquals("Finance Team", parsed.tasksToDo[0].source)
+        assertEquals("15:00 Today", parsed.tasksToDo[0].deadline)
+        assertEquals(TaskStatus.TODO, parsed.tasksToDo[0].status)
+
+        assertEquals("Review pull request for billing service", parsed.tasksToDo[1].title)
+        assertEquals("Sarah", parsed.tasksToDo[1].source)
+        assertEquals("17:00", parsed.tasksToDo[1].deadline)
+
+        assertEquals(1, parsed.tasksDone.size)
+        assertEquals("Deployed v2.5 to production", parsed.tasksDone[0].title)
+        assertEquals(TaskStatus.DONE, parsed.tasksDone[0].status)
+
+        assertEquals(1, parsed.tasksPlanned.size)
+        assertEquals("Team retrospectives meeting", parsed.tasksPlanned[0].title)
+        assertEquals(TaskStatus.PLANNED, parsed.tasksPlanned[0].status)
+    }
 }

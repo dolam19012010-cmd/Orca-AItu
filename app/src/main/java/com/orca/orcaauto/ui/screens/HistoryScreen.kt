@@ -115,6 +115,7 @@ import com.orca.orcaauto.domain.alarm.SystemAlarmHelper
 import com.orca.orcaauto.domain.filter.SummaryParser
 import com.orca.orcaauto.domain.filter.TaskItem
 import com.orca.orcaauto.domain.filter.TaskStatus
+import com.orca.orcaauto.ui.locale.LocalAppStrings
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -174,6 +175,8 @@ fun HistoryScreen() {
     }
 
     var showClearConfirmDialog by remember { mutableStateOf(false) }
+    val strings = LocalAppStrings.current
+    val isEn = strings.navHistory == "History & Tasks"
 
     Column(
         modifier = Modifier
@@ -183,13 +186,13 @@ fun HistoryScreen() {
     ) {
         // Title Header: Clean & Modern
         Text(
-            text = "Trí nhớ AI",
+            text = if (isEn) "AI Memory & Tasks" else "Trí nhớ AI",
             style = MaterialTheme.typography.titleLarge,
             color = TextPrimaryDark,
             fontWeight = FontWeight.Bold
         )
         Text(
-            text = "Báo cáo ca & Nhiệm vụ tự động",
+            text = if (isEn) "Shift summaries & automated task dispatch" else "Báo cáo ca & Nhiệm vụ tự động",
             style = MaterialTheme.typography.bodySmall,
             color = TextSecondaryDark
         )
@@ -212,12 +215,12 @@ fun HistoryScreen() {
             Tab(
                 selected = selectedTab == 0,
                 onClick = { selectedTab = 0 },
-                text = { Text("Tóm Tắt Ca (${shiftSummaries.size})", fontWeight = FontWeight.Medium, fontSize = 13.sp) }
+                text = { Text("${strings.tabSummaries} (${shiftSummaries.size})", fontWeight = FontWeight.Medium, fontSize = 13.sp) }
             )
             Tab(
                 selected = selectedTab == 1,
                 onClick = { selectedTab = 1 },
-                text = { Text("Tin Đã Ghi (${recentNotifications.size})", fontWeight = FontWeight.Medium, fontSize = 13.sp) }
+                text = { Text("${strings.tabRawMessages} (${recentNotifications.size})", fontWeight = FontWeight.Medium, fontSize = 13.sp) }
             )
         }
 
@@ -475,6 +478,8 @@ fun TwoPartSummaryCard(
     val currentSpeakingId by voiceManager.currentSummaryIdFlow.collectAsState()
     val isThisCardSpeaking = isSpeaking && currentSpeakingId == item.id
     val haptic = LocalHapticFeedback.current
+    val strings = LocalAppStrings.current
+    val isEn = strings.navHistory == "History & Tasks"
 
     fun getAlarmInfoForTask(task: TaskItem): Pair<String, SmartAlarmEntity?> {
         val parsedDt = SystemAlarmHelper.parseDateTimeFromText(task.deadline)
@@ -606,7 +611,7 @@ fun TwoPartSummaryCard(
                             },
                             onLongClick = {
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                voiceManager.speakSummary(item.id, parsed)
+                                voiceManager.speakSummary(item.id, parsed, isEnglish = isEn)
                             }
                         ),
                     shape = RoundedCornerShape(12.dp),
@@ -726,7 +731,7 @@ fun TwoPartSummaryCard(
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "📋 Nhiệm vụ & Kế hoạch",
+                                text = if (isEn) "📋 Tasks & Action Plans" else "📋 Nhiệm vụ & Kế hoạch",
                                 color = AccentEmerald,
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold
@@ -964,9 +969,11 @@ private fun SwipeableTaskItemRow(
     val isCancelled = alarmEntity?.status == SmartAlarmStatus.CANCELLED
     val isAlarmActive = alarmEntity?.status == SmartAlarmStatus.ACTIVE
     val context = LocalContext.current
+    val strings = LocalAppStrings.current
+    val isEn = strings.navHistory == "History & Tasks"
 
     val parsedDt = remember(task.deadline) { SystemAlarmHelper.parseDateTimeFromText(task.deadline) }
-    val proposedTimeLabel = parsedDt?.timeLabel ?: "Hẹn giờ"
+    val proposedTimeLabel = parsedDt?.timeLabel ?: (if (isEn) "Alarm" else "Hẹn giờ")
 
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { dismissValue ->
@@ -1006,8 +1013,8 @@ private fun SwipeableTaskItemRow(
                 else -> null
             }
             val text = when (direction) {
-                SwipeToDismissBoxValue.StartToEnd -> "Hoàn thành ✓"
-                SwipeToDismissBoxValue.EndToStart -> "Hủy việc ✕"
+                SwipeToDismissBoxValue.StartToEnd -> if (isEn) "Complete ✓" else "Hoàn thành ✓"
+                SwipeToDismissBoxValue.EndToStart -> if (isEn) "Cancel task ✕" else "Hủy việc ✕"
                 else -> ""
             }
 
@@ -1088,7 +1095,7 @@ private fun SwipeableTaskItemRow(
                             .background(AccentRose.copy(alpha = 0.15f), RoundedCornerShape(4.dp))
                             .padding(horizontal = 6.dp, vertical = 2.dp)
                     ) {
-                        Text("Đã hủy", color = AccentRose, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Text(if (isEn) "Cancelled" else "Đã hủy", color = AccentRose, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -1152,7 +1159,11 @@ private fun SwipeableTaskItemRow(
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = if (isAlarmActive) (alarmEntity?.targetDateLabel?.let { "✓ $it" } ?: "✓ Đã đặt $proposedTimeLabel") else "🔔 Đặt $proposedTimeLabel",
+                                text = if (isAlarmActive) {
+                                    alarmEntity?.targetDateLabel?.let { "✓ $it" } ?: (if (isEn) "✓ Set $proposedTimeLabel" else "✓ Đã đặt $proposedTimeLabel")
+                                } else {
+                                    if (isEn) "🔔 Set $proposedTimeLabel" else "🔔 Đặt $proposedTimeLabel"
+                                },
                                 color = pillColor,
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,

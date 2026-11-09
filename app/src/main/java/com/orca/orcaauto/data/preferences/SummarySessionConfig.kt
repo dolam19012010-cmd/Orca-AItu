@@ -22,7 +22,8 @@ data class SummarySessionConfig(
     val messengerEnabled: Boolean = true,
     val promptPersonaId: String = "gentle_assistant",
     val customFixedContext: String = "",
-    val autoCompleteOverdue: Boolean = false
+    val autoCompleteOverdue: Boolean = false,
+    val aiLanguage: String = "auto"
 ) {
     companion object {
         const val MAIN_SESSION_ID = "session_main_default"
@@ -46,7 +47,8 @@ data class SummarySessionConfig(
                 messengerEnabled = true,
                 promptPersonaId = "gentle_assistant",
                 customFixedContext = "",
-                autoCompleteOverdue = false
+                autoCompleteOverdue = false,
+                aiLanguage = "auto"
             )
         }
     }

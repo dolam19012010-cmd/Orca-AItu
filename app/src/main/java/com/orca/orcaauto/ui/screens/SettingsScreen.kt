@@ -55,6 +55,7 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Public
@@ -92,6 +93,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -128,7 +130,10 @@ import com.orca.orcaauto.data.remote.ApiKeyConfig
 import com.orca.orcaauto.data.remote.ApiDebugLogManager
 import com.orca.orcaauto.data.remote.KeyTestReport
 import com.orca.orcaauto.data.remote.UniversalAiClient
+import com.orca.orcaauto.domain.prompt.AiLanguage
 import com.orca.orcaauto.domain.prompt.PromptPersona
+import com.orca.orcaauto.ui.locale.AppLanguage
+import com.orca.orcaauto.ui.locale.LocalAppStrings
 import com.orca.orcaauto.service.FloatingBubbleService
 import com.orca.orcaauto.service.OemSurvivalHelper
 import com.orca.orcaauto.ui.components.MultiSessionManagementSection
@@ -572,6 +577,28 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
             if (initialExpandedCategory != null) {
                 expandedSectionIndex = initialExpandedCategory
             }
+        }
+
+        val strings = LocalAppStrings.current
+        val appLanguage by preferences.appLanguageFlow.collectAsState()
+        val aiLanguage by preferences.aiLanguageFlow.collectAsState()
+
+        // Category 11: Ngôn Ngữ & Bản Địa Hóa (Language & AI Localization)
+        SettingsCategoryCard(
+            isExpanded = expandedSectionIndex == 11,
+            onToggle = { expandedSectionIndex = if (expandedSectionIndex == 11) null else 11 },
+            icon = Icons.Default.Language,
+            iconBgColor = Color(0xFF06B6D4),
+            title = strings.catLanguageTitle,
+            subtitle = "${appLanguage.displayName} • ${aiLanguage.getDisplayName(appLanguage)}",
+            badgeText = "${appLanguage.code.uppercase()} | ${aiLanguage.code.uppercase()}"
+        ) {
+            LanguageConfigSection(
+                appLanguage = appLanguage,
+                aiLanguage = aiLanguage,
+                onAppLanguageChange = { preferences.setAppLanguage(it) },
+                onAiLanguageChange = { preferences.setAiLanguage(it) }
+            )
         }
 
         // Category 0: Ứng dụng quét thông báo
@@ -3920,5 +3947,209 @@ private fun AppInfoRow(
             fontWeight = FontWeight.SemiBold,
             fontSize = 11.5.sp
         )
+    }
+}
+
+@Composable
+private fun LanguageConfigSection(
+    appLanguage: AppLanguage,
+    aiLanguage: AiLanguage,
+    onAppLanguageChange: (AppLanguage) -> Unit,
+    onAiLanguageChange: (AiLanguage) -> Unit
+) {
+    val strings = LocalAppStrings.current
+    val isEn = appLanguage == AppLanguage.ENGLISH
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // 1. UI Language Selection
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.Language,
+                    contentDescription = null,
+                    tint = AccentCyan,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = strings.labelUiLanguage,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = TextPrimaryDark
+                )
+            }
+            Text(
+                text = strings.descUiLanguage,
+                style = MaterialTheme.typography.bodySmall,
+                color = TextSecondaryDark,
+                fontSize = 11.5.sp
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // Vietnamese Pill
+                val isViSelected = appLanguage == AppLanguage.VIETNAMESE
+                Surface(
+                    onClick = { onAppLanguageChange(AppLanguage.VIETNAMESE) },
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(44.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    color = if (isViSelected) PrimaryIndigo.copy(alpha = 0.2f) else SurfaceDark,
+                    border = BorderStroke(
+                        width = if (isViSelected) 1.5.dp else 1.dp,
+                        color = if (isViSelected) AccentCyan else CardBorder
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxSize(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("🇻🇳 ", fontSize = 16.sp)
+                        Text(
+                            text = "Tiếng Việt",
+                            color = if (isViSelected) AccentCyan else TextPrimaryDark,
+                            fontWeight = if (isViSelected) FontWeight.Bold else FontWeight.Medium,
+                            fontSize = 13.sp
+                        )
+                    }
+                }
+
+                // English Pill
+                val isEnSelected = appLanguage == AppLanguage.ENGLISH
+                Surface(
+                    onClick = { onAppLanguageChange(AppLanguage.ENGLISH) },
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(44.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    color = if (isEnSelected) PrimaryIndigo.copy(alpha = 0.2f) else SurfaceDark,
+                    border = BorderStroke(
+                        width = if (isEnSelected) 1.5.dp else 1.dp,
+                        color = if (isEnSelected) AccentCyan else CardBorder
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxSize(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("🇬🇧 ", fontSize = 16.sp)
+                        Text(
+                            text = "English",
+                            color = if (isEnSelected) AccentCyan else TextPrimaryDark,
+                            fontWeight = if (isEnSelected) FontWeight.Bold else FontWeight.Medium,
+                            fontSize = 13.sp
+                        )
+                    }
+                }
+            }
+        }
+
+        HorizontalDivider(color = GlassBorderSubtle)
+
+        // 2. AI Output & Prompt Language Selection
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.Psychology,
+                    contentDescription = null,
+                    tint = Color(0xFF8B5CF6),
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = strings.labelAiLanguage,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = TextPrimaryDark
+                )
+            }
+            Text(
+                text = strings.descAiLanguage,
+                style = MaterialTheme.typography.bodySmall,
+                color = TextSecondaryDark,
+                fontSize = 11.5.sp
+            )
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(SurfaceDark, RoundedCornerShape(10.dp))
+                    .border(1.dp, CardBorder, RoundedCornerShape(10.dp))
+                    .padding(vertical = 4.dp)
+            ) {
+                AiLanguage.entries.forEach { option ->
+                    val isSelected = aiLanguage == option
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onAiLanguageChange(option) }
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = isSelected,
+                            onClick = { onAiLanguageChange(option) },
+                            colors = RadioButtonDefaults.colors(
+                                selectedColor = AccentCyan,
+                                unselectedColor = TextMutedDark
+                            )
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            val flag = when (option) {
+                                AiLanguage.AUTO -> "🔄"
+                                AiLanguage.VIETNAMESE -> "🇻🇳"
+                                AiLanguage.ENGLISH -> "🇬🇧"
+                            }
+                            Text(
+                                text = "$flag ${option.getDisplayName(appLanguage)}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (isSelected) AccentCyan else TextPrimaryDark,
+                                fontSize = 13.sp
+                            )
+                            val subdesc = when (option) {
+                                AiLanguage.AUTO -> if (isEn) "Automatically follows app display language" else "Tự động chọn ngôn ngữ giống với giao diện ứng dụng"
+                                AiLanguage.VIETNAMESE -> if (isEn) "Force Vietnamese prompts & Vietnamese task summaries" else "Bắt buộc viết prompt & xuất bản tóm tắt bằng tiếng Việt"
+                                AiLanguage.ENGLISH -> if (isEn) "Force English prompts & English task summaries" else "Bắt buộc viết prompt & xuất bản tóm tắt bằng tiếng Anh"
+                            }
+                            Text(
+                                text = subdesc,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = TextMutedDark,
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Info Box Hint
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF131B2A), RoundedCornerShape(8.dp))
+                    .border(1.dp, AccentCyan.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                    .padding(10.dp)
+            ) {
+                Text(
+                    text = strings.langAiHint,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = AccentCyan,
+                    fontSize = 11.5.sp,
+                    lineHeight = 16.sp
+                )
+            }
+        }
     }
 }

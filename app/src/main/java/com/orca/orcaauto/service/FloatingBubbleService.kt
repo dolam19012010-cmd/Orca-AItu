@@ -1554,8 +1554,9 @@ class FloatingBubbleService : Service() {
             }
         }
 
+        val isEnBubble = UserPreferences.getInstance(this).getAppLanguage() == com.orca.orcaauto.ui.locale.AppLanguage.ENGLISH
         val queryEt = EditText(this).apply {
-            hint = if (isCallingAi) "AI đang xử lý..." else "Nhập lệnh hoặc câu hỏi..."
+            hint = if (isCallingAi) (if (isEnBubble) "AI is thinking..." else "AI đang xử lý...") else (if (isEnBubble) "Ask AI or command..." else "Nhập lệnh hoặc câu hỏi...")
             setHintTextColor(Color.parseColor("#71717A"))
             setTextColor(Color.WHITE)
             textSize = 12.5f
@@ -1585,7 +1586,7 @@ class FloatingBubbleService : Service() {
                 isCallingAi = true
                 updateBubbleContent()
                 serviceScope.launch {
-                    val promptToSend = queryText.ifBlank { "Tóm tắt các tin nhắn quan trọng gần đây" }
+                    val promptToSend = queryText.ifBlank { if (isEnBubble) "Summarize recent key tasks and messages" else "Tóm tắt các tin nhắn quan trọng gần đây" }
                     val result = LiveAiChatHelper.sendUserPrompt(this@FloatingBubbleService, promptToSend)
                     isCallingAi = false
                     if (result.isSuccess) {
@@ -1610,7 +1611,7 @@ class FloatingBubbleService : Service() {
         inputRow.addView(queryEt)
 
         val sendBtn = TextView(this).apply {
-            text = if (isCallingAi) "..." else "Gửi"
+            text = if (isCallingAi) "..." else (if (isEnBubble) "Send" else "Gửi")
             setTextColor(if (isCallingAi) Color.parseColor("#94A3B8") else Color.BLACK)
             textSize = 12f
             gravity = Gravity.CENTER

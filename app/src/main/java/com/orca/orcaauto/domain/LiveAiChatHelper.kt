@@ -90,6 +90,12 @@ object LiveAiChatHelper {
         }
         val effectiveInstruction = instructionParts.joinToString("\n\n")
 
+        val effectiveAiLang = when (session.aiLanguage) {
+            "vi" -> com.orca.orcaauto.ui.locale.AppLanguage.VIETNAMESE
+            "en" -> com.orca.orcaauto.ui.locale.AppLanguage.ENGLISH
+            else -> prefs.getEffectiveAiLanguage()
+        }
+
         val prompt = GeminiPromptBuilder.buildSummaryPrompt(
             notifications = sessionNotifications,
             customFixedContext = fixedContext,
@@ -101,7 +107,8 @@ object LiveAiChatHelper {
             completedTasks = completedTasks,
             taskNotes = taskNotes,
             timezoneId = prefs.getUserTimezone(),
-            autoCompleteOverdue = session.autoCompleteOverdue
+            autoCompleteOverdue = session.autoCompleteOverdue,
+            language = effectiveAiLang
         )
 
         // 4. Execute strictly sequentially through SequentialAiQueue (FIFO with session key priorities)

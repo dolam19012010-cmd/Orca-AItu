@@ -27,7 +27,10 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import com.orca.orcaauto.ui.locale.AppStringsProvider
+import com.orca.orcaauto.ui.locale.LocalAppStrings
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -190,102 +193,106 @@ fun MainAppNavHost(navigationTarget: String? = null) {
 
     val wallpaperPath by preferences.wallpaperPathFlow.collectAsState()
     val wallpaperMode by preferences.wallpaperModeFlow.collectAsState()
+    val appLanguage by preferences.appLanguageFlow.collectAsState()
+    val strings = remember(appLanguage) { AppStringsProvider.get(appLanguage) }
 
     // Primary Tab Order: Lịch sử AI first, then Trạng thái, then Cấu hình
     val navItems = remember { listOf(Screen.History, Screen.Dashboard, Screen.Settings) }
 
-    AppWallpaperBackground(
-        wallpaperPath = wallpaperPath,
-        mode = wallpaperMode
-    ) {
-        Scaffold(
-            containerColor = Color.Transparent,
-            bottomBar = {
-                NavigationBar(
-                    containerColor = if (wallpaperPath != null) GlassSurfaceDark else SurfaceDark,
-                    contentColor = TextPrimaryDark,
-                    modifier = Modifier.border(
-                        width = 1.dp,
-                        color = if (wallpaperPath != null) GlassBorderSubtle else Color.Transparent
-                    )
-                ) {
-                    navItems.forEach { screen ->
-                        val selected = currentScreen == screen
-                        NavigationBarItem(
-                            selected = selected,
-                            onClick = { currentScreen = screen },
-                            icon = {
-                                if (screen == Screen.Settings && isMissingPermissions) {
-                                    BadgedBox(
-                                        badge = {
-                                            Badge(
-                                                containerColor = AccentRose,
-                                                modifier = Modifier.size(7.dp)
+    CompositionLocalProvider(LocalAppStrings provides strings) {
+        AppWallpaperBackground(
+            wallpaperPath = wallpaperPath,
+            mode = wallpaperMode
+        ) {
+            Scaffold(
+                containerColor = Color.Transparent,
+                bottomBar = {
+                    NavigationBar(
+                        containerColor = if (wallpaperPath != null) GlassSurfaceDark else SurfaceDark,
+                        contentColor = TextPrimaryDark,
+                        modifier = Modifier.border(
+                            width = 1.dp,
+                            color = if (wallpaperPath != null) GlassBorderSubtle else Color.Transparent
+                        )
+                    ) {
+                        navItems.forEach { screen ->
+                            val selected = currentScreen == screen
+                            NavigationBarItem(
+                                selected = selected,
+                                onClick = { currentScreen = screen },
+                                icon = {
+                                    if (screen == Screen.Settings && isMissingPermissions) {
+                                        BadgedBox(
+                                            badge = {
+                                                Badge(
+                                                    containerColor = AccentRose,
+                                                    modifier = Modifier.size(7.dp)
+                                                )
+                                            }
+                                        ) {
+                                            Icon(
+                                                imageVector = screen.icon,
+                                                contentDescription = screen.getTitle(strings)
                                             )
                                         }
-                                    ) {
+                                    } else {
                                         Icon(
                                             imageVector = screen.icon,
-                                            contentDescription = screen.title
+                                            contentDescription = screen.getTitle(strings)
                                         )
                                     }
-                                } else {
-                                    Icon(
-                                        imageVector = screen.icon,
-                                        contentDescription = screen.title
+                                },
+                                label = {
+                                    Text(
+                                        text = screen.getTitle(strings),
+                                        color = if (selected) AccentCyan else TextSecondaryDark
                                     )
-                                }
-                            },
-                            label = {
-                                Text(
-                                    text = screen.title,
-                                    color = if (selected) AccentCyan else TextSecondaryDark
+                                },
+                                colors = NavigationBarItemDefaults.colors(
+                                    selectedIconColor = AccentCyan,
+                                    unselectedIconColor = TextSecondaryDark,
+                                    indicatorColor = AccentCyan.copy(alpha = 0.2f)
                                 )
-                            },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = AccentCyan,
-                                unselectedIconColor = TextSecondaryDark,
-                                indicatorColor = AccentCyan.copy(alpha = 0.2f)
                             )
-                        )
+                        }
                     }
                 }
-            }
-        ) { innerPadding ->
-            Surface(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding),
-                color = Color.Transparent
-            ) {
-                AnimatedContent(
-                    targetState = currentScreen,
-                    transitionSpec = {
-                        fadeIn(animationSpec = tween(220)) togetherWith fadeOut(animationSpec = tween(180))
-                    },
-                    label = "MainAppScreenTransition"
-                ) { targetScreen ->
-                    when (targetScreen) {
-                        is Screen.Dashboard -> DashboardScreen()
-                        is Screen.History -> HistoryScreen()
-                        is Screen.Settings -> SettingsScreen(
-                            initialExpandedCategory = if (navigationTarget == "advanced_sessions") 99 else null
-                        )
+            ) { innerPadding ->
+                Surface(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding),
+                    color = Color.Transparent
+                ) {
+                    AnimatedContent(
+                        targetState = currentScreen,
+                        transitionSpec = {
+                            fadeIn(animationSpec = tween(220)) togetherWith fadeOut(animationSpec = tween(180))
+                        },
+                        label = "MainAppScreenTransition"
+                    ) { targetScreen ->
+                        when (targetScreen) {
+                            is Screen.Dashboard -> DashboardScreen()
+                            is Screen.History -> HistoryScreen()
+                            is Screen.Settings -> SettingsScreen(
+                                initialExpandedCategory = if (navigationTarget == "advanced_sessions") 99 else null
+                            )
+                        }
                     }
                 }
             }
         }
-    }
 
-    if (showFirstTimeIntro) {
-        OnboardingGuideDialog(
-            initialDontShowAgain = preferences.isIntroDismissedPermanently(),
-            onDismiss = { dontShowAgain ->
-                if (dontShowAgain) {
-                    preferences.setIntroDismissedPermanently(true)
+        if (showFirstTimeIntro) {
+            OnboardingGuideDialog(
+                initialDontShowAgain = preferences.isIntroDismissedPermanently(),
+                onDismiss = { dontShowAgain ->
+                    if (dontShowAgain) {
+                        preferences.setIntroDismissedPermanently(true)
+                    }
+                    showFirstTimeIntro = false
                 }
-                showFirstTimeIntro = false
-            }
-        )
+            )
+        }
     }
 }
