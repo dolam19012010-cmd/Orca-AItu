@@ -861,7 +861,9 @@ class FloatingBubbleService : Service() {
             bubbleView?.scaleY = targetScale
             if (newState == BubbleState.STATE_3_HIDDEN) {
                 p.flags = p.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                bubbleRootView?.visibility = View.GONE
             } else {
+                bubbleRootView?.visibility = View.VISIBLE
                 p.flags = p.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
             }
             try {
@@ -892,6 +894,7 @@ class FloatingBubbleService : Service() {
             // trồi ra đúng vị trí nép của Trạng thái 2 (targetX = if (isLeft) -dpToPx(32) else screenWidth - bubbleSize + dpToPx(32)).
             // Thời gian animation ~280ms với DecelerateInterpolator.
             updateShakeDetectorState()
+            bubbleRootView?.visibility = View.VISIBLE
             p.flags = p.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
             bubbleView?.alpha = 0.20f
             bubbleView?.scaleX = 0.85f
@@ -946,6 +949,7 @@ class FloatingBubbleService : Service() {
             }
 
             if (newState != BubbleState.STATE_3_HIDDEN) {
+                bubbleRootView?.visibility = View.VISIBLE
                 p.flags = p.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
             }
 
@@ -982,6 +986,7 @@ class FloatingBubbleService : Service() {
                         bubbleView?.scaleY = targetScale
                         if (newState == BubbleState.STATE_3_HIDDEN) {
                             p.flags = p.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                            bubbleRootView?.visibility = View.GONE
                         }
                         try {
                             if (bubbleRootView?.isAttachedToWindow == true) {

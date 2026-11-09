@@ -70,16 +70,17 @@ class ShakeDetector(
             return false
         }
 
+        // Sử dụng SENSOR_DELAY_UI (~16Hz / 60ms) thay vì GAME (50Hz / 20ms) để tiết kiệm 70% CPU ngắt
         val registered = sensorManager.registerListener(
             this,
             sensor,
-            SensorManager.SENSOR_DELAY_GAME,
+            SensorManager.SENSOR_DELAY_UI,
             handler
         )
         if (registered) {
             isRunning = true
             resetState()
-            Log.d(TAG, "Đã khởi động ShakeDetector (Linear=$isLinearSensor, Delay=GAME)")
+            Log.d(TAG, "Đã khởi động ShakeDetector (Linear=$isLinearSensor, Delay=UI/16Hz)")
         } else {
             Log.e(TAG, "Không thể đăng ký SensorEventListener với SensorManager")
         }

@@ -17,6 +17,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 class NotificationMonitorService : NotificationListenerService() {
 
@@ -31,6 +32,15 @@ class NotificationMonitorService : NotificationListenerService() {
         }
         preferences = UserPreferences.getInstance(applicationContext)
         database = AppDatabase.getDatabase(applicationContext)
+
+        // Tải số lượng tin nhắn chưa xử lý ban đầu lên RAM để các lần ghi sau không cần truy vấn COUNT(*)
+        serviceScope.launch {
+            try {
+                val initialCount = database.notificationDao().getUnprocessedCount()
+                inMemoryUnprocessedCount.set(initialCount)
+            } catch (_: Exception) {}
+        }
+
         Log.i(TAG, "NotificationMonitorService created and ready.")
     }
 
@@ -76,19 +86,7 @@ class NotificationMonitorService : NotificationListenerService() {
 
         serviceScope.launch {
             try {
-                // 2. Database level fallback deduplication (prevents duplicates across service restarts)
-                val eightSecondsAgo = timestamp - DEDUP_WINDOW_MS
-                val duplicates = database.notificationDao().countRecentDuplicates(
-                    appPackage = packageName,
-                    sender = title,
-                    content = content,
-                    afterTimestamp = eightSecondsAgo
-                )
-                if (duplicates > 0) {
-                    Log.d(TAG, "Khử trùng lặp (DB level): Bỏ qua thông báo trùng lặp trong 8s: [$appName] $title")
-                    return@launch
-                }
-
+                // 2. Ghi trực tiếp vào Room DB (Khử trùng lặp 8s trên RAM ở bước 1 đã bảo vệ toàn diện)
                 val entity = NotificationEntity(
                     appPackage = packageName,
                     appName = appName,
@@ -100,6 +98,8 @@ class NotificationMonitorService : NotificationListenerService() {
                 val id = database.notificationDao().insert(entity)
                 Log.d(TAG, "Lưu thông báo thành công: [$appName] $title (id=$id)")
 
+                // Cập nhật bộ đếm trên RAM mà không cần truy vấn SQL COUNT(*)
+                val currentUnprocessed = inMemoryUnprocessedCount.incrementAndGet()
                 val now = System.currentTimeMillis()
 
                 // Periodic maintenance (throttled to once every 15 mins to save battery and flash I/O)
@@ -111,13 +111,19 @@ class NotificationMonitorService : NotificationListenerService() {
 
                     // 2. Enforce FIFO Sliding Window (Cap 150 messages, protecting unprocessed items)
                     database.notificationDao().enforceMaxCapacity(maxCapacity = 150)
+
+                    // 3. Đồng bộ lại bộ đếm RAM định kỳ với DB thực tế
+                    try {
+                        val syncedCount = database.notificationDao().getUnprocessedCount()
+                        inMemoryUnprocessedCount.set(syncedCount)
+                    } catch (_: Exception) {}
                 }
 
                 // 3. Auto-Spillover Trigger: if unread messages accumulate to >= 80 between shifts
-                val unprocessed = database.notificationDao().getUnprocessedCount()
-                if (unprocessed >= BURST_UNPROCESSED_THRESHOLD && (now - lastBurstTriggerTime) >= BURST_COOLDOWN_MS) {
+                if (currentUnprocessed >= BURST_UNPROCESSED_THRESHOLD && (now - lastBurstTriggerTime) >= BURST_COOLDOWN_MS) {
                     lastBurstTriggerTime = now
-                    Log.i(TAG, "Phát hiện dồn ứ $unprocessed tin nhắn giữa 2 ca! Tự động xả đệm & tóm tắt khẩn cấp...")
+                    inMemoryUnprocessedCount.set(0)
+                    Log.i(TAG, "Phát hiện dồn ứ $currentUnprocessed tin nhắn giữa 2 ca! Tự động xả đệm & tóm tắt khẩn cấp...")
                     com.orca.orcaauto.worker.WorkScheduler.triggerImmediateSummary(applicationContext)
                 }
             } catch (e: Exception) {
@@ -153,6 +159,7 @@ class NotificationMonitorService : NotificationListenerService() {
         private const val MAINTENANCE_INTERVAL_MS = 15 * 60 * 1000L // Run DB purge at most once every 15 mins to save battery
         private var lastBurstTriggerTime = 0L
         private var lastMaintenanceTime = 0L
+        private val inMemoryUnprocessedCount = AtomicInteger(0)
 
         // In-memory sliding window cache for rapid deduplication (sub-millisecond O(1) checks)
         // Key: packageName|sender|hash(content) -> timestamp
