@@ -105,24 +105,11 @@ object SystemAlarmHelper {
         val n2 = normalizeTitle(title2)
         if (n1.isEmpty() || n2.isEmpty()) return false
         if (n1 == n2) return true
-
-        // 1. Một chuỗi chứa chuỗi kia với độ dài đủ lớn (ví dụ: "gửi báo cáo tuần" nằm trong "gửi báo cáo tuần cho sếp")
         val minLen = minOf(n1.length, n2.length)
-        if (minLen >= 8 && (n1.contains(n2) || n2.contains(n1))) {
-            return true
+        val maxLen = maxOf(n1.length, n2.length)
+        if (minLen >= 8 && (maxLen - minLen) <= 4) {
+            return n1.startsWith(n2) || n2.startsWith(n1)
         }
-
-        // 2. So khớp tập từ (Token overlap) để chống việc AI đổi thứ tự hoặc thêm từ đệm
-        val words1 = title1.lowercase().split(Regex("""\s+""")).filter { it.length >= 2 }
-        val words2 = title2.lowercase().split(Regex("""\s+""")).filter { it.length >= 2 }
-        if (words1.size >= 2 && words2.size >= 2) {
-            val common = words1.intersect(words2.toSet()).size
-            val smaller = minOf(words1.size, words2.size)
-            if ((common >= smaller * 0.5f && common >= 2) || common >= 3) {
-                return true
-            }
-        }
-
         return false
     }
 
@@ -134,7 +121,7 @@ object SystemAlarmHelper {
         val norm = normalizeTitle(taskTitle)
         if (norm.isEmpty()) return null
         val now = System.currentTimeMillis()
-        val cutoff = now - 72 * 3600 * 1000L // Giữ trạng thái trong 72 giờ (vài phiên) để tránh sinh lại từ tin nhắn cũ
+        val cutoff = now - 48 * 3600 * 1000L // Giữ trạng thái trong 48 giờ (2 ngày) theo chu kỳ dọn tin nhắn 24h
 
         val matches = alarmMap.values.filter { isTitleMatching(it.taskTitle, taskTitle) }
         if (matches.isEmpty()) return null
@@ -143,7 +130,7 @@ object SystemAlarmHelper {
         val active = matches.firstOrNull { it.status == SmartAlarmStatus.ACTIVE && it.targetTimeMillis >= now - 3600_000L }
         if (active != null) return active
 
-        // 2. Xét các bản ghi trạng thái (CANCELLED, COMPLETED, PROPOSED) trong vòng 72h (vài phiên)
+        // 2. Xét các bản ghi trạng thái (CANCELLED, COMPLETED, PROPOSED) trong vòng 48h (2 ngày)
         return matches
             .filter { it.targetTimeMillis >= cutoff || it.updatedAt >= cutoff }
             .maxByOrNull { it.updatedAt }

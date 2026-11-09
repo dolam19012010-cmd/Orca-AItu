@@ -74,9 +74,9 @@ object LiveAiChatHelper {
         val completedTasks = if (prefs.isLongTermTasksContextEnabled()) db.smartAlarmDao().getCompletedAlarms() else emptyList()
         val taskNotes = prefs.getTaskNotes()
 
-        // Lọc sạch các việc đã bị hủy khỏi bản tóm tắt ca trước để AI không nhìn thấy và không nối tiếp
+        // Gắn nhãn [ĐÃ HỦY] cho các việc đã bị hủy trong ca trước để AI tự biết và không nối tiếp
         val previousSummary = if (cancelledTasks.isNotEmpty() && rawPreviousSummary.isNotBlank()) {
-            filterCancelledTasksFromSummary(rawPreviousSummary, cancelledTasks)
+            tagCancelledTasksInSummary(rawPreviousSummary, cancelledTasks)
         } else {
             rawPreviousSummary
         }
@@ -137,27 +137,32 @@ object LiveAiChatHelper {
     }
 
     /**
-     * Filters out cancelled tasks from previous summary so the AI doesn't see them as active rollover tasks.
+     * Tags cancelled tasks in previous summary with [ĐÃ HỦY] so the AI sees the explicit cancelled label.
      */
-    fun filterCancelledTasksFromSummary(
+    fun tagCancelledTasksInSummary(
         summaryContent: String,
         cancelledTasks: List<com.orca.orcaauto.data.local.SmartAlarmEntity>
     ): String {
         if (cancelledTasks.isEmpty() || summaryContent.isBlank()) return summaryContent
         val lines = summaryContent.lines()
-        val filteredLines = lines.filterNot { line ->
+        val taggedLines = lines.map { line ->
             val trimmed = line.trim()
             val isTaskLine = trimmed.startsWith("- [ ]") || trimmed.startsWith("- [x]") || trimmed.startsWith("- [X]") || trimmed.startsWith("•")
-            if (isTaskLine) {
+            if (isTaskLine && !trimmed.contains("[ĐÃ HỦY]")) {
                 val cleanLineTitle = trimmed
                     .replace(Regex("""^[-*•]\s*(\[[ xX]?\])?\s*"""), "")
                     .replace(Regex("""\s*\([Hh]ạn:[^)]+\)"""), "")
                     .trim()
-                cancelledTasks.any { com.orca.orcaauto.domain.alarm.SystemAlarmHelper.isTitleMatching(it.taskTitle, cleanLineTitle) }
+                val isCancelled = cancelledTasks.any { com.orca.orcaauto.domain.alarm.SystemAlarmHelper.isTitleMatching(it.taskTitle, cleanLineTitle) }
+                if (isCancelled) {
+                    "$line [ĐÃ HỦY]"
+                } else {
+                    line
+                }
             } else {
-                false
+                line
             }
         }
-        return filteredLines.joinToString("\n")
+        return taggedLines.joinToString("\n")
     }
 }
