@@ -213,4 +213,45 @@ class SystemAlarmHelperTest {
         val id3 = SystemAlarmHelper.generateAlarmId("Họp giao ban sáng mai", cal3)
         assertTrue(id1 != id3)
     }
+
+    @Test
+    fun testIsTitleMatching_fuzzyAndContainment() {
+        // Exact
+        assertTrue(SystemAlarmHelper.isTitleMatching("Mua văn phòng phẩm", "Mua văn phòng phẩm"))
+        // Containment with extra words
+        assertTrue(SystemAlarmHelper.isTitleMatching("Gửi báo cáo doanh thu", "Gửi báo cáo doanh thu tuần cho sếp"))
+        // Word token overlap
+        assertTrue(SystemAlarmHelper.isTitleMatching("Mua đồ dùng văn phòng", "Mua văn phòng phẩm cho cty"))
+        // Completely different
+        org.junit.Assert.assertFalse(SystemAlarmHelper.isTitleMatching("Đi mua bánh mì", "Đi đón con lúc 17h"))
+    }
+
+    @Test
+    fun testFilterCancelledTasksFromSummary() {
+        val summary = """
+            ### 💡 LỜI KHUYÊN & LƯU Ý
+            Tập trung hoàn thành việc gấp.
+            
+            ### 🔴 NHIỆM VỤ PHẢI LÀM (TO-DO)
+            - [ ] Gửi báo cáo doanh thu tuần (Hạn: 17:00)
+            - [ ] Mua văn phòng phẩm (Hạn: 15:00)
+            - [ ] Đón con ở trường (Hạn: 16:30)
+        """.trimIndent()
+
+        val cancelled = listOf(
+            com.orca.orcaauto.data.local.SmartAlarmEntity(
+                alarmId = "ALM_1",
+                taskTitle = "Mua văn phòng phẩm",
+                targetTimeMillis = System.currentTimeMillis(),
+                targetDateLabel = "Đã hủy",
+                status = com.orca.orcaauto.data.local.SmartAlarmStatus.CANCELLED
+            )
+        )
+
+        val filtered = com.orca.orcaauto.domain.LiveAiChatHelper.filterCancelledTasksFromSummary(summary, cancelled)
+
+        assertTrue(filtered.contains("Gửi báo cáo doanh thu tuần"))
+        assertTrue(filtered.contains("Đón con ở trường"))
+        org.junit.Assert.assertFalse(filtered.contains("Mua văn phòng phẩm"))
+    }
 }

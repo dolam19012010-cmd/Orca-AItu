@@ -67,13 +67,13 @@ object GeminiPromptBuilder {
         }
 
         // 5. Cancelled Tasks Blacklist
-        val distinctCancelled = cancelledTasks.map { it.taskTitle.trim() }.filter { it.isNotBlank() }.distinct().take(20)
+        val distinctCancelled = cancelledTasks.map { it.taskTitle.trim() }.filter { it.isNotBlank() }.distinct().take(35)
         if (distinctCancelled.isNotEmpty()) {
-            contentBuilder.append("=== VIỆC NGƯỜI DÙNG ĐÃ HỦY (CẤM TẠO LẠI) ===\n")
+            contentBuilder.append("=== DANH SÁCH CẤM: CÁC VIỆC NGƯỜI DÙNG ĐÃ HỦY (CẤM TẠO LẠI) ===\n")
             for (title in distinctCancelled) {
                 contentBuilder.append("- $title\n")
             }
-            contentBuilder.append("⚡ Người dùng đã chủ động hủy các việc này, không đưa lại vào bảng nhiệm vụ.\n\n")
+            contentBuilder.append("⚡ QUY TẮC BẮT BUỘC: Người dùng đã chủ động HỦY các việc trên. Dù tin nhắn cũ trong 24h qua có nhắc lại, hay diễn đạt bằng từ ngữ khác, TUYỆT ĐỐI CẤM không đưa lại vào bảng nhiệm vụ (To-Do/Planned).\n\n")
         }
 
         // 6. Completed Tasks

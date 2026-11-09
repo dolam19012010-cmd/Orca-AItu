@@ -67,11 +67,19 @@ object LiveAiChatHelper {
             prefs.getPromptPersona()
         }
         val latestSummaryRecord = db.summaryDao().getLatestSummaryForSession(session.id)
-        val previousSummary = if (prefs.isRecentSummaryContextEnabled()) latestSummaryRecord?.summaryContent.orEmpty() else ""
+        val rawPreviousSummary = if (prefs.isRecentSummaryContextEnabled()) latestSummaryRecord?.summaryContent.orEmpty() else ""
         val activeAlarms = if (prefs.isLongTermTasksContextEnabled()) db.smartAlarmDao().getActiveAlarms() else emptyList()
-        val cancelledTasks = if (prefs.isLongTermTasksContextEnabled()) db.smartAlarmDao().getCancelledAlarms() else emptyList()
+        // Luôn nạp danh sách việc đã hủy để chặn tái sinh qua nhiều phiên
+        val cancelledTasks = db.smartAlarmDao().getCancelledAlarms()
         val completedTasks = if (prefs.isLongTermTasksContextEnabled()) db.smartAlarmDao().getCompletedAlarms() else emptyList()
         val taskNotes = prefs.getTaskNotes()
+
+        // Lọc sạch các việc đã bị hủy khỏi bản tóm tắt ca trước để AI không nhìn thấy và không nối tiếp
+        val previousSummary = if (cancelledTasks.isNotEmpty() && rawPreviousSummary.isNotBlank()) {
+            filterCancelledTasksFromSummary(rawPreviousSummary, cancelledTasks)
+        } else {
+            rawPreviousSummary
+        }
 
         val instructionParts = mutableListOf<String>()
         if (session.customInstruction.isNotBlank()) {
@@ -126,5 +134,30 @@ object LiveAiChatHelper {
         } else {
             result
         }
+    }
+
+    /**
+     * Filters out cancelled tasks from previous summary so the AI doesn't see them as active rollover tasks.
+     */
+    fun filterCancelledTasksFromSummary(
+        summaryContent: String,
+        cancelledTasks: List<com.orca.orcaauto.data.local.SmartAlarmEntity>
+    ): String {
+        if (cancelledTasks.isEmpty() || summaryContent.isBlank()) return summaryContent
+        val lines = summaryContent.lines()
+        val filteredLines = lines.filterNot { line ->
+            val trimmed = line.trim()
+            val isTaskLine = trimmed.startsWith("- [ ]") || trimmed.startsWith("- [x]") || trimmed.startsWith("- [X]") || trimmed.startsWith("•")
+            if (isTaskLine) {
+                val cleanLineTitle = trimmed
+                    .replace(Regex("""^[-*•]\s*(\[[ xX]?\])?\s*"""), "")
+                    .replace(Regex("""\s*\([Hh]ạn:[^)]+\)"""), "")
+                    .trim()
+                cancelledTasks.any { com.orca.orcaauto.domain.alarm.SystemAlarmHelper.isTitleMatching(it.taskTitle, cleanLineTitle) }
+            } else {
+                false
+            }
+        }
+        return filteredLines.joinToString("\n")
     }
 }

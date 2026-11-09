@@ -25,7 +25,7 @@ interface SmartAlarmDao {
     @Query("SELECT * FROM smart_alarms WHERE status = 'ACTIVE' ORDER BY targetTimeMillis ASC")
     suspend fun getActiveAlarms(): List<SmartAlarmEntity>
 
-    @Query("SELECT * FROM smart_alarms WHERE status = 'CANCELLED' ORDER BY updatedAt DESC LIMIT 20")
+    @Query("SELECT * FROM smart_alarms WHERE status = 'CANCELLED' ORDER BY updatedAt DESC LIMIT 50")
     suspend fun getCancelledAlarms(): List<SmartAlarmEntity>
 
     @Query("SELECT * FROM smart_alarms WHERE status = 'COMPLETED' ORDER BY updatedAt DESC LIMIT 20")
