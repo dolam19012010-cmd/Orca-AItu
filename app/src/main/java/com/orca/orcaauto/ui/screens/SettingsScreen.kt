@@ -181,7 +181,10 @@ private fun SettingsCategoryCard(
             .fillMaxWidth()
             .border(
                 1.dp,
-                if (isExpanded) iconBgColor.copy(alpha = 0.5f) else GlassBorder,
+                if (isExpanded) {
+                    if (iconBgColor == Color(0xFF27272A) || iconBgColor == SurfaceVariantDark || iconBgColor == BackgroundDark) AccentCyan.copy(alpha = 0.5f)
+                    else iconBgColor.copy(alpha = 0.5f)
+                } else GlassBorder,
                 RoundedCornerShape(16.dp)
             ),
         shape = RoundedCornerShape(16.dp),
@@ -211,7 +214,7 @@ private fun SettingsCategoryCard(
                         Icon(
                             imageVector = icon,
                             contentDescription = null,
-                            tint = iconTint,
+                            tint = if (iconBgColor == PrimaryIndigo || iconBgColor == Color.White) BackgroundDark else iconTint,
                             modifier = Modifier.size(18.dp)
                         )
                     }
@@ -257,7 +260,10 @@ private fun SettingsCategoryCard(
                     Icon(
                         imageVector = Icons.Default.ExpandMore,
                         contentDescription = if (isExpanded) "Thu gọn" else "Mở rộng",
-                        tint = if (isExpanded) iconBgColor else TextMutedDark,
+                        tint = if (isExpanded) {
+                            if (iconBgColor == Color(0xFF27272A) || iconBgColor == SurfaceVariantDark || iconBgColor == BackgroundDark) AccentCyan
+                            else iconBgColor
+                        } else TextMutedDark,
                         modifier = Modifier.rotate(rotationState)
                     )
                 }
@@ -715,7 +721,7 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
             isExpanded = expandedSectionIndex == 3,
             onToggle = { expandedSectionIndex = if (expandedSectionIndex == 3) null else 3 },
             icon = Icons.Default.Psychology,
-            iconBgColor = Color(0xFF27272A),
+            iconBgColor = Color(0xFF8B5CF6),
             title = "Phong C\u00E1ch V\u0103n Phong AI",
             subtitle = "Chu \u0111\u00E1o, Nghi\u00EAm t\u00FAc, T\u1ED1i gi\u1EA3n, H\u00F3m h\u1EC9nh...",
             badgeText = "${currentSessionPersona.title} (${currentSession.name})"
@@ -776,7 +782,10 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
                         onCheckedChange = { preferences.setRecentSummaryContextEnabled(it) },
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = BackgroundDark,
-                            checkedTrackColor = PrimaryIndigo
+                            checkedTrackColor = PrimaryIndigo,
+                            uncheckedThumbColor = TextMutedDark,
+                            uncheckedTrackColor = SurfaceDark,
+                            uncheckedBorderColor = CardBorder
                         )
                     )
                 }
@@ -810,7 +819,10 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
                         onCheckedChange = { preferences.setLongTermTasksContextEnabled(it) },
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = BackgroundDark,
-                            checkedTrackColor = PrimaryIndigo
+                            checkedTrackColor = PrimaryIndigo,
+                            uncheckedThumbColor = TextMutedDark,
+                            uncheckedTrackColor = SurfaceDark,
+                            uncheckedBorderColor = CardBorder
                         )
                     )
                 }
@@ -848,7 +860,10 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
                         },
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = BackgroundDark,
-                            checkedTrackColor = PrimaryIndigo
+                            checkedTrackColor = PrimaryIndigo,
+                            uncheckedThumbColor = TextMutedDark,
+                            uncheckedTrackColor = SurfaceDark,
+                            uncheckedBorderColor = CardBorder
                         )
                     )
                 }
@@ -897,7 +912,7 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
             isExpanded = expandedSectionIndex == 6,
             onToggle = { expandedSectionIndex = if (expandedSectionIndex == 6) null else 6 },
             icon = Icons.Default.Visibility,
-            iconBgColor = Color(0xFF27272A),
+            iconBgColor = AccentCyan,
             title = "Bong Bóng Chat Nổi AItu",
             subtitle = "Chu trình 3 trạng thái thông minh & Đánh thức chạm đúp cạnh màn hình",
             badgeText = "3 Trạng thái",
@@ -942,7 +957,7 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
             isExpanded = expandedSectionIndex == 8,
             onToggle = { expandedSectionIndex = if (expandedSectionIndex == 8) null else 8 },
             icon = Icons.Default.Public,
-            iconBgColor = Color(0xFF27272A),
+            iconBgColor = Color(0xFF38BDF8),
             title = "Múi Giờ & Sao Lưu Dữ Liệu",
             subtitle = "Múi giờ hệ thống AI, Sao lưu & Khôi phục JSON",
             badgeText = userTimezone
@@ -1054,13 +1069,16 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
                         value = newHourInput,
                         onValueChange = { newHourInput = it },
                         singleLine = true,
-                        placeholder = { Text("08:00") },
+                        placeholder = { Text("08:00", color = TextMutedDark) },
                         modifier = Modifier.fillMaxWidth(),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = PrimaryIndigo,
                             unfocusedBorderColor = CardBorder,
                             focusedTextColor = TextPrimaryDark,
-                            unfocusedTextColor = TextPrimaryDark
+                            unfocusedTextColor = TextPrimaryDark,
+                            focusedPlaceholderColor = TextMutedDark,
+                            unfocusedPlaceholderColor = TextMutedDark,
+                            cursorColor = AccentCyan
                         )
                     )
                 }
@@ -1127,7 +1145,10 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
                             focusedBorderColor = PrimaryIndigo,
                             unfocusedBorderColor = CardBorder,
                             focusedTextColor = TextPrimaryDark,
-                            unfocusedTextColor = TextPrimaryDark
+                            unfocusedTextColor = TextPrimaryDark,
+                            focusedLabelColor = AccentCyan,
+                            unfocusedLabelColor = TextSecondaryDark,
+                            cursorColor = AccentCyan
                         )
                     )
 
@@ -1298,7 +1319,10 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
                             focusedBorderColor = PrimaryIndigo,
                             unfocusedBorderColor = CardBorder,
                             focusedTextColor = TextPrimaryDark,
-                            unfocusedTextColor = TextPrimaryDark
+                            unfocusedTextColor = TextPrimaryDark,
+                            focusedPlaceholderColor = TextMutedDark,
+                            unfocusedPlaceholderColor = TextMutedDark,
+                            cursorColor = AccentCyan
                         )
                     )
                 }
@@ -1430,7 +1454,7 @@ private fun MultiKeyPoolSection(
                 onValueChange = { inputKey = it },
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("Dán API Key (Gemini, Groq, DeepSeek, v.v.)") },
-                placeholder = { Text("AIzaSy... hoặc gsk_... hoặc sk-...") },
+                placeholder = { Text("AIzaSy... hoặc gsk_... hoặc sk-...", color = TextMutedDark) },
                 singleLine = true,
                 visualTransformation = if (isKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(
@@ -1451,7 +1475,12 @@ private fun MultiKeyPoolSection(
                     focusedBorderColor = PrimaryIndigo,
                     unfocusedBorderColor = CardBorder,
                     focusedTextColor = TextPrimaryDark,
-                    unfocusedTextColor = TextPrimaryDark
+                    unfocusedTextColor = TextPrimaryDark,
+                    focusedLabelColor = AccentCyan,
+                    unfocusedLabelColor = TextSecondaryDark,
+                    focusedPlaceholderColor = TextMutedDark,
+                    unfocusedPlaceholderColor = TextMutedDark,
+                    cursorColor = AccentCyan
                 )
             )
 
@@ -1671,7 +1700,7 @@ private fun PersonaStyleSection(
                                     Icon(
                                         imageVector = Icons.Default.Check,
                                         contentDescription = null,
-                                        tint = Color.White,
+                                        tint = BackgroundDark,
                                         modifier = Modifier.size(14.dp)
                                     )
                                 }
@@ -1744,7 +1773,10 @@ private fun FixedContextSection(
                     focusedBorderColor = PrimaryIndigo,
                     unfocusedBorderColor = CardBorder,
                     focusedTextColor = TextPrimaryDark,
-                    unfocusedTextColor = TextPrimaryDark
+                    unfocusedTextColor = TextPrimaryDark,
+                    focusedPlaceholderColor = TextMutedDark,
+                    unfocusedPlaceholderColor = TextMutedDark,
+                    cursorColor = AccentCyan
                 ),
                 shape = RoundedCornerShape(10.dp)
             )
@@ -2458,7 +2490,10 @@ private fun TimezoneAndBackupSection(
                             focusedBorderColor = PrimaryIndigo,
                             unfocusedBorderColor = CardBorder,
                             focusedTextColor = TextPrimaryDark,
-                            unfocusedTextColor = TextPrimaryDark
+                            unfocusedTextColor = TextPrimaryDark,
+                            focusedLabelColor = AccentCyan,
+                            unfocusedLabelColor = TextSecondaryDark,
+                            cursorColor = AccentCyan
                         )
                     )
                 }
@@ -2704,7 +2739,10 @@ private fun KeyItemRow(
                 onCheckedChange = onToggle,
                 colors = SwitchDefaults.colors(
                     checkedThumbColor = BackgroundDark,
-                    checkedTrackColor = PrimaryIndigo
+                    checkedTrackColor = PrimaryIndigo,
+                    uncheckedThumbColor = TextMutedDark,
+                    uncheckedTrackColor = SurfaceDark,
+                    uncheckedBorderColor = CardBorder
                 )
             )
             IconButton(onClick = onDelete) {
@@ -2758,13 +2796,16 @@ private fun EditKeyModelDialog(
                     value = modelInput,
                     onValueChange = { modelInput = it },
                     singleLine = true,
-                    placeholder = { Text("Ví dụ: gemini-2.5-flash") },
+                    placeholder = { Text("Ví dụ: gemini-2.5-flash", color = TextMutedDark) },
                     modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = PrimaryIndigo,
                         unfocusedBorderColor = CardBorder,
                         focusedTextColor = TextPrimaryDark,
-                        unfocusedTextColor = TextPrimaryDark
+                        unfocusedTextColor = TextPrimaryDark,
+                        focusedPlaceholderColor = TextMutedDark,
+                        unfocusedPlaceholderColor = TextMutedDark,
+                        cursorColor = AccentCyan
                     )
                 )
 
@@ -2907,6 +2948,7 @@ private fun AppToggleRow(
             colors = SwitchDefaults.colors(
                 checkedThumbColor = BackgroundDark,
                 checkedTrackColor = PrimaryIndigo,
+                uncheckedThumbColor = TextMutedDark,
                 uncheckedTrackColor = SurfaceDark,
                 uncheckedBorderColor = CardBorder
             )
@@ -2999,7 +3041,7 @@ private fun AppChatFilterDialog(
                     RadioButton(
                         selected = selectedMode == ChatFilterMode.NORMAL_WITH_BLOCK,
                         onClick = { selectedMode = ChatFilterMode.NORMAL_WITH_BLOCK },
-                        colors = RadioButtonDefaults.colors(selectedColor = PrimaryIndigo)
+                        colors = RadioButtonDefaults.colors(selectedColor = PrimaryIndigo, unselectedColor = TextMutedDark)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Column {
@@ -3039,7 +3081,7 @@ private fun AppChatFilterDialog(
                     RadioButton(
                         selected = selectedMode == ChatFilterMode.STRICT_WHITELIST,
                         onClick = { selectedMode = ChatFilterMode.STRICT_WHITELIST },
-                        colors = RadioButtonDefaults.colors(selectedColor = AccentEmerald)
+                        colors = RadioButtonDefaults.colors(selectedColor = AccentEmerald, unselectedColor = TextMutedDark)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Column {
@@ -3133,7 +3175,10 @@ private fun AppChatFilterDialog(
                             focusedBorderColor = PrimaryIndigo,
                             unfocusedBorderColor = GlassBorderSubtle,
                             focusedContainerColor = SurfaceDark,
-                            unfocusedContainerColor = SurfaceDark
+                            unfocusedContainerColor = SurfaceDark,
+                            focusedPlaceholderColor = TextMutedDark,
+                            unfocusedPlaceholderColor = TextMutedDark,
+                            cursorColor = AccentCyan
                         ),
                         textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.5.sp)
                     )
@@ -3154,12 +3199,13 @@ private fun AppChatFilterDialog(
                     ) {
                         Text("+ Th\u00EAm", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = BackgroundDark)
                     }
+                }
+
                 Text(
                     text = "💡 Mẹo: Dùng dấu * ở 2 đầu (vd: *Dự Án*) để tìm bao quát bất kể icon. Gõ không có dấu * (vd: Chi) để chặn đích danh 1 người.",
                     color = TextMutedDark,
                     fontSize = 10.5.sp
                 )
-                }
 
                 val unaddedRecents = recentSenders.filter { !chatNamesList.contains(it) }
                 if (unaddedRecents.isNotEmpty()) {
@@ -3180,7 +3226,8 @@ private fun AppChatFilterDialog(
                                     onClick = { chatNamesList.add(recentName) },
                                     label = { Text("+ $recentName", fontSize = 11.5.sp, color = AccentCyan) },
                                     colors = SuggestionChipDefaults.suggestionChipColors(
-                                        containerColor = Color(0xFF131B2A)
+                                        containerColor = Color(0xFF131B2A),
+                                        labelColor = AccentCyan
                                     ),
                                     border = BorderStroke(
                                         1.dp,
@@ -3366,6 +3413,7 @@ private fun BubbleConfigSection(
                 colors = SwitchDefaults.colors(
                     checkedThumbColor = BackgroundDark,
                     checkedTrackColor = PrimaryIndigo,
+                    uncheckedThumbColor = TextMutedDark,
                     uncheckedTrackColor = SurfaceDark,
                     uncheckedBorderColor = CardBorder
                 )

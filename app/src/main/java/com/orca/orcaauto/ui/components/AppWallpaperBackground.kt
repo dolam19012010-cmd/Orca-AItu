@@ -88,10 +88,10 @@ fun AppWallpaperBackground(
                 if (loadedBitmap == null) {
                     Brush.verticalGradient(
                         listOf(
-                            Color(0xFF0F172A),
-                            Color(0xFF161F38),
-                            Color(0xFF1E1B4B),
-                            Color(0xFF0F172A)
+                            BackgroundDark,
+                            Color(0xFF101014),
+                            Color(0xFF141418),
+                            BackgroundDark
                         )
                     )
                 } else {

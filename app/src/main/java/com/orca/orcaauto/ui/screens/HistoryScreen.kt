@@ -1273,8 +1273,13 @@ fun TaskAlarmConfigDialog(
                         maxLines = 3,
                         shape = RoundedCornerShape(8.dp),
                         colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = TextPrimaryDark,
+                            unfocusedTextColor = TextPrimaryDark,
+                            cursorColor = AccentCyan,
                             focusedBorderColor = AccentCyan,
                             unfocusedBorderColor = CardBorder,
+                            focusedPlaceholderColor = TextMutedDark,
+                            unfocusedPlaceholderColor = TextMutedDark,
                             focusedContainerColor = SurfaceVariantDark.copy(alpha = 0.5f),
                             unfocusedContainerColor = SurfaceVariantDark.copy(alpha = 0.3f)
                         )
@@ -1299,7 +1304,11 @@ fun TaskAlarmConfigDialog(
                     Checkbox(
                         checked = isAlarmEnabled,
                         onCheckedChange = { isAlarmEnabled = it },
-                        colors = CheckboxDefaults.colors(checkedColor = AccentCyan)
+                        colors = CheckboxDefaults.colors(
+                            checkedColor = AccentCyan,
+                            checkmarkColor = BackgroundDark,
+                            uncheckedColor = TextMutedDark
+                        )
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Column {
@@ -1491,7 +1500,7 @@ fun TaskAlarmConfigDialog(
                                                         shape = RoundedCornerShape(8.dp)
                                                     )
                                                     .background(
-                                                        color = if (isSelected) PrimaryIndigo.copy(alpha = 0.35f) else SurfaceVariantDark.copy(alpha = 0.4f),
+                                                        color = if (isSelected) PrimaryIndigo.copy(alpha = 0.25f) else SurfaceVariantDark.copy(alpha = 0.4f),
                                                         shape = RoundedCornerShape(8.dp)
                                                     )
                                                     .clickable { cascadeIntervalMinutes = interval }
@@ -1500,7 +1509,7 @@ fun TaskAlarmConfigDialog(
                                             ) {
                                                 Text(
                                                     text = "${interval}p",
-                                                    color = if (isSelected) Color.White else TextPrimaryDark,
+                                                    color = if (isSelected) AccentCyan else TextPrimaryDark,
                                                     fontSize = 11.sp,
                                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                                                 )
