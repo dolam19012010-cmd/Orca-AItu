@@ -1498,14 +1498,42 @@ class FloatingBubbleService : Service() {
             emptyBox.addView(emptyTv)
             contentLayout.addView(emptyBox)
         } else {
-            parsed.tasksToDo.forEach { task ->
-                contentLayout.addView(renderTaskRow(task, isPlanned = false, cardLayout = cardLayout))
-            }
-            parsed.tasksPlanned.forEach { task ->
-                contentLayout.addView(renderTaskRow(task, isPlanned = true, cardLayout = cardLayout))
-            }
-            parsed.tasksDone.forEach { task ->
-                contentLayout.addView(renderTaskRow(task, isPlanned = false, cardLayout = cardLayout))
+            // Lọc bỏ hoàn toàn các việc đã bị HỦY để không hiện chiếm chỗ trên bóng chat nổi
+            val visibleToDo = parsed.tasksToDo.filterNot { SystemAlarmHelper.isTaskCancelled(it.title, alarmDbMap) }
+            val visiblePlanned = parsed.tasksPlanned.filterNot { SystemAlarmHelper.isTaskCancelled(it.title, alarmDbMap) }
+            val visibleDone = parsed.tasksDone.filterNot { SystemAlarmHelper.isTaskCancelled(it.title, alarmDbMap) }
+
+            if (visibleToDo.isEmpty() && visiblePlanned.isEmpty() && visibleDone.isEmpty()) {
+                val allDoneBox = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    gravity = Gravity.CENTER
+                    setPadding(0, dpToPx(36), 0, dpToPx(36))
+                }
+                val allDoneIcon = TextView(this).apply {
+                    text = "✨"
+                    textSize = 32f
+                    gravity = Gravity.CENTER
+                }
+                allDoneBox.addView(allDoneIcon)
+                val allDoneTv = TextView(this).apply {
+                    text = "Không có nhiệm vụ tồn đọng. Mọi thứ đã hoàn tất!"
+                    setTextColor(Color.parseColor("#94A3B8"))
+                    textSize = 12f
+                    gravity = Gravity.CENTER
+                    setPadding(0, dpToPx(6), 0, 0)
+                }
+                allDoneBox.addView(allDoneTv)
+                contentLayout.addView(allDoneBox)
+            } else {
+                visibleToDo.forEach { task ->
+                    contentLayout.addView(renderTaskRow(task, isPlanned = false, cardLayout = cardLayout))
+                }
+                visiblePlanned.forEach { task ->
+                    contentLayout.addView(renderTaskRow(task, isPlanned = true, cardLayout = cardLayout))
+                }
+                visibleDone.forEach { task ->
+                    contentLayout.addView(renderTaskRow(task, isPlanned = false, cardLayout = cardLayout))
+                }
             }
         }
 
