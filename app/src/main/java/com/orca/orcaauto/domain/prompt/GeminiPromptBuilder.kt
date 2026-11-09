@@ -57,33 +57,32 @@ object GeminiPromptBuilder {
             contentBuilder.append("• Đối với những việc chưa xong mà đã quá hạn hoặc hoàn thành thụ động theo thời gian: Vẫn giữ lại theo dõi thêm 1 đến 2 phiên sau khi quá hạn, tránh vội vàng xóa bỏ làm trôi việc của người dùng.\n\n")
         }
 
-        // 3. Active Alarms Sync (Chống tạo lặp)
-        if (activeAlarms.isNotEmpty()) {
-            contentBuilder.append("=== DANH SÁCH BÁO THỨC ĐANG BẬT (TRÁNH TẠO TRÙNG) ===\n")
-            for (alarm in activeAlarms.take(15)) {
-                contentBuilder.append("- ${alarm.taskTitle} | Hạn: ${alarm.targetDateLabel}\n")
-            }
-            contentBuilder.append("⚡ Các việc trên ĐÃ BẬT BÁO THỨC. Nếu tin nhắn mới không có thay đổi về giờ giấc thì không cần liệt kê lại.\n\n")
-        }
-
-        // 5. Cancelled Tasks Blacklist
+        // 3. Ngữ cảnh nhiệm vụ dài hạn (Long-term Context & Trạng thái 2 ngày gần nhất)
         val distinctCancelled = cancelledTasks.map { it.taskTitle.trim() }.filter { it.isNotBlank() }.distinct().take(35)
-        if (distinctCancelled.isNotEmpty()) {
-            contentBuilder.append("=== DANH SÁCH CẤM: CÁC VIỆC NGƯỜI DÙNG ĐÃ HỦY (CẤM TẠO LẠI) ===\n")
-            for (title in distinctCancelled) {
-                contentBuilder.append("- $title\n")
-            }
-            contentBuilder.append("⚡ QUY TẮC BẮT BUỘC: Người dùng đã chủ động HỦY các việc trên. Dù tin nhắn cũ trong 24h qua có nhắc lại, hay diễn đạt bằng từ ngữ khác, TUYỆT ĐỐI CẤM không đưa lại vào bảng nhiệm vụ (To-Do/Planned).\n\n")
-        }
-
-        // 6. Completed Tasks
         val distinctCompleted = completedTasks.map { it.taskTitle.trim() }.filter { it.isNotBlank() }.distinct().take(15)
-        if (distinctCompleted.isNotEmpty()) {
-            contentBuilder.append("=== VIỆC ĐÃ HOÀN THÀNH ===\n")
-            for (title in distinctCompleted) {
-                contentBuilder.append("- $title\n")
+        val hasLongTermData = activeAlarms.isNotEmpty() || distinctCancelled.isNotEmpty() || distinctCompleted.isNotEmpty()
+
+        if (hasLongTermData) {
+            contentBuilder.append("=== BỐI CẢNH DÀI HẠN & TRẠNG THÁI NHIỆM VỤ (2 NGÀY GẦN NHẤT) ===\n")
+            if (activeAlarms.isNotEmpty()) {
+                contentBuilder.append("• Việc đang theo dõi / hẹn giờ:\n")
+                for (alarm in activeAlarms.take(15)) {
+                    contentBuilder.append("  - ${alarm.taskTitle} | Hạn: ${alarm.targetDateLabel} [ĐANG THEO DÕI]\n")
+                }
             }
-            contentBuilder.append("⚡ Các việc này đã xong, không đưa vào mục 'PHẢI LÀM'.\n\n")
+            if (distinctCancelled.isNotEmpty()) {
+                contentBuilder.append("• Việc đã bị người dùng HỦY (trong vòng 2 ngày qua):\n")
+                for (title in distinctCancelled) {
+                    contentBuilder.append("  - $title [ĐÃ HỦY] -> Người dùng đã hủy, tuyệt đối không tạo lại\n")
+                }
+            }
+            if (distinctCompleted.isNotEmpty()) {
+                contentBuilder.append("• Việc đã giải quyết xong:\n")
+                for (title in distinctCompleted) {
+                    contentBuilder.append("  - $title [ĐÃ HOÀN THÀNH]\n")
+                }
+            }
+            contentBuilder.append("⚡ Bắt buộc tôn trọng các nhãn trên: Việc có nhãn [ĐÃ HỦY] hoặc [ĐÃ HOÀN THÀNH] thì tuyệt đối không xếp vào mục cần làm (To-Do/Planned).\n\n")
         }
 
         // 7. Task Notes
