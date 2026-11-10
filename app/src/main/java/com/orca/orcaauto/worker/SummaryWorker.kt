@@ -9,6 +9,8 @@ import com.orca.orcaauto.data.local.SummaryHistoryEntity
 import com.orca.orcaauto.data.preferences.UserPreferences
 import com.orca.orcaauto.data.remote.UniversalAiClient
 import com.orca.orcaauto.domain.prompt.GeminiPromptBuilder
+import com.orca.orcaauto.service.NotificationMonitorService
+import com.orca.orcaauto.service.OemSurvivalHelper
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -24,6 +26,16 @@ class SummaryWorker(
         val keyPool = preferences.getKeyPool().filter { it.isEnabled && it.rawKey.isNotBlank() }
 
         Log.i(TAG, "SummaryWorker bắt đầu thực thi tác vụ tóm tắt...")
+
+        // OEM Survivability Watchdog: Phục hồi kết nối NotificationListenerService nếu bị OEM ngắt ngầm
+        try {
+            if (OemSurvivalHelper.isNotificationAccessGranted(applicationContext) && !NotificationMonitorService.isConnected) {
+                Log.w(TAG, "Watchdog phát hiện NotificationListenerService bị ngắt kết nối ngầm. Đang kích hoạt Component Toggle...")
+                OemSurvivalHelper.forceRebindNotificationListener(applicationContext)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Lỗi khi chạy Watchdog khôi phục listener trong SummaryWorker: ${e.message}", e)
+        }
 
         if (keyPool.isEmpty()) {
             Log.e(TAG, "Chưa thiết lập bất kỳ API Key nào trong Key Pool! Sẽ thử lại sau.")

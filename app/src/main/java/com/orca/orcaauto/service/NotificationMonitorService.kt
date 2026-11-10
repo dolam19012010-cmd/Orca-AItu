@@ -134,25 +134,38 @@ class NotificationMonitorService : NotificationListenerService() {
 
     override fun onListenerConnected() {
         super.onListenerConnected()
+        isConnected = true
         Log.i(TAG, "NotificationListenerService connected.")
     }
 
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
+        isConnected = false
         Log.w(TAG, "NotificationListenerService disconnected! Triggering auto-rebind...")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             requestRebind(ComponentName(this, NotificationMonitorService::class.java))
+        }
+        // Thử lại bằng Component Toggle nếu sau 1.5s chưa kết nối lại
+        serviceScope.launch {
+            kotlinx.coroutines.delay(1500)
+            if (!isConnected) {
+                OemSurvivalHelper.forceRebindNotificationListener(applicationContext)
+            }
         }
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        isConnected = false
         serviceScope.cancel()
         Log.i(TAG, "NotificationMonitorService destroyed.")
     }
 
     companion object {
         private const val TAG = "NotificationMonitor"
+        @Volatile
+        var isConnected: Boolean = false
+            private set
         const val DEDUP_WINDOW_MS = 8_000L
         private const val BURST_UNPROCESSED_THRESHOLD = 80 // When unread messages hit 80 between shifts (max 100)
         private const val BURST_COOLDOWN_MS = 15 * 60 * 1000L // 15-minute cooldown between auto-burst summaries

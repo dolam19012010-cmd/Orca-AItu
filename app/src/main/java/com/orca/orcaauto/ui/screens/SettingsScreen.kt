@@ -2284,12 +2284,39 @@ private fun PermissionsSection(
     isOverlayGranted: Boolean
 ) {
     val context = LocalContext.current
+    val brandName = remember { OemSurvivalHelper.getDeviceBrandDisplayName() }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(
             text = "Trạng thái cấp các quyền hệ thống cốt lõi để trợ lý AI hoạt động bền bỉ trong nền.",
             style = MaterialTheme.typography.bodySmall,
             color = TextSecondaryDark
         )
+
+        Surface(
+            color = SurfaceVariantDark.copy(alpha = 0.5f),
+            shape = RoundedCornerShape(8.dp),
+            border = BorderStroke(1.dp, CardBorder)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "Thiết bị nhận diện:",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = TextSecondaryDark
+                )
+                Text(
+                    text = brandName,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = AccentCyan
+                )
+            }
+        }
 
         PermissionStatusRow(
             title = "Quyền đọc thông báo",
@@ -2324,6 +2351,23 @@ private fun PermissionsSection(
 
         OutlinedButton(
             onClick = {
+                val success = OemSurvivalHelper.forceRebindNotificationListener(context)
+                if (success) {
+                    Toast.makeText(context, "✓ Đã kích hoạt tái kết nối dịch vụ lắng nghe!", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(context, "Thao tác tái kết nối thất bại", Toast.LENGTH_SHORT).show()
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(10.dp),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimaryDark),
+            border = BorderStroke(1.dp, CardBorder)
+        ) {
+            Text("⚡ Khôi Phục Kết Nối Lắng Nghe (Rebind)", fontSize = 12.sp, color = TextPrimaryDark)
+        }
+
+        OutlinedButton(
+            onClick = {
                 val intent = OemSurvivalHelper.getOemAutostartIntent(context)
                 if (intent != null) {
                     try {
@@ -2340,7 +2384,7 @@ private fun PermissionsSection(
             colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimaryDark),
             border = BorderStroke(1.dp, GlassBorder)
         ) {
-            Text("\uD83D\uDE80 C\u00E0i \u0110\u1EB7t T\u1EF1 Kh\u1EDFi Ch\u1EA1y C\u00F9ng M\u00E1y (Autostart)", fontSize = 12.sp, color = TextPrimaryDark)
+            Text("🚀 Cài Đặt Tự Khởi Chạy ($brandName)", fontSize = 12.sp, color = TextPrimaryDark)
         }
     }
 }

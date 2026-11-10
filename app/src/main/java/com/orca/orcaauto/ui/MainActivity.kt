@@ -46,6 +46,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.orca.orcaauto.data.preferences.UserPreferences
 import com.orca.orcaauto.service.FloatingBubbleService
 import com.orca.orcaauto.service.KeepAliveForegroundService
+import com.orca.orcaauto.service.NotificationMonitorService
 import com.orca.orcaauto.service.OemSurvivalHelper
 import com.orca.orcaauto.ui.components.AppWallpaperBackground
 import com.orca.orcaauto.ui.components.OnboardingGuideDialog
@@ -154,6 +155,9 @@ fun MainAppNavHost(navigationTarget: String? = null) {
                     KeepAliveForegroundService.stop(context)
 
                     val notifGranted = OemSurvivalHelper.isNotificationAccessGranted(context)
+                    if (notifGranted && !NotificationMonitorService.isConnected) {
+                        OemSurvivalHelper.forceRebindNotificationListener(context)
+                    }
                     val batteryIgnored = OemSurvivalHelper.isBatteryOptimizationIgnored(context)
                     val overlayGranted = FloatingBubbleService.isOverlayPermissionGranted(context)
                     isMissingPermissions = !notifGranted || !batteryIgnored || !overlayGranted
