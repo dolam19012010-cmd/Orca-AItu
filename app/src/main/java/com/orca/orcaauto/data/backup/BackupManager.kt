@@ -4,6 +4,8 @@ import android.content.Context
 import android.os.Environment
 import android.util.Log
 import com.google.gson.GsonBuilder
+import com.orca.orcaauto.data.preferences.SummarySessionConfig
+import com.orca.orcaauto.data.preferences.SummarySessionConfigDeserializer
 import com.orca.orcaauto.data.local.AppDatabase
 import com.orca.orcaauto.data.local.DailyMemoryEntity
 import com.orca.orcaauto.data.local.SummaryHistoryEntity
@@ -37,7 +39,10 @@ object BackupManager {
 
     private const val TAG = "BackupManager"
     private const val AUTO_SNAPSHOT_FILENAME = "orca_auto_snapshot.json"
-    private val gson = GsonBuilder().setPrettyPrinting().create()
+    private val gson = GsonBuilder()
+        .registerTypeAdapter(SummarySessionConfig::class.java, SummarySessionConfigDeserializer())
+        .setPrettyPrinting()
+        .create()
 
     /**
      * Creates a full backup model from current Preferences and Room Database.

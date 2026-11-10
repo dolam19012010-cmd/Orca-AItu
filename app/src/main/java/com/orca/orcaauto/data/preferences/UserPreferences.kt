@@ -3,6 +3,7 @@ package com.orca.orcaauto.data.preferences
 import android.content.Context
 import android.content.SharedPreferences
 import com.google.gson.Gson
+import com.google.gson.GsonBuilder
 import com.google.gson.reflect.TypeToken
 import com.orca.orcaauto.data.remote.ApiKeyConfig
 import com.orca.orcaauto.domain.prompt.AiLanguage
@@ -18,7 +19,9 @@ class UserPreferences private constructor(context: Context) {
         PREFS_FILENAME,
         Context.MODE_PRIVATE
     )
-    private val gson = Gson()
+    private val gson: Gson = GsonBuilder()
+        .registerTypeAdapter(SummarySessionConfig::class.java, SummarySessionConfigDeserializer())
+        .create()
 
     private val _keyPoolFlow = MutableStateFlow(loadKeyPool())
     val keyPoolFlow: StateFlow<List<ApiKeyConfig>> = _keyPoolFlow.asStateFlow()
@@ -602,7 +605,13 @@ class UserPreferences private constructor(context: Context) {
             s.copy(
                 promptPersonaId = if (s.promptPersonaId.isNullOrBlank()) "gentle_assistant" else s.promptPersonaId,
                 customFixedContext = s.customFixedContext ?: "",
-                scheduledHours = s.scheduledHours ?: listOf("12:00", "18:00")
+                scheduledHours = if (s.scheduledHours.isNullOrEmpty()) listOf("12:00", "18:00") else s.scheduledHours,
+                aiLanguage = if (s.aiLanguage.isNullOrBlank()) "auto" else s.aiLanguage,
+                whitelist = s.whitelist ?: emptySet(),
+                banlist = s.banlist ?: emptySet(),
+                keyPriorityIds = s.keyPriorityIds ?: emptyList(),
+                customInstruction = s.customInstruction ?: "",
+                iconEmoji = if (s.iconEmoji.isNullOrBlank() || s.iconEmoji.contains("?") || s.iconEmoji.length > 4) "\u26A1" else s.iconEmoji
             )
         }.toMutableList()
         val mainIndex = result.indexOfFirst { it.isMain || it.id == SummarySessionConfig.MAIN_SESSION_ID }
@@ -618,6 +627,13 @@ class UserPreferences private constructor(context: Context) {
                 name = safeName,
                 iconEmoji = safeEmoji
             )
+        }
+
+        // Migrate back to preferences if json was missing "aiLanguage" so subsequent reads have modern schema
+        if (json != null && !json.contains("\"aiLanguage\"")) {
+            try {
+                prefs.edit().putString(KEY_SUMMARY_SESSIONS, gson.toJson(result)).apply()
+            } catch (_: Throwable) {}
         }
 
         return result.sortedWith(
