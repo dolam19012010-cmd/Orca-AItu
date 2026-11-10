@@ -39,8 +39,11 @@ class ShakeDetector(
         // Ngưỡng phát hiện bắt đầu vung tay để kích xung tần số cao (4.2 m/s²)
         const val PRE_PEAK_THRESHOLD = 4.2f
 
-        // Ngưỡng gia tốc đỉnh của cú lắc tay thật (9.5 m/s² ~ 1.0g tuyến tính)
-        const val SHAKE_THRESHOLD = 9.5f
+        // Ngưỡng gia tốc đỉnh của cú vung tay đầu tiên (6.8 m/s² ~ 0.7g tuyến tính)
+        const val SHAKE_THRESHOLD = 6.8f
+
+        // Ngưỡng gia tốc đảo chiều ở nhịp 2 (4.8 m/s² ~ 0.5g tuyến tính)
+        const val REVERSAL_THRESHOLD = 4.8f
 
         // Chuẩn 2 nhịp lắc tự nhiên: Vung qua -> Vung lại (v2 · v1 < 0)
         const val MIN_REVERSALS = 2
@@ -54,8 +57,8 @@ class ShakeDetector(
         // Giới hạn thời gian tối đa giữa 2 nhịp đảo chiều (450ms)
         const val MAX_INTERVAL_NS = 450_000_000L
 
-        // Thời gian hồi chiêu chống kích hoạt lặp (1.2s)
-        const val COOLDOWN_NS = 1_200_000_000L
+        // Thời gian hồi chiêu chống kích hoạt lặp (1.0s)
+        const val COOLDOWN_NS = 1_000_000_000L
 
         // Thời gian duy trì tần số cao 50Hz trước khi tự hạ về 16Hz (1200ms)
         const val BOOST_DURATION_MS = 1200L
@@ -77,6 +80,7 @@ class ShakeDetector(
     private var gravityX = 0f
     private var gravityY = 0f
     private var gravityZ = 0f
+    private var hasGravityInit = false
     private var isLinearSensor = false
 
     // Tham chiếu Sensor & Handler để kích xung nhịp động
@@ -111,18 +115,20 @@ class ShakeDetector(
         }
         currentSensor = sensor
 
-        // Khởi động ở chế độ chờ 16Hz (SENSOR_DELAY_UI) để bảo toàn 100% pin
+        // Đăng ký trực tiếp tần số 50Hz (SENSOR_DELAY_GAME) cố định khi màn hình bật
+        // Tránh tình trạng flush hàng đợi phần cứng (FIFO) giữa chừng làm mất mẫu đỉnh
         val registered = sensorManager.registerListener(
             this,
             sensor,
-            SensorManager.SENSOR_DELAY_UI,
+            SensorManager.SENSOR_DELAY_GAME,
             handler
         )
         if (registered) {
             isRunning = true
-            isBoosted = false
+            isBoosted = true
+            hasGravityInit = false
             resetState()
-            Log.d(TAG, "Đã khởi động ShakeDetector ở chế độ chờ 16Hz (Linear=$isLinearSensor)")
+            Log.d(TAG, "Đã khởi động ShakeDetector ở tần số 50Hz cố định (Linear=$isLinearSensor)")
         } else {
             Log.e(TAG, "Không thể đăng ký SensorEventListener với SensorManager")
         }
@@ -140,6 +146,7 @@ class ShakeDetector(
         }
         isRunning = false
         isBoosted = false
+        hasGravityInit = false
         resetState()
         currentSensorManager = null
         currentSensor = null
@@ -204,32 +211,25 @@ class ShakeDetector(
             linearY = event.values[1]
             linearZ = event.values[2]
         } else {
-            // Tách trọng lực g = 9.81 bằng bộ lọc High-Pass với alpha = 0.8
-            val alpha = 0.8f
-            gravityX = alpha * gravityX + (1 - alpha) * event.values[0]
-            gravityY = alpha * gravityY + (1 - alpha) * event.values[1]
-            gravityZ = alpha * gravityZ + (1 - alpha) * event.values[2]
+            // Khởi tạo trọng lực từ mẫu đầu tiên để tránh xung giả ban đầu
+            if (!hasGravityInit) {
+                gravityX = event.values[0]
+                gravityY = event.values[1]
+                gravityZ = event.values[2]
+                hasGravityInit = true
+            } else {
+                val alpha = 0.8f
+                gravityX = alpha * gravityX + (1 - alpha) * event.values[0]
+                gravityY = alpha * gravityY + (1 - alpha) * event.values[1]
+                gravityZ = alpha * gravityZ + (1 - alpha) * event.values[2]
+            }
             linearX = event.values[0] - gravityX
             linearY = event.values[1] - gravityY
             linearZ = event.values[2] - gravityZ
         }
 
-        val magnitude = sqrt(linearX * linearX + linearY * linearY + linearZ * linearZ)
-
-        // Nếu gia tốc bắt đầu tăng (vượt ngưỡng Pre-Peak), lập tức kích xung lên 50Hz để đón đỉnh!
-        if (magnitude > PRE_PEAK_THRESHOLD && !isBoosted) {
-            boostToHighRate()
-            scheduleDowngradeTimeout()
-        } else if (isBoosted) {
-            // Gia hạn thời gian duy trì 50Hz nếu người dùng vẫn đang có cử động mạnh
-            if (magnitude > PRE_PEAK_THRESHOLD) {
-                scheduleDowngradeTimeout()
-            }
-        }
-
         if (processAcceleration(linearX, linearY, linearZ, event.timestamp)) {
             Log.i(TAG, "⚡ Phát hiện cử chỉ lắc tay hợp lệ (2 nhịp)! Kích hoạt callback.")
-            downgradeToLowRate()
             onShakeListener.invoke()
         }
     }
@@ -239,26 +239,28 @@ class ShakeDetector(
      * Tách biệt logic để dễ dàng viết Unit Test độc lập với phần cứng.
      */
     fun processAcceleration(linearX: Float, linearY: Float, linearZ: Float, now: Long): Boolean {
-        if (now - lastShakeTimestampNs < COOLDOWN_NS) return false // Đang trong thời gian hồi chiêu 1.2s
+        if (now - lastShakeTimestampNs < COOLDOWN_NS) return false // Đang trong thời gian hồi chiêu
 
         val magnitude = sqrt(linearX * linearX + linearY * linearY + linearZ * linearZ)
 
-        if (magnitude > SHAKE_THRESHOLD) {
-            if (reversalCount == 0) {
-                // Nhịp 1: Lưu vector gia tốc mốc làm hướng chuẩn
+        if (reversalCount == 0) {
+            // Nhịp 1: Cần cú vung tay dứt khoát vượt ngưỡng SHAKE_THRESHOLD (6.8 m/s²)
+            if (magnitude >= SHAKE_THRESHOLD) {
                 refPeakX = linearX
                 refPeakY = linearY
                 refPeakZ = linearZ
                 currentPhaseSign = 1
                 lastPeakTimestampNs = now
                 reversalCount = 1
-            } else {
-                // Nhịp tiếp theo: Dùng tích vô hướng 3D (3D Dot Product) để xác định đảo chiều
-                // dot < 0 nghĩa là góc giữa 2 vector > 90 độ (tay đang chuyển động ngược hướng ban đầu)
-                val dot = (linearX * refPeakX) + (linearY * refPeakY) + (linearZ * refPeakZ)
-                val newSign = if (dot < 0) -1 else 1
+            }
+        } else {
+            // Nhịp 2: Kiểm tra đảo chiều bằng 3D Dot Product (v2 · v1 < 0)
+            val dot = (linearX * refPeakX) + (linearY * refPeakY) + (linearZ * refPeakZ)
+            val newSign = if (dot < 0) -1 else 1
 
-                if (newSign != currentPhaseSign) {
+            if (newSign != currentPhaseSign) {
+                // Đang đảo chiều: kiểm tra xem có đạt ngưỡng đảo chiều REVERSAL_THRESHOLD (4.8 m/s²) không
+                if (magnitude >= REVERSAL_THRESHOLD) {
                     val timeDiff = now - lastPeakTimestampNs
 
                     if (timeDiff in MIN_INTERVAL_NS..MAX_INTERVAL_NS) {
@@ -273,19 +275,33 @@ class ShakeDetector(
                             return true
                         }
                     } else if (timeDiff > MAX_INTERVAL_NS) {
-                        // Khoảng cách nhịp quá dài -> Khởi tạo lại chu kỳ lắc mới
-                        refPeakX = linearX
-                        refPeakY = linearY
-                        refPeakZ = linearZ
-                        currentPhaseSign = 1
-                        lastPeakTimestampNs = now
-                        reversalCount = 1
+                        // Khoảng cách nhịp quá dài -> Khởi tạo lại chu kỳ lắc mới nếu magnitude đủ lớn
+                        if (magnitude >= SHAKE_THRESHOLD) {
+                            refPeakX = linearX
+                            refPeakY = linearY
+                            refPeakZ = linearZ
+                            currentPhaseSign = 1
+                            lastPeakTimestampNs = now
+                            reversalCount = 1
+                        } else {
+                            resetState()
+                        }
                     }
                 }
+            } else {
+                // Cùng chiều với nhịp 1: Nếu gia tốc tiếp tục tăng cao hơn, cập nhật vector mốc chuẩn xác hơn
+                val currentRefMagSq = refPeakX * refPeakX + refPeakY * refPeakY + refPeakZ * refPeakZ
+                val currentMagSq = linearX * linearX + linearY * linearY + linearZ * linearZ
+                if (currentMagSq > currentRefMagSq) {
+                    refPeakX = linearX
+                    refPeakY = linearY
+                    refPeakZ = linearZ
+                    lastPeakTimestampNs = now
+                }
             }
-        } else {
-            // Quá thời gian quan sát mà không có dao động mới -> Reset trạng thái tĩnh
-            if (reversalCount > 0 && (now - lastPeakTimestampNs > TIME_WINDOW_NS)) {
+
+            // Quá thời gian quan sát mà không có dao động đảo chiều -> Reset trạng thái
+            if (now - lastPeakTimestampNs > TIME_WINDOW_NS) {
                 resetState()
             }
         }

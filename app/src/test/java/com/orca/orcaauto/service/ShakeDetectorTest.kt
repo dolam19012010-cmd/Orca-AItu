@@ -90,10 +90,24 @@ class ShakeDetectorTest {
         val triggered = detector.processAcceleration(-12.0f, 0f, 0f, t0 + 160_000_000L)
         assertTrue(triggered)
 
-        // Immediate subsequent shake 300ms later during 1.2s cooldown
+        // Immediate subsequent shake 300ms later during 1.0s cooldown
         val tCooldown = t0 + 460_000_000L
         detector.processAcceleration(13.0f, 0f, 0f, tCooldown)
         val retriggered = detector.processAcceleration(-13.0f, 0f, 0f, tCooldown + 160_000_000L)
         assertFalse("Cooldown period must suppress rapid repeated wakeups", retriggered)
+    }
+
+    @Test
+    fun testNaturalShakeWithSofterReversalFlickTriggers() {
+        val t0 = 10_000_000_000L
+
+        // Beat 1: Strong flick (8.5 m/s²)
+        val r1 = detector.processAcceleration(8.5f, 0.5f, 0.2f, t0)
+        assertFalse(r1)
+
+        // Beat 2: Natural softer return stroke (5.8 m/s² in opposite direction)
+        val t1 = t0 + 170_000_000L
+        val r2 = detector.processAcceleration(-5.8f, -0.2f, 0f, t1)
+        assertTrue("Softer natural return stroke (5.8 m/s²) must trigger successfully", r2)
     }
 }
