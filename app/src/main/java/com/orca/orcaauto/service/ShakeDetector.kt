@@ -6,22 +6,28 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.Handler
 import android.util.Log
-import kotlin.math.abs
 import kotlin.math.sqrt
 
 /**
- * ShakeDetector: Bộ nhận diện cử chỉ lắc cổ tay chuẩn công nghiệp.
+ * ShakeDetector: Bộ nhận diện cử chỉ lắc cổ tay chuẩn công nghiệp với cơ chế Kích Xung Tần Số Động (Pre-Peak Dynamic Boost).
  *
- * Thuật toán dựa trên nguyên lý dao động lưỡng cực (Bipolar Oscillation) tương tự Moto Gestures / iOS Shake to Undo:
- * 1. Bóc tách vector gia tốc tuyến tính (loại bỏ vector trọng lực g = 9.80665 m/s²).
- * 2. Đếm số lần đảo chiều cực tính gia tốc (Direction Reversals) trên trục dao động chính:
- *    Chỉ kích hoạt khi cổ tay lắc qua - lắc lại liên tiếp ít nhất 3 nhịp (reversalCount >= 3)
- *    trong khung thời gian 750ms.
- * 3. Chống kích hoạt nhầm (False Positives):
- *    - Đi bộ / chạy bộ / xoay điện thoại: Chỉ có 1 nhịp gia tốc đơn hướng, không đủ số lần đảo chiều -> Bỏ qua.
- *    - Đi xe máy / đường dằn xóc: Tần số rung quá cao (thời gian giữa 2 đỉnh < 70ms) -> Bị lọc bởi MIN_INTERVAL_NS.
- *    - Đặt máy xuống bàn / rơi nệm: Gia tốc một chiều tắt dần -> Bỏ qua.
- * 4. Zero-allocation trong runtime loop để tránh tạo rác và giật khung hình (GC pauses).
+ * 1. Chế độ Chờ (Standby - Tiết kiệm pin tối đa):
+ *    - Cảm biến chạy ở tần số thấp 16Hz (SENSOR_DELAY_UI ~60ms/mẫu).
+ *
+ * 2. Kích Xung Đón Đầu (Pre-Peak Dynamic Boost):
+ *    - Khi tay bắt đầu di chuyển lắc, gia tốc nhích lên vượt ngưỡng PRE_PEAK_THRESHOLD (4.2 m/s²).
+ *    - Ngay lập tức kích xung nhịp cảm biến lên 50Hz (SENSOR_DELAY_GAME ~20ms/mẫu) trong 1.2s.
+ *    - Vì cú lắc tay thực tế kéo dài 400 - 600ms, xung nhịp 50Hz đón trọn vẹn cả đỉnh xung lực nhịp 1
+ *      và toàn bộ pha đảo chiều nhịp 2 mà không bao giờ bị trượt mẫu.
+ *
+ * 3. Nhận diện Đảo chiều 3D bằng Tích vô hướng (3D Dot Product):
+ *    - Xác định vector gia tốc cực đại ban đầu (v1).
+ *    - Vector đảo chiều ngược lại thỏa mãn v2 · v1 < 0.
+ *    - Kích hoạt chuẩn xác sau đúng 2 nhịp (reversalCount >= 2).
+ *
+ * 4. Tự động Hồi về 16Hz:
+ *    - Sau 1.2s nếu không có cử chỉ lắc tiếp theo, tự động hạ tần số về 16Hz.
+ *    - Zero-allocation trong runtime loop để tránh tạo rác và giật khung hình (GC pauses).
  */
 class ShakeDetector(
     private val onShakeListener: () -> Unit
@@ -30,20 +36,42 @@ class ShakeDetector(
     companion object {
         private const val TAG = "ShakeDetector"
 
-        // Tham số vàng (Golden Parameters) được chuẩn hóa cho cử chỉ lắc cổ tay tự nhiên
-        private const val SHAKE_THRESHOLD = 12.0f        // m/s² gia tốc tuyến tính (khoảng 1.25g)
-        private const val MIN_REVERSALS = 3              // Tối thiểu 3 lần đổi cực tính (+ -> - -> +)
-        private const val TIME_WINDOW_NS = 750_000_000L  // Cửa sổ quan sát 750ms
-        private const val MIN_INTERVAL_NS = 70_000_000L  // Lọc nhiễu cơ học tần số cao (> 14Hz)
-        private const val MAX_INTERVAL_NS = 420_000_000L // Giới hạn thời gian tối đa giữa 2 nhịp lắc (420ms)
-        private const val COOLDOWN_NS = 1_200_000_000L   // 1.2s hồi chiêu chống kích hoạt lặp
+        // Ngưỡng phát hiện bắt đầu vung tay để kích xung tần số cao (4.2 m/s²)
+        const val PRE_PEAK_THRESHOLD = 4.2f
+
+        // Ngưỡng gia tốc đỉnh của cú lắc tay thật (9.5 m/s² ~ 1.0g tuyến tính)
+        const val SHAKE_THRESHOLD = 9.5f
+
+        // Chuẩn 2 nhịp lắc tự nhiên: Vung qua -> Vung lại (v2 · v1 < 0)
+        const val MIN_REVERSALS = 2
+
+        // Cửa sổ thời gian tối đa để hoàn thành 2 nhịp (800ms)
+        const val TIME_WINDOW_NS = 800_000_000L
+
+        // Lọc nhiễu cơ học tần số cao (> 20Hz)
+        const val MIN_INTERVAL_NS = 50_000_000L
+
+        // Giới hạn thời gian tối đa giữa 2 nhịp đảo chiều (450ms)
+        const val MAX_INTERVAL_NS = 450_000_000L
+
+        // Thời gian hồi chiêu chống kích hoạt lặp (1.2s)
+        const val COOLDOWN_NS = 1_200_000_000L
+
+        // Thời gian duy trì tần số cao 50Hz trước khi tự hạ về 16Hz (1200ms)
+        const val BOOST_DURATION_MS = 1200L
     }
 
     private var isRunning = false
+    private var isBoosted = false
     private var lastShakeTimestampNs = 0L
     private var lastPeakTimestampNs = 0L
     private var reversalCount = 0
-    private var lastSign = 0 // -1: cực âm, 1: cực dương, 0: trạng thái tĩnh
+
+    // Vector gia tốc chuẩn của nhịp đỉnh đầu tiên để so khớp đảo chiều trong không gian 3D
+    private var refPeakX = 0f
+    private var refPeakY = 0f
+    private var refPeakZ = 0f
+    private var currentPhaseSign = 0 // 1: cùng hướng ref, -1: ngược hướng ref
 
     // Low-Pass Filter lưu trữ trọng lực cho trường hợp Fallback
     private var gravityX = 0f
@@ -51,9 +79,21 @@ class ShakeDetector(
     private var gravityZ = 0f
     private var isLinearSensor = false
 
+    // Tham chiếu Sensor & Handler để kích xung nhịp động
+    private var currentSensorManager: SensorManager? = null
+    private var currentSensor: Sensor? = null
+    private var currentHandler: Handler? = null
+
+    private val downgradeRunnable = Runnable {
+        downgradeToLowRate()
+    }
+
     @Synchronized
     fun start(sensorManager: SensorManager, handler: Handler): Boolean {
         if (isRunning) return true
+
+        currentSensorManager = sensorManager
+        currentHandler = handler
 
         // Ưu tiên cảm biến TYPE_LINEAR_ACCELERATION (HAL loại bỏ g bằng phần cứng)
         var sensor = sensorManager.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION)
@@ -69,8 +109,9 @@ class ShakeDetector(
             Log.w(TAG, "Thiết bị không hỗ trợ cảm biến gia tốc!")
             return false
         }
+        currentSensor = sensor
 
-        // Sử dụng SENSOR_DELAY_UI (~16Hz / 60ms) thay vì GAME (50Hz / 20ms) để tiết kiệm 70% CPU ngắt
+        // Khởi động ở chế độ chờ 16Hz (SENSOR_DELAY_UI) để bảo toàn 100% pin
         val registered = sensorManager.registerListener(
             this,
             sensor,
@@ -79,8 +120,9 @@ class ShakeDetector(
         )
         if (registered) {
             isRunning = true
+            isBoosted = false
             resetState()
-            Log.d(TAG, "Đã khởi động ShakeDetector (Linear=$isLinearSensor, Delay=UI/16Hz)")
+            Log.d(TAG, "Đã khởi động ShakeDetector ở chế độ chờ 16Hz (Linear=$isLinearSensor)")
         } else {
             Log.e(TAG, "Không thể đăng ký SensorEventListener với SensorManager")
         }
@@ -90,22 +132,69 @@ class ShakeDetector(
     @Synchronized
     fun stop(sensorManager: SensorManager) {
         if (!isRunning) return
+        currentHandler?.removeCallbacks(downgradeRunnable)
         try {
             sensorManager.unregisterListener(this)
         } catch (e: Exception) {
             Log.e(TAG, "Lỗi unregister SensorEventListener: ${e.message}")
         }
         isRunning = false
+        isBoosted = false
         resetState()
+        currentSensorManager = null
+        currentSensor = null
+        currentHandler = null
         Log.d(TAG, "Đã dừng ShakeDetector và đưa vào chế độ ngủ đông")
     }
 
     fun isStarted(): Boolean = isRunning
+    fun isRateBoosted(): Boolean = isBoosted
+
+    /**
+     * Kích xung cảm biến lên 50Hz (SENSOR_DELAY_GAME) khi phát hiện cử động vung tay sớm.
+     */
+    private fun boostToHighRate() {
+        if (isBoosted || !isRunning) return
+        val sm = currentSensorManager ?: return
+        val s = currentSensor ?: return
+        val h = currentHandler ?: return
+
+        try {
+            sm.registerListener(this, s, SensorManager.SENSOR_DELAY_GAME, h)
+            isBoosted = true
+            Log.d(TAG, "⚡ Kích xung cảm biến lên 50Hz (GAME) đón đỉnh xung lực lắc tay!")
+        } catch (e: Exception) {
+            Log.w(TAG, "Không thể kích xung cảm biến: ${e.message}")
+        }
+    }
+
+    /**
+     * Tự động hạ xung nhịp cảm biến về lại 16Hz (SENSOR_DELAY_UI) để tiết kiệm pin.
+     */
+    private fun downgradeToLowRate() {
+        if (!isBoosted || !isRunning) return
+        val sm = currentSensorManager ?: return
+        val s = currentSensor ?: return
+        val h = currentHandler ?: return
+
+        try {
+            sm.registerListener(this, s, SensorManager.SENSOR_DELAY_UI, h)
+            isBoosted = false
+            resetState()
+            Log.d(TAG, "Đã tự động hạ xung cảm biến về 16Hz tiết kiệm pin")
+        } catch (e: Exception) {
+            Log.w(TAG, "Không thể hạ xung cảm biến: ${e.message}")
+        }
+    }
+
+    private fun scheduleDowngradeTimeout() {
+        currentHandler?.let { h ->
+            h.removeCallbacks(downgradeRunnable)
+            h.postDelayed(downgradeRunnable, BOOST_DURATION_MS)
+        }
+    }
 
     override fun onSensorChanged(event: SensorEvent) {
-        val now = event.timestamp
-        if (now - lastShakeTimestampNs < COOLDOWN_NS) return // Đang trong thời gian hồi chiêu 1.2s
-
         val linearX: Float
         val linearY: Float
         val linearZ: Float
@@ -125,61 +214,94 @@ class ShakeDetector(
             linearZ = event.values[2] - gravityZ
         }
 
-        // Tính độ lớn vector gia tốc tuyến tính 3 chiều
+        val magnitude = sqrt(linearX * linearX + linearY * linearY + linearZ * linearZ)
+
+        // Nếu gia tốc bắt đầu tăng (vượt ngưỡng Pre-Peak), lập tức kích xung lên 50Hz để đón đỉnh!
+        if (magnitude > PRE_PEAK_THRESHOLD && !isBoosted) {
+            boostToHighRate()
+            scheduleDowngradeTimeout()
+        } else if (isBoosted) {
+            // Gia hạn thời gian duy trì 50Hz nếu người dùng vẫn đang có cử động mạnh
+            if (magnitude > PRE_PEAK_THRESHOLD) {
+                scheduleDowngradeTimeout()
+            }
+        }
+
+        if (processAcceleration(linearX, linearY, linearZ, event.timestamp)) {
+            Log.i(TAG, "⚡ Phát hiện cử chỉ lắc tay hợp lệ (2 nhịp)! Kích hoạt callback.")
+            downgradeToLowRate()
+            onShakeListener.invoke()
+        }
+    }
+
+    /**
+     * Thuật toán nhận diện cử chỉ lắc cổ tay dựa trên vector gia tốc 3 chiều.
+     * Tách biệt logic để dễ dàng viết Unit Test độc lập với phần cứng.
+     */
+    fun processAcceleration(linearX: Float, linearY: Float, linearZ: Float, now: Long): Boolean {
+        if (now - lastShakeTimestampNs < COOLDOWN_NS) return false // Đang trong thời gian hồi chiêu 1.2s
+
         val magnitude = sqrt(linearX * linearX + linearY * linearY + linearZ * linearZ)
 
         if (magnitude > SHAKE_THRESHOLD) {
-            // Xác định trục chiếm ưu thế biên độ lớn nhất (thường là trục X hoặc Y khi lắc cổ tay)
-            val dominantVal = if (abs(linearX) > abs(linearY)) {
-                if (abs(linearX) > abs(linearZ)) linearX else linearZ
-            } else {
-                if (abs(linearY) > abs(linearZ)) linearY else linearZ
-            }
-            val currentSign = if (dominantVal > 0) 1 else -1
-
-            if (lastSign == 0) {
-                // Nhịp đỉnh đầu tiên
-                lastSign = currentSign
+            if (reversalCount == 0) {
+                // Nhịp 1: Lưu vector gia tốc mốc làm hướng chuẩn
+                refPeakX = linearX
+                refPeakY = linearY
+                refPeakZ = linearZ
+                currentPhaseSign = 1
                 lastPeakTimestampNs = now
                 reversalCount = 1
-            } else if (currentSign != lastSign) {
-                val timeDiff = now - lastPeakTimestampNs
+            } else {
+                // Nhịp tiếp theo: Dùng tích vô hướng 3D (3D Dot Product) để xác định đảo chiều
+                // dot < 0 nghĩa là góc giữa 2 vector > 90 độ (tay đang chuyển động ngược hướng ban đầu)
+                val dot = (linearX * refPeakX) + (linearY * refPeakY) + (linearZ * refPeakZ)
+                val newSign = if (dot < 0) -1 else 1
 
-                // Kiểm tra khoảng cách thời gian giữa 2 nhịp đảo chiều (70ms <= dt <= 420ms)
-                if (timeDiff in MIN_INTERVAL_NS..MAX_INTERVAL_NS) {
-                    reversalCount++
-                    lastSign = currentSign
-                    lastPeakTimestampNs = now
+                if (newSign != currentPhaseSign) {
+                    val timeDiff = now - lastPeakTimestampNs
 
-                    // Kích hoạt khi thỏa mãn đủ số lần đảo chiều trong cửa sổ quan sát
-                    if (reversalCount >= MIN_REVERSALS) {
-                        lastShakeTimestampNs = now
-                        resetState()
-                        Log.i(TAG, "⚡ Phát hiện cử chỉ lắc tay hợp lệ! Kích hoạt callback.")
-                        onShakeListener.invoke()
+                    if (timeDiff in MIN_INTERVAL_NS..MAX_INTERVAL_NS) {
+                        reversalCount++
+                        currentPhaseSign = newSign
+                        lastPeakTimestampNs = now
+
+                        // Thỏa mãn đúng 2 nhịp đảo chiều chuẩn -> Kích hoạt!
+                        if (reversalCount >= MIN_REVERSALS) {
+                            lastShakeTimestampNs = now
+                            resetState()
+                            return true
+                        }
+                    } else if (timeDiff > MAX_INTERVAL_NS) {
+                        // Khoảng cách nhịp quá dài -> Khởi tạo lại chu kỳ lắc mới
+                        refPeakX = linearX
+                        refPeakY = linearY
+                        refPeakZ = linearZ
+                        currentPhaseSign = 1
+                        lastPeakTimestampNs = now
+                        reversalCount = 1
                     }
-                } else if (timeDiff > MAX_INTERVAL_NS) {
-                    // Khoảng cách nhịp quá dài (nhịp đi bộ chậm) -> Reset bắt đầu nhịp mới
-                    lastSign = currentSign
-                    lastPeakTimestampNs = now
-                    reversalCount = 1
                 }
             }
         } else {
-            // Quá thời gian TIME_WINDOW_NS mà không có dao động mới -> Reset trạng thái tĩnh
-            if (now - lastPeakTimestampNs > TIME_WINDOW_NS) {
+            // Quá thời gian quan sát mà không có dao động mới -> Reset trạng thái tĩnh
+            if (reversalCount > 0 && (now - lastPeakTimestampNs > TIME_WINDOW_NS)) {
                 resetState()
             }
         }
+        return false
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
         // Không cần xử lý khi độ chính xác cảm biến thay đổi
     }
 
-    private fun resetState() {
+    fun resetState() {
         reversalCount = 0
-        lastSign = 0
+        refPeakX = 0f
+        refPeakY = 0f
+        refPeakZ = 0f
+        currentPhaseSign = 0
         lastPeakTimestampNs = 0L
     }
 }

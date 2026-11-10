@@ -156,7 +156,7 @@ class FloatingBubbleService : Service() {
                     if (prefs.isShakeToWakeEnabled()) {
                         Log.i(TAG, "⚡ Lắc tay thành công! Kích hoạt bong bóng trồi ra State 2.")
                         triggerHapticFeedback()
-                        transitionToBubbleState(BubbleState.STATE_2_DIMMED, animate = true)
+                        transitionToBubbleState(BubbleState.STATE_1_ACTIVE, animate = true, activeDurationMs = 3500L)
                     }
                 }
             }
@@ -302,7 +302,7 @@ class FloatingBubbleService : Service() {
             stopSelf()
         }
 
-        return START_NOT_STICKY
+        return START_STICKY
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -864,6 +864,7 @@ class FloatingBubbleService : Service() {
                 bubbleRootView?.visibility = View.GONE
             } else {
                 bubbleRootView?.visibility = View.VISIBLE
+                bubbleRootView?.requestLayout()
                 p.flags = p.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
             }
             try {
@@ -950,6 +951,7 @@ class FloatingBubbleService : Service() {
 
             if (newState != BubbleState.STATE_3_HIDDEN) {
                 bubbleRootView?.visibility = View.VISIBLE
+                bubbleRootView?.requestLayout()
                 p.flags = p.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
             }
 
