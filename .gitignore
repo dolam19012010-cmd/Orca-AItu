@@ -49,3 +49,6 @@ proguard/
 # OS specific
 .DS_Store
 Thumbs.db
+
+# Agent coordination logs & artifacts
+.agents/

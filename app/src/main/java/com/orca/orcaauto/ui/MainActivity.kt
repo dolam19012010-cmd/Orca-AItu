@@ -49,6 +49,7 @@ import com.orca.orcaauto.ui.components.OnboardingGuideDialog
 import com.orca.orcaauto.ui.navigation.Screen
 import com.orca.orcaauto.ui.screens.DashboardScreen
 import com.orca.orcaauto.ui.screens.HistoryScreen
+import com.orca.orcaauto.ui.screens.NotesScreen
 import com.orca.orcaauto.ui.screens.SettingsScreen
 import com.orca.orcaauto.ui.theme.AccentCyan
 import com.orca.orcaauto.ui.theme.AccentRose
@@ -131,6 +132,7 @@ fun MainAppNavHost(navigationTarget: String? = null) {
             "advanced_sessions", "settings" -> currentScreen = Screen.Settings
             "history" -> currentScreen = Screen.History
             "dashboard" -> currentScreen = Screen.Dashboard
+            "notes", "assistant" -> currentScreen = Screen.Notes
         }
     }
 
@@ -191,8 +193,8 @@ fun MainAppNavHost(navigationTarget: String? = null) {
     val wallpaperPath by preferences.wallpaperPathFlow.collectAsState()
     val wallpaperMode by preferences.wallpaperModeFlow.collectAsState()
 
-    // Primary Tab Order: Lịch sử AI first, then Trạng thái, then Cấu hình
-    val navItems = remember { listOf(Screen.History, Screen.Dashboard, Screen.Settings) }
+    // Primary Tab Order: Lịch sử AI first, then Ghi chú, then Trạng thái, then Cấu hình
+    val navItems = remember { listOf(Screen.History, Screen.Notes, Screen.Dashboard, Screen.Settings) }
 
     AppWallpaperBackground(
         wallpaperPath = wallpaperPath,
@@ -268,6 +270,9 @@ fun MainAppNavHost(navigationTarget: String? = null) {
                     when (targetScreen) {
                         is Screen.Dashboard -> DashboardScreen()
                         is Screen.History -> HistoryScreen()
+                        is Screen.Notes -> NotesScreen(
+                            initialOpenAssistant = navigationTarget == "assistant"
+                        )
                         is Screen.Settings -> SettingsScreen(
                             initialExpandedCategory = if (navigationTarget == "advanced_sessions") 99 else null
                         )

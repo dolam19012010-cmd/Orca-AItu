@@ -12,9 +12,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         NotificationEntity::class,
         SummaryHistoryEntity::class,
         DailyMemoryEntity::class,
-        SmartAlarmEntity::class
+        SmartAlarmEntity::class,
+        SharedNoteEntity::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -23,6 +24,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun summaryDao(): SummaryDao
     abstract fun dailyMemoryDao(): DailyMemoryDao
     abstract fun smartAlarmDao(): SmartAlarmDao
+    abstract fun sharedNoteDao(): SharedNoteDao
 
     companion object {
         @Volatile
@@ -83,6 +85,27 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS shared_notes (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        title TEXT NOT NULL,
+                        content TEXT NOT NULL,
+                        isPrivate INTEGER NOT NULL DEFAULT 0,
+                        isPinned INTEGER NOT NULL DEFAULT 0,
+                        isDeleted INTEGER NOT NULL DEFAULT 0,
+                        createdAt INTEGER NOT NULL,
+                        updatedAt INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_shared_notes_isDeleted_updatedAt ON shared_notes(isDeleted, updatedAt)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_shared_notes_isPrivate ON shared_notes(isPrivate)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_shared_notes_updatedAt ON shared_notes(updatedAt)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_shared_notes_isPinned ON shared_notes(isPinned)")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -90,7 +113,15 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "orca_auto_v3.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+                    .addMigrations(
+                        MIGRATION_1_2,
+                        MIGRATION_2_3,
+                        MIGRATION_3_4,
+                        MIGRATION_4_5,
+                        MIGRATION_5_6,
+                        MIGRATION_6_7,
+                        MIGRATION_7_8
+                    )
                     .fallbackToDestructiveMigrationOnDowngrade()
                     .build()
                 INSTANCE = instance
