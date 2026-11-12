@@ -174,7 +174,12 @@ fun AssistantChatSheet(
     // Auto-scroll to bottom whenever the latest message text or thought updates
     LaunchedEffect(messages.size, messages.lastOrNull()?.text, messages.lastOrNull()?.thought) {
         if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.size - 1)
+            val isStillStreaming = messages.lastOrNull()?.isStreaming == true
+            if (isStillStreaming) {
+                listState.scrollToItem(messages.size - 1)
+            } else {
+                listState.animateScrollToItem(messages.size - 1)
+            }
         }
     }
 

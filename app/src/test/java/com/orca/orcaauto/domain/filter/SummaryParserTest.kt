@@ -38,9 +38,9 @@ class SummaryParserTest {
 
         // Verify Section 1
         assertTrue(parsed.conciseAdvice.contains("Cần chốt ngay hợp đồng"))
-        assertEquals(2, parsed.criticalQuestions.size)
-        assertTrue(parsed.criticalQuestions[0].contains("5%"))
-        assertTrue(parsed.criticalQuestions[1].contains("vận chuyển"))
+        assertTrue(parsed.conciseAdvice.contains("5%"))
+        assertTrue(parsed.conciseAdvice.contains("vận chuyển"))
+        assertTrue(parsed.criticalQuestions.isEmpty())
 
         // Verify Section 2 Tasks
         assertEquals(2, parsed.tasksToDo.size)
@@ -139,5 +139,71 @@ class SummaryParserTest {
         // Verify reasoning was extracted into reasoningNotes
         assertTrue(parsed.reasoningNotes?.contains("Neo thời gian") == true)
         assertTrue(parsed.reasoningNotes?.contains("Hiện tại là 20:30") == true)
+    }
+
+    @Test
+    fun testBulletPointsInAdviceRemainInConciseAdviceAndNotCriticalQuestions() {
+        val sampleAiOutput = """
+            === PHẦN 1: LỜI KHUYÊN & LƯU Ý ===
+            - Cần chuẩn bị trang thiết bị đầy đủ trước khi xuất phát.
+            * Kiểm tra kỹ thẻ nhớ và pin dự phòng.
+            • Giữ liên lạc liên tục với đội ngũ hậu cần.
+
+            === PHẦN 2: BẢNG ĐIỀU PHỐI NHIỆM VỤ ===
+            ### 🔴 NHIỆM VỤ PHẢI LÀM (TO-DO)
+            - Mua thêm pin dự phòng | Hạn: 14:00 | Nguồn: Trưởng nhóm
+        """.trimIndent()
+
+        val parsed = SummaryParser.parse(sampleAiOutput)
+
+        assertTrue(parsed.conciseAdvice.contains("chuẩn bị trang thiết bị"))
+        assertTrue(parsed.conciseAdvice.contains("thẻ nhớ và pin dự phòng"))
+        assertTrue(parsed.conciseAdvice.contains("đội ngũ hậu cần"))
+        assertTrue(parsed.criticalQuestions.isEmpty())
+        assertEquals(1, parsed.tasksToDo.size)
+        assertEquals("Mua thêm pin dự phòng", parsed.tasksToDo[0].title)
+    }
+
+    @Test
+    fun testNumberedListInAdviceRemainInConciseAdvice() {
+        val sampleAiOutput = """
+            PHẦN 1: HƯỚNG DẪN CHI TIẾT
+            1. Bước 1: Khởi động máy ảnh và cài đặt ISO 800.
+            2. Bước 2: Chọn tiêu cự phù hợp từ 70mm đến 200mm.
+            3. Bước 3: Đảm bảo tốc độ màn trập trên 1/1000s.
+
+            PHẦN 2: BẢNG NHIỆM VỤ
+            Nhiệm vụ phải làm (To-Do):
+            - Chuẩn bị ống kính tele | Hạn: 08:00 | Nguồn: Ghi chú
+        """.trimIndent()
+
+        val parsed = SummaryParser.parse(sampleAiOutput)
+
+        assertTrue(parsed.conciseAdvice.contains("1. Bước 1: Khởi động máy ảnh"))
+        assertTrue(parsed.conciseAdvice.contains("2. Bước 2: Chọn tiêu cự"))
+        assertTrue(parsed.conciseAdvice.contains("3. Bước 3: Đảm bảo tốc độ"))
+        assertTrue(parsed.criticalQuestions.isEmpty())
+        assertEquals(1, parsed.tasksToDo.size)
+    }
+
+    @Test
+    fun testFreeformAnswerWithoutTaskSection() {
+        val freeformAiOutput = """
+            Kinh nghiệm thực tế khi đi quay chụp bóng đá:
+            - Chọn vị trí chụp dọc đường biên ngang khung thành.
+            - Luôn di chuyển máy theo hướng bóng lăn.
+            - Chú ý những pha va chạm hoặc cảm xúc cầu thủ.
+        """.trimIndent()
+
+        val parsed = SummaryParser.parse(freeformAiOutput)
+
+        assertTrue(parsed.conciseAdvice.contains("Kinh nghiệm thực tế"))
+        assertTrue(parsed.conciseAdvice.contains("đường biên ngang khung thành"))
+        assertTrue(parsed.conciseAdvice.contains("theo hướng bóng lăn"))
+        assertTrue(parsed.criticalQuestions.isEmpty())
+        assertEquals(0, parsed.totalTaskCount)
+        assertTrue(parsed.tasksToDo.isEmpty())
+        assertTrue(parsed.tasksDone.isEmpty())
+        assertTrue(parsed.tasksPlanned.isEmpty())
     }
 }

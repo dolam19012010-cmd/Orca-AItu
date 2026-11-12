@@ -17,6 +17,15 @@ class ApiKeyConfigTest {
     }
 
     @Test
+    fun testDetectGoogleGeminiKeyWithAqPrefix() {
+        val raw = "AQ.Ab8SampleGeminiAuthKey1234567890"
+        val config = ApiKeyConfig.fromRawKey(raw)
+        assertEquals(AiProviderType.GEMINI, config.provider)
+        assertEquals("gemini-3.8-flash", config.modelName)
+        assertTrue(config.endpointUrl.contains("generativelanguage.googleapis.com"))
+    }
+
+    @Test
     fun testDetectGroqKey() {
         val raw = "gsk_SampleGroqKey9876543210ABCDEF"
         val config = ApiKeyConfig.fromRawKey(raw)

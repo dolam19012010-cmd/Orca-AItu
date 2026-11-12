@@ -99,7 +99,7 @@ data class ApiKeyConfig(
         fun fromRawKey(key: String, customModel: String? = null): ApiKeyConfig {
             val trimmed = key.trim()
             return when {
-                trimmed.startsWith("AIzaSy") -> {
+                trimmed.startsWith("AIzaSy") || trimmed.startsWith("AQ.") -> {
                     val model = customModel ?: AiProviderType.GEMINI.defaultModel
                     ApiKeyConfig(
                         rawKey = trimmed,

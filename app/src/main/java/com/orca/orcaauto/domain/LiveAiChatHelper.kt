@@ -145,7 +145,7 @@ object LiveAiChatHelper {
         cancelledTasks: List<com.orca.orcaauto.data.local.SmartAlarmEntity>
     ): String {
         if (cancelledTasks.isEmpty() || summaryContent.isBlank()) return summaryContent
-        var inTaskSection = true
+        var inTaskSection = false
         val taggedLines = summaryContent.lines().map { line ->
             val trimmed = line.trim()
             val lower = trimmed.lowercase()

@@ -28,6 +28,12 @@ open class Round1Router(
 
     companion object {
         private const val TAG = "Round1Router"
+        fun normalizeVietnamese(text: String): String {
+            val nfd = java.text.Normalizer.normalize(text.lowercase(), java.text.Normalizer.Form.NFD)
+            return nfd.replace(Regex("\\p{InCombiningDiacriticalMarks}+"), "")
+                .replace('đ', 'd').replace('Đ', 'D')
+                .trim()
+        }
     }
 
     open suspend fun route(
@@ -84,9 +90,10 @@ open class Round1Router(
             appendLine()
             appendLine("QUY TẮC BẮT BUỘC:")
             appendLine("1. Chỉ chọn noteId nếu câu hỏi của người dùng thực sự liên quan hoặc nhắc đến ghi chú đó.")
-            appendLine("2. Chỉ dùng ID có thực trong danh mục bên dưới. KHÔNG tự bịa ID.")
-            appendLine("3. Nếu câu hỏi chung chung (ví dụ: chào hỏi, hỏi kiến thức chung, dịch thuật), trả về neededNoteIds là [].")
-            appendLine("4. Trả về DUY NHẤT một đối tượng JSON hợp lệ theo cấu trúc sau (không kèm lời giải thích thừa ngoài JSON):")
+            appendLine("2. ĐẶC BIỆT: Nếu câu hỏi hoặc yêu cầu của người dùng có chủ đề, từ khóa hoặc ý định trùng khớp/tương đồng với tiêu đề hoặc nội dung gợi ý của bất kỳ ghi chú nào trong danh mục (ví dụ người dùng hỏi về 'quay chụp bóng đá', 'kinh nghiệm quay chụp' hoặc 'Tip đi làm quay chụp bóng đá'), BẮT BUỘC phải đưa noteId đó vào 'neededNoteIds' để trích xuất nội dung thực tế trên máy, kể cả khi người dùng không viết rõ từ 'ghi chú'.")
+            appendLine("3. Chỉ dùng ID có thực trong danh mục bên dưới. KHÔNG tự bịa ID.")
+            appendLine("4. Nếu câu hỏi hoàn toàn chung chung và không liên quan gì đến danh mục ghi chú (ví dụ: chào hỏi, hỏi kiến thức chung, dịch thuật), trả về neededNoteIds là [].")
+            appendLine("5. Trả về DUY NHẤT một đối tượng JSON hợp lệ theo cấu trúc sau (không kèm lời giải thích thừa ngoài JSON):")
             appendLine("```json")
             appendLine("{")
             appendLine("  \"neededNoteIds\": [1, 2],")
@@ -230,32 +237,71 @@ open class Round1Router(
     /**
      * Local heuristic keyword matcher:
      * Tokenizes user prompt and checks for semantic overlap with note titles in catalog.
+     * Supports bidirectional containment, unaccented matching, Vietnamese 2-letter words ("đá", "đi", "xe", "ca", "vé", "ví", "ăn"),
+     * and relaxed threshold (match >= 1 distinct key token or >= 40% title words).
      */
-    private fun heuristicMatchNoteIds(
+    internal fun heuristicMatchNoteIds(
         userPrompt: String,
         packagedContext: PackagedContext,
         validCatalogIds: Set<Long>
     ): List<Long> {
-        val promptNormalized = userPrompt.lowercase()
+        val promptNormalized = userPrompt.lowercase().trim()
+        val promptNoAccent = normalizeVietnamese(userPrompt)
+        val cleanPrompt = promptNormalized.replace(Regex("""[^\p{L}\p{N}\s]"""), " ").replace(Regex("""\s+"""), " ").trim()
+        val cleanPromptNoAccent = promptNoAccent.replace(Regex("""[^\p{L}\p{N}\s]"""), " ").replace(Regex("""\s+"""), " ").trim()
+
+        val promptTokens = cleanPrompt.split(Regex("""\s+""")).filter { it.length >= 2 }.toSet()
+        val promptTokensNoAccent = cleanPromptNoAccent.split(Regex("""\s+""")).filter { it.length >= 2 }.toSet()
+
+        val paddedPrompt = " $cleanPrompt "
+        val paddedPromptNoAccent = " $cleanPromptNoAccent "
+
         val matched = mutableListOf<Long>()
 
         for (item in packagedContext.catalogItems) {
             if (!validCatalogIds.contains(item.id)) continue
 
             val titleNormalized = item.title.lowercase().trim()
-            if (titleNormalized.isNotBlank()) {
-                // Check if full title or significant parts appear in user prompt
-                if (promptNormalized.contains(titleNormalized)) {
+            val titleNoAccent = normalizeVietnamese(item.title)
+            val cleanTitle = titleNormalized.replace(Regex("""[^\p{L}\p{N}\s]"""), " ").replace(Regex("""\s+"""), " ").trim()
+            val cleanTitleNoAccent = titleNoAccent.replace(Regex("""[^\p{L}\p{N}\s]"""), " ").replace(Regex("""\s+"""), " ").trim()
+
+            if (cleanTitle.isNotBlank()) {
+                val paddedTitle = " $cleanTitle "
+                val paddedTitleNoAccent = " $cleanTitleNoAccent "
+
+                // 1. Bidirectional whole-phrase containment check (accented and unaccented)
+                if (paddedPrompt.contains(paddedTitle) || paddedTitle.contains(paddedPrompt) ||
+                    paddedPromptNoAccent.contains(paddedTitleNoAccent) || paddedTitleNoAccent.contains(paddedPromptNoAccent)
+                ) {
                     matched.add(item.id)
                     continue
                 }
 
-                // Check title tokens (words >= 3 chars)
-                val words = titleNormalized.split(Regex("""[\s,._\-:;!?]+"""))
-                    .filter { it.length >= 3 && it !in commonStopWords }
+                // 2. Token-level matching: Keep words length >= 2, preserving Vietnamese 2-letter words
+                val titleWords = cleanTitle.split(Regex("""\s+"""))
+                    .filter { it.length >= 2 && it !in commonStopWords }
+                val titleWordsNoAccent = cleanTitleNoAccent.split(Regex("""\s+"""))
+                    .filter { it.length >= 2 && it !in commonStopWordsNoAccent }
 
-                val matchCount = words.count { promptNormalized.contains(it) }
-                if (words.isNotEmpty() && matchCount >= (words.size + 1) / 2) {
+                if (titleWords.isEmpty()) continue
+
+                var matchCount = 0
+
+                for (idx in titleWords.indices) {
+                    val word = titleWords[idx]
+                    val wordNoAccent = if (idx < titleWordsNoAccent.size) titleWordsNoAccent[idx] else normalizeVietnamese(word)
+
+                    val isWordMatched = promptTokens.contains(word) || promptTokensNoAccent.contains(wordNoAccent)
+
+                    if (isWordMatched) {
+                        matchCount++
+                    }
+                }
+
+                val matchRatio = matchCount.toDouble() / titleWords.size
+                // Threshold: match >= 40% of title words, or if title is short (1-2 words) match >= 1 key word
+                if (matchRatio >= 0.4 || (titleWords.size <= 2 && matchCount >= 1)) {
                     matched.add(item.id)
                 }
             }
@@ -265,6 +311,8 @@ open class Round1Router(
     }
 
     private val commonStopWords = setOf(
-        "ghi", "chú", "danh", "sách", "của", "và", "các", "những", "cho", "với", "trong", "ngày", "này"
+        "ghi", "chú", "danh", "sách", "của", "và", "các", "những", "cho", "với", "trong", "ngày", "này", "đó", "ở", "tại", "là", "bị", "được", "có", "về", "nhé", "nha", "ạ", "ơi"
     )
+
+    private val commonStopWordsNoAccent = commonStopWords.map { normalizeVietnamese(it) }.toSet()
 }

@@ -558,6 +558,135 @@ class AssistantPipelineTest {
     }
 
     // =========================================================================
+    // 6. VIETNAMESE 2-LETTER WORDS, UNACCENTED MATCHING & ANTI-HALLUCINATION TESTS
+    // =========================================================================
+
+    @Test
+    fun stage2_round1Router_matchesFullAndPartialVietnameseWithTwoLetterWords() {
+        val noteId = 42L
+        val packaged = PackagedContext(
+            userPrompt = "",
+            catalogItems = listOf(
+                NoteCatalogItem(noteId, "Tip đi làm quay chụp bóng đá", false, 1000L),
+                NoteCatalogItem(99L, "Ghi chú mua sắm chợ Cồn", false, 2000L)
+            ),
+            catalogPromptSnippet = "",
+            notificationSummarySnippet = "",
+            fullOverviewPrompt = ""
+        )
+
+        // 1. Full title match
+        val fullTitleDecision = invokeParseRouterResponse(
+            router = round1Router,
+            rawResponse = "",
+            userPrompt = "Tip đi làm quay chụp bóng đá",
+            packagedContext = packaged.copy(userPrompt = "Tip đi làm quay chụp bóng đá"),
+            validCatalogIds = setOf(noteId, 99L)
+        )
+        assertEquals(listOf(noteId), fullTitleDecision.neededNoteIds)
+
+        // 2. Partial title containing 2-letter word "đá" ("quay chụp bóng đá")
+        val partialDecision = invokeParseRouterResponse(
+            router = round1Router,
+            rawResponse = "",
+            userPrompt = "Cho tôi hỏi về quay chụp bóng đá",
+            packagedContext = packaged.copy(userPrompt = "Cho tôi hỏi về quay chụp bóng đá"),
+            validCatalogIds = setOf(noteId, 99L)
+        )
+        assertEquals(listOf(noteId), partialDecision.neededNoteIds)
+
+        // 3. Short phrase with 2-letter word "đá" ("bóng đá")
+        val shortPhraseDecision = invokeParseRouterResponse(
+            router = round1Router,
+            rawResponse = "",
+            userPrompt = "kinh nghiệm chụp bóng đá",
+            packagedContext = packaged.copy(userPrompt = "kinh nghiệm chụp bóng đá"),
+            validCatalogIds = setOf(noteId, 99L)
+        )
+        assertEquals(listOf(noteId), shortPhraseDecision.neededNoteIds)
+
+        // 4. Short phrase with 2-letter word "đi" ("đi làm")
+        val twoLetterWordDecision = invokeParseRouterResponse(
+            router = round1Router,
+            rawResponse = "",
+            userPrompt = "kinh nghiệm đi làm quay chụp",
+            packagedContext = packaged.copy(userPrompt = "kinh nghiệm đi làm quay chụp"),
+            validCatalogIds = setOf(noteId, 99L)
+        )
+        assertEquals(listOf(noteId), twoLetterWordDecision.neededNoteIds)
+    }
+
+    @Test
+    fun stage2_round1Router_matchesUnaccentedQuery() {
+        val noteId = 42L
+        val packaged = PackagedContext(
+            userPrompt = "",
+            catalogItems = listOf(
+                NoteCatalogItem(noteId, "Tip đi làm quay chụp bóng đá", false, 1000L),
+                NoteCatalogItem(99L, "Sổ tay công việc", false, 2000L)
+            ),
+            catalogPromptSnippet = "",
+            notificationSummarySnippet = "",
+            fullOverviewPrompt = ""
+        )
+
+        // 1. Full unaccented query ("tip di lam quay chup bong da")
+        val unaccentedFull = invokeParseRouterResponse(
+            router = round1Router,
+            rawResponse = "",
+            userPrompt = "tip di lam quay chup bong da",
+            packagedContext = packaged.copy(userPrompt = "tip di lam quay chup bong da"),
+            validCatalogIds = setOf(noteId, 99L)
+        )
+        assertEquals(listOf(noteId), unaccentedFull.neededNoteIds)
+
+        // 2. Partial unaccented query ("quay chup bong da")
+        val unaccentedPartial = invokeParseRouterResponse(
+            router = round1Router,
+            rawResponse = "",
+            userPrompt = "huong dan quay chup bong da",
+            packagedContext = packaged.copy(userPrompt = "huong dan quay chup bong da"),
+            validCatalogIds = setOf(noteId, 99L)
+        )
+        assertEquals(listOf(noteId), unaccentedPartial.neededNoteIds)
+
+        // 3. Very short unaccented query ("bong da")
+        val unaccentedShort = invokeParseRouterResponse(
+            router = round1Router,
+            rawResponse = "",
+            userPrompt = "bong da",
+            packagedContext = packaged.copy(userPrompt = "bong da"),
+            validCatalogIds = setOf(noteId, 99L)
+        )
+        assertEquals(listOf(noteId), unaccentedShort.neededNoteIds)
+    }
+
+    @Test
+    fun stage3_localRetriever_antiHallucinationInstructionsVerified() = runTest {
+        val noteContent = "Ống kính 70-200mm f/2.8, tốc độ màn trập 1/1000s"
+        val noteId = noteRepository.createNote("Tip đi làm quay chụp bóng đá", noteContent, isPrivate = false)
+        val privateId = noteRepository.createNote("Mật khẩu riêng tư", "PASS1234", isPrivate = true)
+
+        val decision = Round1Decision(
+            neededNoteIds = listOf(noteId, privateId),
+            senderFilter = emptyList(),
+            reasoning = "Test anti-hallucination"
+        )
+
+        val retrieved = localRetriever.retrieve("Kinh nghiệm chụp bóng đá", decision)
+
+        val sysInstruction = retrieved.systemInstruction
+        assertTrue("Chỉ thị hệ thống phải có phần bảo vệ chống ảo giác", sysInstruction.contains("CHỐNG ẢO GIÁC") || sysInstruction.contains("ANTI-HALLUCINATION"))
+        assertTrue("Phải cấm tự sáng tác/suy diễn khi có ghi chú", sysInstruction.contains("Tuyệt đối KHÔNG tự sáng tác, suy diễn hay đưa ra kiến thức chung ngoài đời"))
+        assertTrue("Phải bắt buộc trả lời dựa trên chính xác nội dung ghi chú", sysInstruction.contains("BẮT BUỘC phải trả lời dựa trên chính xác nội dung ghi chú"))
+        assertTrue("Phải thông báo trung thực khi không tìm thấy ghi chú, cấm bịa", sysInstruction.contains("không tìm thấy ghi chú phù hợp trên thiết bị của người dùng, tuyệt đối KHÔNG được tự bịa ra nội dung thay thế"))
+        assertTrue("Với ghi chú riêng tư phải dùng lệnh SHOW_NOTE:id", sysInstruction.contains("[SHOW_NOTE:id]"))
+
+        // Round 2 prompt must contain fidelity warning
+        assertTrue("Prompt Vòng 2 phải nhắc nhở AI bám sát thông tin ghi chú", retrieved.assembledRound2Prompt.contains("ưu tiên và bám sát tuyệt đối nội dung này để trả lời trung thực"))
+    }
+
+    // =========================================================================
     // REFLECTION HELPER
     // =========================================================================
 

@@ -132,6 +132,11 @@ class LocalRetriever(
         Bạn là Trợ lý AI thông minh tích hợp trên thiết bị của người dùng (OrcaAuto).
         Nhiệm vụ của bạn là trả lời câu hỏi của người dùng một cách chính xác, tự nhiên, lịch sự bằng tiếng Việt.
         
+        QUY TẮC BẢO MẬT & CHỐNG ẢO GIÁC (ANTI-HALLUCINATION) KHI TRẢ LỜI VỀ GHI CHÚ:
+        1. Khi trong mục 'THÔNG TIN GHI CHÚ TRÍCH XUẤT CỤC BỘ' có ghi chú liên quan đến câu hỏi, bạn BẮT BUỘC phải trả lời dựa trên chính xác nội dung ghi chú được trích xuất đó. Tuyệt đối KHÔNG tự sáng tác, suy diễn hay đưa ra kiến thức chung ngoài đời làm sai lệch hoặc mâu thuẫn với nội dung ghi chú của người dùng.
+        2. Nếu người dùng hỏi về ghi chú của mình nhưng không có ghi chú nào khớp trong dữ liệu trích xuất hoặc nội dung ghi chú trống, hãy thông báo rõ ràng là không tìm thấy ghi chú phù hợp trên thiết bị của người dùng, tuyệt đối KHÔNG được tự bịa ra nội dung thay thế.
+        3. Đối với Ghi chú Riêng tư (Sealed Pointer): Bạn KHÔNG có quyền đọc nội dung cũ; hãy giải thích rõ ghi chú được bảo mật riêng tư trên máy và BẮT BUỘC gọi lệnh [SHOW_NOTE:id] để người dùng xem trực tiếp trên thiết bị của họ!
+        
         KHI CẦN THAO TÁC HOẶC HIỂN THỊ KHO GHI CHÚ, BẠN CÓ THỂ SỬ DỤNG CÁC THẺ LỆNH HỆ THỐNG SAU:
         1. [SHOW_NOTE:id]
            Hiển thị thẻ ghi chú tương ứng trên màn hình người dùng ngay dưới câu trả lời.
@@ -166,6 +171,7 @@ class LocalRetriever(
         return buildString {
             appendLine("=== THÔNG TIN GHI CHÚ TRÍCH XUẤT CỤC BỘ ===")
             appendLine(notesSnippet)
+            appendLine("LƯU Ý: Nếu thông tin trên có ghi chú liên quan đến câu hỏi, hãy ưu tiên và bám sát tuyệt đối nội dung này để trả lời trung thực, không tự bịa đặt kiến thức ngoài lề.")
             appendLine()
             appendLine("=== TIN NHẮN VÀ THÔNG BÁO 24H LIÊN QUAN ===")
             appendLine(notificationsSnippet)

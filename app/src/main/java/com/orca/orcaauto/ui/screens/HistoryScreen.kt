@@ -43,7 +43,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.automirrored.filled.Message
 import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -683,34 +682,12 @@ fun TwoPartSummaryCard(
                                 )
                             }
                         }
-
-                        if (parsed.criticalQuestions.isNotEmpty()) {
-                            parsed.criticalQuestions.forEach { question ->
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.Top
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.AutoMirrored.Filled.HelpOutline,
-                                        contentDescription = null,
-                                        tint = AccentRose,
-                                        modifier = Modifier.size(13.dp).padding(top = 2.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = question,
-                                        color = TextPrimaryDark,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        lineHeight = 17.sp
-                                    )
-                                }
-                            }
-                        }
                     }
                 }
 
                 // ================= PHẦN 2: BẢNG NHIỆM VỤ =================
-                Card(
+                if (parsed.totalTaskCount > 0) {
+                    Card(
                     modifier = Modifier
                         .fillMaxWidth()
                         .border(1.dp, GlassBorderSubtle, RoundedCornerShape(12.dp)),
@@ -808,6 +785,7 @@ fun TwoPartSummaryCard(
                         }
                     }
                 }
+            }
             }
 
             // Toggle raw markdown view

@@ -6,6 +6,7 @@ import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.app.Service
 import android.content.BroadcastReceiver
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -61,17 +62,21 @@ import android.widget.TextView
 import android.widget.Toast
 import com.orca.orcaauto.R
 import com.orca.orcaauto.data.local.AppDatabase
+import com.orca.orcaauto.data.local.SharedNoteEntity
 import com.orca.orcaauto.data.local.SmartAlarmEntity
 import com.orca.orcaauto.data.local.SmartAlarmStatus
 import com.orca.orcaauto.data.preferences.UserPreferences
 import com.orca.orcaauto.domain.LiveAiChatHelper
 import com.orca.orcaauto.domain.alarm.AlarmCascadeMode
 import com.orca.orcaauto.domain.alarm.SystemAlarmHelper
+import com.orca.orcaauto.domain.assistant.AssistantPipeline
+import com.orca.orcaauto.domain.assistant.AssistantStep
 import com.orca.orcaauto.domain.filter.SummaryParser
 import com.orca.orcaauto.domain.filter.TaskItem
 import com.orca.orcaauto.domain.filter.TaskStatus
 import com.orca.orcaauto.ui.MainActivity
 import com.orca.orcaauto.ui.wallpaper.WallpaperMode
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -79,7 +84,9 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Date
 import java.util.Locale
 
 class FloatingBubbleService : Service() {
@@ -90,6 +97,7 @@ class FloatingBubbleService : Service() {
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
     private var isCallingAi = false
+    private var activeStreamingJob: Job? = null
     private var isExpanded = false
     private var latestSummaryText: String = ""
     private var latestModelInfo: String = ""
@@ -1118,6 +1126,8 @@ class FloatingBubbleService : Service() {
     }
 
     private fun collapseExpandedCard(root: FrameLayout) {
+        activeStreamingJob?.cancel()
+        activeStreamingJob = null
         try {
             com.orca.orcaauto.domain.voice.VoiceBriefingManager.getInstance(this).stop()
         } catch (_: Exception) {}
@@ -1430,6 +1440,10 @@ class FloatingBubbleService : Service() {
             else -> ""
         }
 
+        var currentAdviceTv: TextView? = null
+        var currentSec1Box: LinearLayout? = null
+        var currentNotesContainer: LinearLayout? = null
+
         if (effectiveAdvice.isNotBlank()) {
             val sec1Box = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
@@ -1469,31 +1483,43 @@ class FloatingBubbleService : Service() {
                 setLineSpacing(dpToPx(2).toFloat(), 1.15f)
             }
             sec1Box.addView(adviceTv)
+
+            val notesContainer = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+            }
+            sec1Box.addView(notesContainer)
+
             contentLayout.addView(sec1Box)
+            currentAdviceTv = adviceTv
+            currentSec1Box = sec1Box
+            currentNotesContainer = notesContainer
         }
 
         // Render all tasks directly with state-driven styling (Active / Done / Cancelled)
         if (allTasks.isEmpty()) {
-            val emptyBox = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER
-                setPadding(0, dpToPx(36), 0, dpToPx(36))
+            if (effectiveAdvice.isBlank()) {
+                val emptyBox = LinearLayout(this).apply {
+                    tag = "EMPTY_BOX_TAG"
+                    orientation = LinearLayout.VERTICAL
+                    gravity = Gravity.CENTER
+                    setPadding(0, dpToPx(36), 0, dpToPx(36))
+                }
+                val emptyIcon = TextView(this).apply {
+                    text = "✨"
+                    textSize = 28f
+                    gravity = Gravity.CENTER
+                }
+                emptyBox.addView(emptyIcon)
+                val emptyTv = TextView(this).apply {
+                    text = "Không có nhiệm vụ tồn đọng. Mọi thứ đã hoàn tất!"
+                    setTextColor(Color.parseColor("#94A3B8"))
+                    textSize = 12f
+                    gravity = Gravity.CENTER
+                    setPadding(0, dpToPx(6), 0, 0)
+                }
+                emptyBox.addView(emptyTv)
+                contentLayout.addView(emptyBox)
             }
-            val emptyIcon = TextView(this).apply {
-                text = "✨"
-                textSize = 28f
-                gravity = Gravity.CENTER
-            }
-            emptyBox.addView(emptyIcon)
-            val emptyTv = TextView(this).apply {
-                text = "Không có nhiệm vụ tồn đọng. Mọi thứ đã hoàn tất!"
-                setTextColor(Color.parseColor("#94A3B8"))
-                textSize = 12f
-                gravity = Gravity.CENTER
-                setPadding(0, dpToPx(6), 0, 0)
-            }
-            emptyBox.addView(emptyTv)
-            contentLayout.addView(emptyBox)
         } else {
             // Lọc bỏ hoàn toàn các việc đã bị HỦY để không hiện chiếm chỗ trên bóng chat nổi
             val visibleToDo = speakableParsed.tasksToDo
@@ -1575,26 +1601,133 @@ class FloatingBubbleService : Service() {
                     }, 200L)
                 }
             }
+            setOnLongClickListener {
+                pasteFromClipboard(this)
+            }
         }
+
+        var sendBtnRef: TextView? = null
 
         val executeAiCall: (String) -> Unit = { queryText ->
             if (!isCallingAi) {
                 isCallingAi = true
-                updateBubbleContent()
-                serviceScope.launch {
-                    val promptToSend = queryText.ifBlank { "Tóm tắt các tin nhắn quan trọng gần đây" }
-                    val result = LiveAiChatHelper.sendUserPrompt(this@FloatingBubbleService, promptToSend)
-                    isCallingAi = false
-                    if (result.isSuccess) {
-                        val (newSummary, key) = result.getOrThrow()
-                        latestSummaryText = newSummary
-                        latestModelInfo = "${key.provider.displayName} • ${key.modelName}"
-                        Toast.makeText(this@FloatingBubbleService, "⚡ Đã cập nhật từ $latestModelInfo!", Toast.LENGTH_SHORT).show()
-                    } else {
-                        val err = result.exceptionOrNull()?.message ?: "Lỗi gọi AI"
-                        Toast.makeText(this@FloatingBubbleService, "Thất bại: $err", Toast.LENGTH_LONG).show()
+                activeStreamingJob?.cancel()
+
+                val promptToSend = queryText.ifBlank { "Tóm tắt các tin nhắn quan trọng gần đây" }
+                queryEt.setText("")
+                queryEt.isEnabled = false
+                queryEt.hint = "AI đang xử lý..."
+
+                sendBtnRef?.text = "..."
+                sendBtnRef?.isClickable = false
+                sendBtnRef?.setTextColor(Color.parseColor("#94A3B8"))
+                sendBtnRef?.background = GradientDrawable().apply {
+                    setColor(Color.parseColor("#3327272A"))
+                    cornerRadius = dpToPx(8).toFloat()
+                    setStroke(dpToPx(1), Color.parseColor("#4DFFFFFF"))
+                }
+
+                // Remove emptyBox if present
+                contentLayout.findViewWithTag<View>("EMPTY_BOX_TAG")?.let { contentLayout.removeView(it) }
+
+                var targetAdviceTv = currentAdviceTv
+                var targetNotesContainer = currentNotesContainer
+
+                if (targetAdviceTv == null || targetNotesContainer == null) {
+                    val newSec1Box = LinearLayout(this@FloatingBubbleService).apply {
+                        orientation = LinearLayout.VERTICAL
+                        background = GradientDrawable().apply {
+                            setColor(Color.parseColor("#1F18181B"))
+                            cornerRadius = dpToPx(12).toFloat()
+                            setStroke(dpToPx(1), Color.parseColor("#33FFFFFF"))
+                        }
+                        setPadding(dpToPx(12), dpToPx(10), dpToPx(12), dpToPx(10))
+                        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                            bottomMargin = dpToPx(8)
+                        }
                     }
-                    updateBubbleContent()
+                    val newAdviceTv = TextView(this@FloatingBubbleService).apply {
+                        setTextColor(Color.WHITE)
+                        textSize = 12.5f
+                        setLineSpacing(dpToPx(2).toFloat(), 1.15f)
+                    }
+                    newSec1Box.addView(newAdviceTv)
+
+                    val newNotesContainer = LinearLayout(this@FloatingBubbleService).apply {
+                        orientation = LinearLayout.VERTICAL
+                    }
+                    newSec1Box.addView(newNotesContainer)
+
+                    contentLayout.addView(newSec1Box, 0)
+                    currentSec1Box = newSec1Box
+                    currentAdviceTv = newAdviceTv
+                    currentNotesContainer = newNotesContainer
+                    targetAdviceTv = newAdviceTv
+                    targetNotesContainer = newNotesContainer
+                }
+
+                targetNotesContainer.removeAllViews()
+                targetAdviceTv.text = "Đang tìm thông tin..."
+
+                activeStreamingJob = serviceScope.launch(Dispatchers.Main) {
+                    try {
+                        val pipeline = AssistantPipeline.create(this@FloatingBubbleService)
+                        pipeline.askStreaming(promptToSend).collect { uiState ->
+                            when (uiState.step) {
+                                AssistantStep.STAGE_1_PACKING_INDEX,
+                                AssistantStep.STAGE_2_ROUND_1_ROUTING,
+                                AssistantStep.STAGE_3_LOCAL_RETRIEVAL -> {
+                                    targetAdviceTv.text = uiState.stepDescription
+                                }
+                                AssistantStep.STAGE_4_STREAMING_ANSWER -> {
+                                    targetAdviceTv.text = uiState.streamedContentClean + " ▌"
+                                    scrollView.post {
+                                        scrollView.fullScroll(View.FOCUS_DOWN)
+                                    }
+                                }
+                                AssistantStep.STAGE_5_EXECUTING_ACTIONS -> {
+                                    targetAdviceTv.text = uiState.streamedContentClean
+                                }
+                                AssistantStep.COMPLETED -> {
+                                    targetAdviceTv.text = uiState.streamedContentClean
+                                    latestSummaryText = uiState.streamedContentClean
+                                    uiState.activeUsedKey?.let { key ->
+                                        latestModelInfo = "${key.provider.displayName} • ${key.modelName}"
+                                        modelTv.text = latestModelInfo
+                                    }
+                                    if (uiState.shownNoteCards.isNotEmpty()) {
+                                        renderLocalNoteCardsInBubble(targetNotesContainer, uiState.shownNoteCards)
+                                    }
+                                    scrollView.post {
+                                        scrollView.fullScroll(View.FOCUS_DOWN)
+                                    }
+                                }
+                                AssistantStep.ERROR -> {
+                                    targetAdviceTv.text = "Lỗi: ${uiState.errorMessage ?: "Không thể kết nối AI"}"
+                                }
+                                AssistantStep.IDLE -> {
+                                    // No-op
+                                }
+                            }
+                        }
+                    } catch (e: CancellationException) {
+                        // Clean cancellation
+                    } catch (t: Throwable) {
+                        targetAdviceTv.text = "Thất bại: ${t.message ?: "Lỗi gọi AI"}"
+                    } finally {
+                        isCallingAi = false
+                        sendBtnRef?.text = "Gửi"
+                        sendBtnRef?.isClickable = true
+                        sendBtnRef?.setTextColor(Color.BLACK)
+                        sendBtnRef?.background = GradientDrawable().apply {
+                            setColor(Color.WHITE)
+                            cornerRadius = dpToPx(8).toFloat()
+                            setStroke(dpToPx(1), Color.WHITE)
+                        }
+                        queryEt.isEnabled = true
+                        queryEt.hint = "Nhập lệnh hoặc câu hỏi..."
+                        activeStreamingJob = null
+                    }
                 }
             }
         }
@@ -1605,6 +1738,30 @@ class FloatingBubbleService : Service() {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
         inputRow.addView(queryEt)
+
+        val pasteBtn = TextView(this).apply {
+            text = "Dán"
+            setTextColor(Color.parseColor("#38BDF8"))
+            textSize = 11.5f
+            gravity = Gravity.CENTER
+            typeface = Typeface.DEFAULT_BOLD
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#1E293B"))
+                cornerRadius = dpToPx(8).toFloat()
+                setStroke(dpToPx(1), Color.parseColor("#3338BDF8"))
+            }
+            setPadding(dpToPx(10), 0, dpToPx(10), 0)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dpToPx(38)).apply {
+                leftMargin = dpToPx(6)
+            }
+            isClickable = !isCallingAi
+            setOnClickListener {
+                if (!isCallingAi) {
+                    pasteFromClipboard(queryEt)
+                }
+            }
+        }
+        inputRow.addView(pasteBtn)
 
         val sendBtn = TextView(this).apply {
             text = if (isCallingAi) "..." else "Gửi"
@@ -1628,6 +1785,7 @@ class FloatingBubbleService : Service() {
                 }
             }
         }
+        sendBtnRef = sendBtn
         inputRow.addView(sendBtn)
         inputCard.addView(inputRow)
         cardLayout.addView(inputCard)
@@ -1651,6 +1809,100 @@ class FloatingBubbleService : Service() {
                 .setDuration(240)
                 .setInterpolator(OvershootInterpolator(1.04f))
                 .start()
+        }
+    }
+
+    private fun renderLocalNoteCardsInBubble(container: LinearLayout?, notes: List<SharedNoteEntity>) {
+        if (container == null || notes.isEmpty()) return
+        container.removeAllViews()
+
+        val labelTv = TextView(this).apply {
+            text = "📌 Ghi chú trích xuất từ máy:"
+            setTextColor(Color.parseColor("#38BDF8"))
+            textSize = 11.5f
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(0, dpToPx(8), 0, dpToPx(4))
+        }
+        container.addView(labelTv)
+
+        val dateFormat = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
+
+        for (note in notes) {
+            val card = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                background = GradientDrawable().apply {
+                    setColor(Color.parseColor("#27272A"))
+                    cornerRadius = dpToPx(8).toFloat()
+                    setStroke(dpToPx(1), if (note.isPrivate) Color.parseColor("#38BDF8") else Color.parseColor("#3F3F46"))
+                }
+                setPadding(dpToPx(10), dpToPx(8), dpToPx(10), dpToPx(8))
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    bottomMargin = dpToPx(6)
+                }
+            }
+
+            // Note title row
+            val titleRow = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+
+            val iconTv = TextView(this).apply {
+                text = if (note.isPrivate) "🔒 " else "📝 "
+                textSize = 12f
+            }
+            titleRow.addView(iconTv)
+
+            val titleTv = TextView(this).apply {
+                text = note.title
+                setTextColor(Color.WHITE)
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            }
+            titleRow.addView(titleTv)
+
+            if (note.isPrivate) {
+                val privateBadge = TextView(this).apply {
+                    text = "Riêng tư"
+                    setTextColor(Color.parseColor("#38BDF8"))
+                    textSize = 10f
+                    background = GradientDrawable().apply {
+                        setColor(Color.parseColor("#1E293B"))
+                        cornerRadius = dpToPx(4).toFloat()
+                        setStroke(dpToPx(1), Color.parseColor("#38BDF8"))
+                    }
+                    setPadding(dpToPx(5), dpToPx(1), dpToPx(5), dpToPx(1))
+                }
+                titleRow.addView(privateBadge)
+            }
+
+            card.addView(titleRow)
+
+            // Content
+            if (note.content.isNotBlank()) {
+                val contentTv = TextView(this).apply {
+                    text = note.content
+                    setTextColor(Color.parseColor("#E4E4E7"))
+                    textSize = 11.5f
+                    setLineSpacing(dpToPx(1).toFloat(), 1.15f)
+                    setPadding(0, dpToPx(4), 0, dpToPx(4))
+                }
+                card.addView(contentTv)
+            }
+
+            // Time footer
+            val timeStr = try { dateFormat.format(Date(note.updatedAt)) } catch (_: Exception) { "" }
+            if (timeStr.isNotBlank()) {
+                val timeTv = TextView(this).apply {
+                    text = "Cập nhật: $timeStr"
+                    setTextColor(Color.parseColor("#94A3B8"))
+                    textSize = 10f
+                }
+                card.addView(timeTv)
+            }
+
+            container.addView(card)
         }
     }
 
@@ -2546,6 +2798,9 @@ class FloatingBubbleService : Service() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 isForceDarkAllowed = false
             }
+            setOnLongClickListener {
+                pasteFromClipboard(this)
+            }
         }
         bodyLayout.addView(noteEt)
 
@@ -2891,6 +3146,8 @@ class FloatingBubbleService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        activeStreamingJob?.cancel()
+        activeStreamingJob = null
         try {
             com.orca.orcaauto.domain.voice.VoiceBriefingManager.getInstance(this).stop()
         } catch (_: Exception) {}
@@ -2947,6 +3204,41 @@ class FloatingBubbleService : Service() {
             dp.toFloat(),
             resources.displayMetrics
         ).toInt()
+    }
+
+    /**
+     * Reads clipboard directly for TYPE_APPLICATION_OVERLAY EditText fields, where Android
+     * often suppresses the native Activity-bound floating Paste popup toolbar.
+     */
+    private fun pasteFromClipboard(target: EditText): Boolean {
+        return try {
+            target.requestFocus()
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            val clipData = clipboard?.primaryClip
+            val clipText = if (clipData != null && clipData.itemCount > 0) {
+                clipData.getItemAt(0).coerceToText(this)?.toString()
+            } else {
+                null
+            }
+            if (!clipText.isNullOrBlank()) {
+                val editable = target.text
+                val rawStart = target.selectionStart.coerceAtLeast(0)
+                val rawEnd = target.selectionEnd.coerceAtLeast(0)
+                val start = minOf(rawStart, rawEnd).coerceAtMost(editable.length)
+                val end = maxOf(rawStart, rawEnd).coerceAtMost(editable.length)
+                editable.replace(start, end, clipText)
+                val newCursor = (start + clipText.length).coerceAtMost(target.text.length)
+                target.setSelection(newCursor)
+                Toast.makeText(this, "Đã dán từ bộ nhớ tạm", Toast.LENGTH_SHORT).show()
+                true
+            } else {
+                Toast.makeText(this, "Bộ nhớ tạm đang trống", Toast.LENGTH_SHORT).show()
+                false
+            }
+        } catch (e: Exception) {
+            Toast.makeText(this, "Không thể dán: ${e.message}", Toast.LENGTH_SHORT).show()
+            false
+        }
     }
 
     companion object {

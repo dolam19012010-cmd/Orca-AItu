@@ -23,7 +23,7 @@ data class ParsedSummary(
     val reasoningNotes: String? = null,
     // Phần 1: Phản biện & Lời khuyên
     val conciseAdvice: String,
-    val criticalQuestions: List<String>,
+    val criticalQuestions: List<String> = emptyList(),
     // Phần 2: Bảng nhiệm vụ 3 trạng thái
     val tasksToDo: List<TaskItem>,
     val tasksDone: List<TaskItem>,
@@ -87,23 +87,58 @@ object SummaryParser {
             .trim()
     }
 
+    fun cleanAdviceLine(line: String): String {
+        val trimmed = line.trim()
+        if (trimmed.isBlank()) return ""
+
+        // Preserve bullet (- , * , • ) or numbered list (1. , 2. ) prefix
+        val bulletMatch = Regex("""^([\\-•*]\s*|\d+\.\s*)""").find(trimmed)
+        val prefix = bulletMatch?.value ?: ""
+        var rest = trimmed.substring(prefix.length).trim()
+
+        // Strip markdown bold wrappers around header label e.g. **Lời khuyên**: or **Lời Nhắn**:
+        rest = rest.replace(Regex("""^\*\*([^*]+)\*\*:?\s*"""), "$1: ")
+
+        // Strip bracketed headers e.g. [Nhẹ Nhàng], [Lời Nhắn], [Persona]
+        rest = rest.replace(Regex("""^\[[^\]]*\]:?\s*"""), "")
+        rest = rest.replace(Regex("""^\([^)]*\):?\s*"""), "")
+
+        // Strip trailing bracket persona leftovers e.g. "Nhẹ Nhàng]:", "Cố Vấn]:"
+        rest = rest.replace(Regex("""^(?i)[a-zA-ZÀ-ỹ\s\-&]+[\])]:?\s*"""), "")
+
+        // Strip label prefixes e.g. "Lời khuyên:", "Lời nhắn:", "Lưu ý tinh tế:"
+        rest = rest.replace(
+            Regex("""^(?i)(lời nhắn & điểm lưu ý|lời nhắn nhẹ nhàng|lời nhắn|lời khuyên|lưu ý tinh tế|điểm cần chú ý|tóm tắt trọng tâm|ghi chú nhanh|lưu ý nhanh|chú ý|tóm tắt)[:\-–]+\s*"""),
+            ""
+        )
+
+        // Strip markdown header symbols like # or > from the beginning of rest
+        rest = rest.replace(Regex("""^[#:>]+"""), "").trim()
+
+        val cleanedRest = cleanMarkdown(rest)
+        if (cleanedRest.isBlank()) return ""
+
+        return if (prefix.isNotBlank()) {
+            val normPrefix = if (prefix.endsWith(" ")) prefix else "$prefix "
+            "$normPrefix$cleanedRest"
+        } else {
+            cleanedRest
+        }
+    }
+
     /**
      * Cleans advice/greeting text by stripping persona tags (e.g. "[Nhẹ Nhàng]:", "Nhẹ Nhàng]:")
      * and boilerplate label prefixes like "Lời nhắn:", "Lời khuyên:".
+     * Preserves bullet markers and numbered list prefixes intact across lines.
      */
     fun cleanAdviceText(text: String): String {
-        var s = text.trim()
-        s = cleanMarkdown(s)
-        // Strip bracketed headers e.g. [Nhẹ Nhàng], [Lời Nhắn], [Persona]
-        s = s.replace(Regex("^\\[[^\\]]*\\]:?\\s*"), "")
-        s = s.replace(Regex("^\\([^\\)]*\\):?\\s*"), "")
-        // Strip trailing bracket persona leftovers e.g. "Nhẹ Nhàng]:", "Cố Vấn]:"
-        s = s.replace(Regex("^(?i)[a-zA-ZÀ-ỹ\\s\\-&]+[\\]\\)]:?\\s*"), "")
-        // Strip label prefixes
-        s = s.replace(Regex("^(?i)(lời nhắn & điểm lưu ý|lời nhắn nhẹ nhàng|lời nhắn|lời khuyên|lưu ý tinh tế|điểm cần chú ý|tóm tắt trọng tâm|ghi chú nhanh|lưu ý nhanh|chú ý|tóm tắt)[:\\-–\\s]*"), "")
-        // Strip leading symbols
-        s = s.replace(Regex("^[\\-•*#:>\\s]+"), "").trim()
-        return s
+        if (text.isBlank()) return ""
+        val lines = text.lines()
+        val cleanedLines = lines.mapNotNull { line ->
+            val cleaned = cleanAdviceLine(line)
+            if (cleaned.isNotBlank()) cleaned else null
+        }
+        return cleanedLines.joinToString("\n").trim()
     }
 
     /**
@@ -115,8 +150,7 @@ object SummaryParser {
         val reasoning = ScratchpadExtractor.extractReasoning(rawText)
         val cleaned = ScratchpadExtractor.stripReasoning(rawText)
 
-        var advice = ""
-        val criticalQuestions = mutableListOf<String>()
+        val adviceLines = mutableListOf<String>()
         val tasksToDo = mutableListOf<TaskItem>()
         val tasksDone = mutableListOf<TaskItem>()
         val tasksPlanned = mutableListOf<TaskItem>()
@@ -129,11 +163,17 @@ object SummaryParser {
             val lower = trimmed.lowercase()
             if (trimmed.isBlank()) continue
 
-            val isBullet = trimmed.startsWith("-") || trimmed.startsWith("•") || trimmed.startsWith("*") || trimmed.startsWith("?") || trimmed.matches(Regex("^\\d+\\..*"))
+            val isBullet = trimmed.startsWith("-") || trimmed.startsWith("•") || trimmed.startsWith("*") || trimmed.startsWith("?") || trimmed.matches(Regex("""^\d+\..*"""))
 
             // Section Heading checks (Must not be a bullet item)
             when {
-                !isBullet && (lower.contains("phần 1") || (lower.contains("góc nhìn") && lower.contains("phản biện")) || lower.startsWith("=== phần 1") || lower.startsWith("### phần 1")) -> {
+                !isBullet && (
+                    lower.contains("phần 1") ||
+                    (lower.contains("góc nhìn") && lower.contains("phản biện")) ||
+                    lower.startsWith("=== phần 1") ||
+                    lower.startsWith("### phần 1") ||
+                    ((lower.startsWith("#") || lower.startsWith("=")) && (lower.contains("lời khuyên") || lower.contains("lời nhắn") || lower.contains("lưu ý")))
+                ) -> {
                     currentSection = 1
                     continue
                 }
@@ -155,39 +195,31 @@ object SummaryParser {
                 }
             }
 
-            // Section 1 parsing: Advice / Gentle message vs Notes / Questions
-            if (currentSection == 1 || currentSection == 0) {
-                if (lower.contains("lời khuyên") || lower.contains("lời nhắn") || lower.contains("tóm tắt") || lower.contains("ghi chú") || lower.contains("[lời")) {
-                    advice = cleanAdviceText(trimmed)
+            // Section 1 parsing: Advice / Gentle message / Bullet points / Numbered lists / Paragraphs
+            if (currentSection in 0..1) {
+                // Skip standalone label lines that are solely a header without content
+                val isStandaloneHeader = !isBullet && (
+                    lower in listOf(
+                        "lời khuyên:", "lời nhắn:", "lưu ý:", "chú ý:",
+                        "lưu ý tinh tế:", "điểm cần chú ý:", "lời nhắn nhẹ nhàng:",
+                        "góc nhìn phản biện & lời khuyên:", "lời nhắn & điểm lưu ý:"
+                    )
+                )
+                if (isStandaloneHeader) {
                     currentSection = 1
                     continue
-                } else if (!isBullet && (lower.contains("chất vấn") || lower.contains("hoài nghi") || lower.contains("mâu thuẫn") || lower.contains("lưu ý") || lower.contains("chú ý") || lower.contains("điểm cần"))) {
-                    currentSection = 1
-                    // Marker for questions / notes
-                } else if (isBullet) {
-                    val questionText = trimmed.replace(Regex("^[\\-•*?\\d.]\\s*"), "").trim()
-                    val cleanedQ = cleanMarkdown(questionText)
-                    val lowerQ = cleanedQ.lowercase()
-                    // Filter out stray header lines like ". Lưu Ý Tinh Tế:", "Lưu Ý Tinh Tế", "Điểm Cần Chú Ý", etc.
-                    val isStrayHeader = lowerQ.contains("lưu ý tinh tế") ||
-                                        lowerQ.contains("điểm cần chú ý") ||
-                                        lowerQ.contains("lưu ý nhanh") ||
-                                        lowerQ.contains("chất vấn & điểm nghi vấn") ||
-                                        lowerQ.startsWith(". lưu ý") ||
-                                        lowerQ.startsWith("lưu ý:") ||
-                                        lowerQ.startsWith("chú ý:") ||
-                                        (lowerQ.length < 25 && lowerQ.endsWith(":"))
+                }
 
-                    if (!isStrayHeader && cleanedQ.isNotBlank()) {
-                        criticalQuestions.add(cleanedQ)
-                        currentSection = 1
-                    }
+                val cleanedLine = cleanAdviceLine(trimmed)
+                if (cleanedLine.isNotBlank()) {
+                    adviceLines.add(cleanedLine)
+                    currentSection = 1
                 }
             }
 
             // Section 2, 3, 4: Tasks parsing
             if (currentSection in 2..4) {
-                if (trimmed.startsWith("-") || trimmed.startsWith("•") || trimmed.startsWith("*") || trimmed.startsWith("[") || trimmed.matches(Regex("^\\d+\\..*"))) {
+                if (trimmed.startsWith("-") || trimmed.startsWith("•") || trimmed.startsWith("*") || trimmed.startsWith("[") || trimmed.matches(Regex("""^\d+\..*"""))) {
                     val taskItem = parseTaskLine(trimmed, when (currentSection) {
                         2 -> TaskStatus.TODO
                         3 -> TaskStatus.DONE
@@ -226,13 +258,11 @@ object SummaryParser {
             }
         }
 
-        // Fallback advice if not cleanly separated by headers
-        if (advice.isBlank()) {
-            advice = if (criticalQuestions.isNotEmpty()) {
-                criticalQuestions.first()
-            } else {
-                cleaned.lines().firstOrNull { it.isNotBlank() }?.let { cleanMarkdown(it) }.orEmpty()
-            }
+        val advice = adviceLines.joinToString("\n").trim()
+        val finalAdvice = if (advice.isNotBlank()) {
+            advice
+        } else {
+            cleaned.lines().firstOrNull { it.isNotBlank() }?.let { cleanMarkdown(it) }.orEmpty()
         }
 
         // Deduplicate tasks to avoid repeated items
@@ -243,8 +273,8 @@ object SummaryParser {
         return ParsedSummary(
             rawCleanText = cleaned,
             reasoningNotes = reasoning,
-            conciseAdvice = advice,
-            criticalQuestions = criticalQuestions.distinct(),
+            conciseAdvice = finalAdvice,
+            criticalQuestions = emptyList(),
             tasksToDo = distinctToDo,
             tasksDone = distinctDone,
             tasksPlanned = distinctPlanned

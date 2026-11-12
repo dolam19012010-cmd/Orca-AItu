@@ -315,7 +315,7 @@ class StreamingAiClient(
             val source = body.source()
             var startedEmitted = false
 
-            while (!source.exhausted() && !Thread.currentThread().isInterrupted) {
+            while (coroutineContext.isActive && !Thread.currentThread().isInterrupted) {
                 val line = try {
                     source.readUtf8Line() ?: break
                 } catch (e: Exception) {
@@ -464,6 +464,8 @@ class StreamingAiClient(
         return Request.Builder()
             .url(url)
             .addHeader("Accept", "text/event-stream")
+            .addHeader("Cache-Control", "no-cache")
+            .addHeader("X-Accel-Buffering", "no")
             .addHeader("Content-Type", "application/json")
             .post(requestBody)
             .build()
@@ -506,6 +508,8 @@ class StreamingAiClient(
             .url(endpointUrl)
             .addHeader("Authorization", "Bearer ${config.rawKey}")
             .addHeader("Accept", "text/event-stream")
+            .addHeader("Cache-Control", "no-cache")
+            .addHeader("X-Accel-Buffering", "no")
             .addHeader("Content-Type", "application/json")
             .post(requestBody)
 
