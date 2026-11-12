@@ -105,9 +105,10 @@ object SystemAlarmHelper {
         val n2 = normalizeTitle(title2)
         if (n1.isEmpty() || n2.isEmpty()) return false
         if (n1 == n2) return true
+        // Only allow match if lengths are very close (max 3 characters difference) and share the exact prefix
         val minLen = minOf(n1.length, n2.length)
         val maxLen = maxOf(n1.length, n2.length)
-        if (minLen >= 8 && (maxLen - minLen) <= 4) {
+        if (minLen >= 10 && (maxLen - minLen) <= 3) {
             return n1.startsWith(n2) || n2.startsWith(n1)
         }
         return false
@@ -121,7 +122,7 @@ object SystemAlarmHelper {
         val norm = normalizeTitle(taskTitle)
         if (norm.isEmpty()) return null
         val now = System.currentTimeMillis()
-        val cutoff = now - 48 * 3600 * 1000L // Giữ trạng thái trong 48 giờ (2 ngày) theo chu kỳ dọn tin nhắn 24h
+        val cutoff = now - 12 * 3600 * 1000L // 12 hours window
 
         val matches = alarmMap.values.filter { isTitleMatching(it.taskTitle, taskTitle) }
         if (matches.isEmpty()) return null
@@ -130,7 +131,8 @@ object SystemAlarmHelper {
         val active = matches.firstOrNull { it.status == SmartAlarmStatus.ACTIVE && it.targetTimeMillis >= now - 3600_000L }
         if (active != null) return active
 
-        // 2. Xét các bản ghi trạng thái (CANCELLED, COMPLETED, PROPOSED) trong vòng 48h (2 ngày)
+        // 2. Chỉ xét các bản ghi trạng thái (CANCELLED, COMPLETED, PROPOSED) trong vòng 12h gần nhất,
+        // tránh việc nhiệm vụ phiên sau bị "ngộ nhận" bởi một nhiệm vụ đã hủy/xong từ nhiều ngày trước!
         return matches
             .filter { it.targetTimeMillis >= cutoff || it.updatedAt >= cutoff }
             .maxByOrNull { it.updatedAt }

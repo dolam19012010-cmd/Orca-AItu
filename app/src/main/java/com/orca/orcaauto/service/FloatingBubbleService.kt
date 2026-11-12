@@ -156,7 +156,7 @@ class FloatingBubbleService : Service() {
                     if (prefs.isShakeToWakeEnabled()) {
                         Log.i(TAG, "⚡ Lắc tay thành công! Kích hoạt bong bóng trồi ra State 2.")
                         triggerHapticFeedback()
-                        transitionToBubbleState(BubbleState.STATE_1_ACTIVE, animate = true, activeDurationMs = 3500L)
+                        transitionToBubbleState(BubbleState.STATE_2_DIMMED, animate = true)
                     }
                 }
             }
@@ -302,7 +302,7 @@ class FloatingBubbleService : Service() {
             stopSelf()
         }
 
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -861,10 +861,7 @@ class FloatingBubbleService : Service() {
             bubbleView?.scaleY = targetScale
             if (newState == BubbleState.STATE_3_HIDDEN) {
                 p.flags = p.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                bubbleRootView?.visibility = View.GONE
             } else {
-                bubbleRootView?.visibility = View.VISIBLE
-                bubbleRootView?.requestLayout()
                 p.flags = p.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
             }
             try {
@@ -895,7 +892,6 @@ class FloatingBubbleService : Service() {
             // trồi ra đúng vị trí nép của Trạng thái 2 (targetX = if (isLeft) -dpToPx(32) else screenWidth - bubbleSize + dpToPx(32)).
             // Thời gian animation ~280ms với DecelerateInterpolator.
             updateShakeDetectorState()
-            bubbleRootView?.visibility = View.VISIBLE
             p.flags = p.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
             bubbleView?.alpha = 0.20f
             bubbleView?.scaleX = 0.85f
@@ -950,8 +946,6 @@ class FloatingBubbleService : Service() {
             }
 
             if (newState != BubbleState.STATE_3_HIDDEN) {
-                bubbleRootView?.visibility = View.VISIBLE
-                bubbleRootView?.requestLayout()
                 p.flags = p.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
             }
 
@@ -988,7 +982,6 @@ class FloatingBubbleService : Service() {
                         bubbleView?.scaleY = targetScale
                         if (newState == BubbleState.STATE_3_HIDDEN) {
                             p.flags = p.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                            bubbleRootView?.visibility = View.GONE
                         }
                         try {
                             if (bubbleRootView?.isAttachedToWindow == true) {
@@ -1125,9 +1118,6 @@ class FloatingBubbleService : Service() {
     }
 
     private fun collapseExpandedCard(root: FrameLayout) {
-        try {
-            com.orca.orcaauto.domain.voice.VoiceBriefingManager.getInstance(this).stop()
-        } catch (_: Exception) {}
         if (isCollapsing || !isExpanded) return
         isCollapsing = true
         hideDismissTarget(immediate = true)
@@ -1448,23 +1438,6 @@ class FloatingBubbleService : Service() {
                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                     bottomMargin = dpToPx(8)
                 }
-                isClickable = true
-                isLongClickable = true
-                setOnLongClickListener {
-                    try {
-                        performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
-                        com.orca.orcaauto.domain.voice.VoiceBriefingManager.getInstance(this@FloatingBubbleService).speakSummary(0L, parsed)
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Voice briefing failed", e)
-                    }
-                    true
-                }
-                setOnClickListener {
-                    val vm = com.orca.orcaauto.domain.voice.VoiceBriefingManager.getInstance(this@FloatingBubbleService)
-                    if (vm.isSpeakingFlow.value) {
-                        vm.stop()
-                    }
-                }
             }
 
             val adviceTv = TextView(this).apply {
@@ -1500,42 +1473,14 @@ class FloatingBubbleService : Service() {
             emptyBox.addView(emptyTv)
             contentLayout.addView(emptyBox)
         } else {
-            // Lọc bỏ hoàn toàn các việc đã bị HỦY để không hiện chiếm chỗ trên bóng chat nổi
-            val visibleToDo = parsed.tasksToDo.filterNot { SystemAlarmHelper.isTaskCancelled(it.title, alarmDbMap) }
-            val visiblePlanned = parsed.tasksPlanned.filterNot { SystemAlarmHelper.isTaskCancelled(it.title, alarmDbMap) }
-            val visibleDone = parsed.tasksDone.filterNot { SystemAlarmHelper.isTaskCancelled(it.title, alarmDbMap) }
-
-            if (visibleToDo.isEmpty() && visiblePlanned.isEmpty() && visibleDone.isEmpty()) {
-                val allDoneBox = LinearLayout(this).apply {
-                    orientation = LinearLayout.VERTICAL
-                    gravity = Gravity.CENTER
-                    setPadding(0, dpToPx(36), 0, dpToPx(36))
-                }
-                val allDoneIcon = TextView(this).apply {
-                    text = "✨"
-                    textSize = 32f
-                    gravity = Gravity.CENTER
-                }
-                allDoneBox.addView(allDoneIcon)
-                val allDoneTv = TextView(this).apply {
-                    text = "Không có nhiệm vụ tồn đọng. Mọi thứ đã hoàn tất!"
-                    setTextColor(Color.parseColor("#94A3B8"))
-                    textSize = 12f
-                    gravity = Gravity.CENTER
-                    setPadding(0, dpToPx(6), 0, 0)
-                }
-                allDoneBox.addView(allDoneTv)
-                contentLayout.addView(allDoneBox)
-            } else {
-                visibleToDo.forEach { task ->
-                    contentLayout.addView(renderTaskRow(task, isPlanned = false, cardLayout = cardLayout))
-                }
-                visiblePlanned.forEach { task ->
-                    contentLayout.addView(renderTaskRow(task, isPlanned = true, cardLayout = cardLayout))
-                }
-                visibleDone.forEach { task ->
-                    contentLayout.addView(renderTaskRow(task, isPlanned = false, cardLayout = cardLayout))
-                }
+            parsed.tasksToDo.forEach { task ->
+                contentLayout.addView(renderTaskRow(task, isPlanned = false, cardLayout = cardLayout))
+            }
+            parsed.tasksPlanned.forEach { task ->
+                contentLayout.addView(renderTaskRow(task, isPlanned = true, cardLayout = cardLayout))
+            }
+            parsed.tasksDone.forEach { task ->
+                contentLayout.addView(renderTaskRow(task, isPlanned = false, cardLayout = cardLayout))
             }
         }
 
@@ -1556,9 +1501,8 @@ class FloatingBubbleService : Service() {
             }
         }
 
-        val isEnBubble = UserPreferences.getInstance(this).getAppLanguage() == com.orca.orcaauto.ui.locale.AppLanguage.ENGLISH
         val queryEt = EditText(this).apply {
-            hint = if (isCallingAi) (if (isEnBubble) "AI is thinking..." else "AI đang xử lý...") else (if (isEnBubble) "Ask AI or command..." else "Nhập lệnh hoặc câu hỏi...")
+            hint = if (isCallingAi) "AI đang xử lý..." else "Nhập lệnh hoặc câu hỏi..."
             setHintTextColor(Color.parseColor("#71717A"))
             setTextColor(Color.WHITE)
             textSize = 12.5f
@@ -1588,7 +1532,7 @@ class FloatingBubbleService : Service() {
                 isCallingAi = true
                 updateBubbleContent()
                 serviceScope.launch {
-                    val promptToSend = queryText.ifBlank { if (isEnBubble) "Summarize recent key tasks and messages" else "Tóm tắt các tin nhắn quan trọng gần đây" }
+                    val promptToSend = queryText.ifBlank { "Tóm tắt các tin nhắn quan trọng gần đây" }
                     val result = LiveAiChatHelper.sendUserPrompt(this@FloatingBubbleService, promptToSend)
                     isCallingAi = false
                     if (result.isSuccess) {
@@ -1613,7 +1557,7 @@ class FloatingBubbleService : Service() {
         inputRow.addView(queryEt)
 
         val sendBtn = TextView(this).apply {
-            text = if (isCallingAi) "..." else (if (isEnBubble) "Send" else "Gửi")
+            text = if (isCallingAi) "..." else "Gửi"
             setTextColor(if (isCallingAi) Color.parseColor("#94A3B8") else Color.BLACK)
             textSize = 12f
             gravity = Gravity.CENTER
@@ -2897,9 +2841,6 @@ class FloatingBubbleService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        try {
-            com.orca.orcaauto.domain.voice.VoiceBriefingManager.getInstance(this).stop()
-        } catch (_: Exception) {}
         serviceScope.cancel()
         bubbleLifecycleHandler.removeCallbacks(toState2Runnable)
         bubbleLifecycleHandler.removeCallbacks(toState3Runnable)

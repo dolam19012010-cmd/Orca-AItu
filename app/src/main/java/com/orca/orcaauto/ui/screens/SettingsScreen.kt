@@ -55,7 +55,6 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Key
-import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Public
@@ -93,7 +92,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -130,10 +128,7 @@ import com.orca.orcaauto.data.remote.ApiKeyConfig
 import com.orca.orcaauto.data.remote.ApiDebugLogManager
 import com.orca.orcaauto.data.remote.KeyTestReport
 import com.orca.orcaauto.data.remote.UniversalAiClient
-import com.orca.orcaauto.domain.prompt.AiLanguage
 import com.orca.orcaauto.domain.prompt.PromptPersona
-import com.orca.orcaauto.ui.locale.AppLanguage
-import com.orca.orcaauto.ui.locale.LocalAppStrings
 import com.orca.orcaauto.service.FloatingBubbleService
 import com.orca.orcaauto.service.OemSurvivalHelper
 import com.orca.orcaauto.ui.components.MultiSessionManagementSection
@@ -186,10 +181,7 @@ private fun SettingsCategoryCard(
             .fillMaxWidth()
             .border(
                 1.dp,
-                if (isExpanded) {
-                    if (iconBgColor == Color(0xFF27272A) || iconBgColor == SurfaceVariantDark || iconBgColor == BackgroundDark) AccentCyan.copy(alpha = 0.5f)
-                    else iconBgColor.copy(alpha = 0.5f)
-                } else GlassBorder,
+                if (isExpanded) iconBgColor.copy(alpha = 0.5f) else GlassBorder,
                 RoundedCornerShape(16.dp)
             ),
         shape = RoundedCornerShape(16.dp),
@@ -219,7 +211,7 @@ private fun SettingsCategoryCard(
                         Icon(
                             imageVector = icon,
                             contentDescription = null,
-                            tint = if (iconBgColor == PrimaryIndigo || iconBgColor == Color.White) BackgroundDark else iconTint,
+                            tint = iconTint,
                             modifier = Modifier.size(18.dp)
                         )
                     }
@@ -265,10 +257,7 @@ private fun SettingsCategoryCard(
                     Icon(
                         imageVector = Icons.Default.ExpandMore,
                         contentDescription = if (isExpanded) "Thu gọn" else "Mở rộng",
-                        tint = if (isExpanded) {
-                            if (iconBgColor == Color(0xFF27272A) || iconBgColor == SurfaceVariantDark || iconBgColor == BackgroundDark) AccentCyan
-                            else iconBgColor
-                        } else TextMutedDark,
+                        tint = if (isExpanded) iconBgColor else TextMutedDark,
                         modifier = Modifier.rotate(rotationState)
                     )
                 }
@@ -579,28 +568,6 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
             }
         }
 
-        val strings = LocalAppStrings.current
-        val appLanguage by preferences.appLanguageFlow.collectAsState()
-        val aiLanguage by preferences.aiLanguageFlow.collectAsState()
-
-        // Category 11: Ngôn Ngữ & Bản Địa Hóa (Language & AI Localization)
-        SettingsCategoryCard(
-            isExpanded = expandedSectionIndex == 11,
-            onToggle = { expandedSectionIndex = if (expandedSectionIndex == 11) null else 11 },
-            icon = Icons.Default.Language,
-            iconBgColor = Color(0xFF06B6D4),
-            title = strings.catLanguageTitle,
-            subtitle = "${appLanguage.displayName} • ${aiLanguage.getDisplayName(appLanguage)}",
-            badgeText = "${appLanguage.code.uppercase()} | ${aiLanguage.code.uppercase()}"
-        ) {
-            LanguageConfigSection(
-                appLanguage = appLanguage,
-                aiLanguage = aiLanguage,
-                onAppLanguageChange = { preferences.setAppLanguage(it) },
-                onAiLanguageChange = { preferences.setAiLanguage(it) }
-            )
-        }
-
         // Category 0: Ứng dụng quét thông báo
         SettingsCategoryCard(
             isExpanded = expandedSectionIndex == 0,
@@ -748,7 +715,7 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
             isExpanded = expandedSectionIndex == 3,
             onToggle = { expandedSectionIndex = if (expandedSectionIndex == 3) null else 3 },
             icon = Icons.Default.Psychology,
-            iconBgColor = Color(0xFF8B5CF6),
+            iconBgColor = Color(0xFF27272A),
             title = "Phong C\u00E1ch V\u0103n Phong AI",
             subtitle = "Chu \u0111\u00E1o, Nghi\u00EAm t\u00FAc, T\u1ED1i gi\u1EA3n, H\u00F3m h\u1EC9nh...",
             badgeText = "${currentSessionPersona.title} (${currentSession.name})"
@@ -809,10 +776,7 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
                         onCheckedChange = { preferences.setRecentSummaryContextEnabled(it) },
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = BackgroundDark,
-                            checkedTrackColor = PrimaryIndigo,
-                            uncheckedThumbColor = TextMutedDark,
-                            uncheckedTrackColor = SurfaceDark,
-                            uncheckedBorderColor = CardBorder
+                            checkedTrackColor = PrimaryIndigo
                         )
                     )
                 }
@@ -846,10 +810,7 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
                         onCheckedChange = { preferences.setLongTermTasksContextEnabled(it) },
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = BackgroundDark,
-                            checkedTrackColor = PrimaryIndigo,
-                            uncheckedThumbColor = TextMutedDark,
-                            uncheckedTrackColor = SurfaceDark,
-                            uncheckedBorderColor = CardBorder
+                            checkedTrackColor = PrimaryIndigo
                         )
                     )
                 }
@@ -887,10 +848,7 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
                         },
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = BackgroundDark,
-                            checkedTrackColor = PrimaryIndigo,
-                            uncheckedThumbColor = TextMutedDark,
-                            uncheckedTrackColor = SurfaceDark,
-                            uncheckedBorderColor = CardBorder
+                            checkedTrackColor = PrimaryIndigo
                         )
                     )
                 }
@@ -939,7 +897,7 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
             isExpanded = expandedSectionIndex == 6,
             onToggle = { expandedSectionIndex = if (expandedSectionIndex == 6) null else 6 },
             icon = Icons.Default.Visibility,
-            iconBgColor = AccentCyan,
+            iconBgColor = Color(0xFF27272A),
             title = "Bong Bóng Chat Nổi AItu",
             subtitle = "Chu trình 3 trạng thái thông minh & Đánh thức chạm đúp cạnh màn hình",
             badgeText = "3 Trạng thái",
@@ -984,7 +942,7 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
             isExpanded = expandedSectionIndex == 8,
             onToggle = { expandedSectionIndex = if (expandedSectionIndex == 8) null else 8 },
             icon = Icons.Default.Public,
-            iconBgColor = Color(0xFF38BDF8),
+            iconBgColor = Color(0xFF27272A),
             title = "Múi Giờ & Sao Lưu Dữ Liệu",
             subtitle = "Múi giờ hệ thống AI, Sao lưu & Khôi phục JSON",
             badgeText = userTimezone
@@ -1096,16 +1054,13 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
                         value = newHourInput,
                         onValueChange = { newHourInput = it },
                         singleLine = true,
-                        placeholder = { Text("08:00", color = TextMutedDark) },
+                        placeholder = { Text("08:00") },
                         modifier = Modifier.fillMaxWidth(),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = PrimaryIndigo,
                             unfocusedBorderColor = CardBorder,
                             focusedTextColor = TextPrimaryDark,
-                            unfocusedTextColor = TextPrimaryDark,
-                            focusedPlaceholderColor = TextMutedDark,
-                            unfocusedPlaceholderColor = TextMutedDark,
-                            cursorColor = AccentCyan
+                            unfocusedTextColor = TextPrimaryDark
                         )
                     )
                 }
@@ -1172,10 +1127,7 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
                             focusedBorderColor = PrimaryIndigo,
                             unfocusedBorderColor = CardBorder,
                             focusedTextColor = TextPrimaryDark,
-                            unfocusedTextColor = TextPrimaryDark,
-                            focusedLabelColor = AccentCyan,
-                            unfocusedLabelColor = TextSecondaryDark,
-                            cursorColor = AccentCyan
+                            unfocusedTextColor = TextPrimaryDark
                         )
                     )
 
@@ -1346,10 +1298,7 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
                             focusedBorderColor = PrimaryIndigo,
                             unfocusedBorderColor = CardBorder,
                             focusedTextColor = TextPrimaryDark,
-                            unfocusedTextColor = TextPrimaryDark,
-                            focusedPlaceholderColor = TextMutedDark,
-                            unfocusedPlaceholderColor = TextMutedDark,
-                            cursorColor = AccentCyan
+                            unfocusedTextColor = TextPrimaryDark
                         )
                     )
                 }
@@ -1481,7 +1430,7 @@ private fun MultiKeyPoolSection(
                 onValueChange = { inputKey = it },
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("Dán API Key (Gemini, Groq, DeepSeek, v.v.)") },
-                placeholder = { Text("AIzaSy... hoặc gsk_... hoặc sk-...", color = TextMutedDark) },
+                placeholder = { Text("AIzaSy... hoặc gsk_... hoặc sk-...") },
                 singleLine = true,
                 visualTransformation = if (isKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(
@@ -1502,12 +1451,7 @@ private fun MultiKeyPoolSection(
                     focusedBorderColor = PrimaryIndigo,
                     unfocusedBorderColor = CardBorder,
                     focusedTextColor = TextPrimaryDark,
-                    unfocusedTextColor = TextPrimaryDark,
-                    focusedLabelColor = AccentCyan,
-                    unfocusedLabelColor = TextSecondaryDark,
-                    focusedPlaceholderColor = TextMutedDark,
-                    unfocusedPlaceholderColor = TextMutedDark,
-                    cursorColor = AccentCyan
+                    unfocusedTextColor = TextPrimaryDark
                 )
             )
 
@@ -1727,7 +1671,7 @@ private fun PersonaStyleSection(
                                     Icon(
                                         imageVector = Icons.Default.Check,
                                         contentDescription = null,
-                                        tint = BackgroundDark,
+                                        tint = Color.White,
                                         modifier = Modifier.size(14.dp)
                                     )
                                 }
@@ -1800,10 +1744,7 @@ private fun FixedContextSection(
                     focusedBorderColor = PrimaryIndigo,
                     unfocusedBorderColor = CardBorder,
                     focusedTextColor = TextPrimaryDark,
-                    unfocusedTextColor = TextPrimaryDark,
-                    focusedPlaceholderColor = TextMutedDark,
-                    unfocusedPlaceholderColor = TextMutedDark,
-                    cursorColor = AccentCyan
+                    unfocusedTextColor = TextPrimaryDark
                 ),
                 shape = RoundedCornerShape(10.dp)
             )
@@ -2284,39 +2225,12 @@ private fun PermissionsSection(
     isOverlayGranted: Boolean
 ) {
     val context = LocalContext.current
-    val brandName = remember { OemSurvivalHelper.getDeviceBrandDisplayName() }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(
             text = "Trạng thái cấp các quyền hệ thống cốt lõi để trợ lý AI hoạt động bền bỉ trong nền.",
             style = MaterialTheme.typography.bodySmall,
             color = TextSecondaryDark
         )
-
-        Surface(
-            color = SurfaceVariantDark.copy(alpha = 0.5f),
-            shape = RoundedCornerShape(8.dp),
-            border = BorderStroke(1.dp, CardBorder)
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = "Thiết bị nhận diện:",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = TextSecondaryDark
-                )
-                Text(
-                    text = brandName,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = AccentCyan
-                )
-            }
-        }
 
         PermissionStatusRow(
             title = "Quyền đọc thông báo",
@@ -2351,23 +2265,6 @@ private fun PermissionsSection(
 
         OutlinedButton(
             onClick = {
-                val success = OemSurvivalHelper.forceRebindNotificationListener(context)
-                if (success) {
-                    Toast.makeText(context, "✓ Đã kích hoạt tái kết nối dịch vụ lắng nghe!", Toast.LENGTH_SHORT).show()
-                } else {
-                    Toast.makeText(context, "Thao tác tái kết nối thất bại", Toast.LENGTH_SHORT).show()
-                }
-            },
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(10.dp),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimaryDark),
-            border = BorderStroke(1.dp, CardBorder)
-        ) {
-            Text("⚡ Khôi Phục Kết Nối Lắng Nghe (Rebind)", fontSize = 12.sp, color = TextPrimaryDark)
-        }
-
-        OutlinedButton(
-            onClick = {
                 val intent = OemSurvivalHelper.getOemAutostartIntent(context)
                 if (intent != null) {
                     try {
@@ -2384,7 +2281,7 @@ private fun PermissionsSection(
             colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimaryDark),
             border = BorderStroke(1.dp, GlassBorder)
         ) {
-            Text("🚀 Cài Đặt Tự Khởi Chạy ($brandName)", fontSize = 12.sp, color = TextPrimaryDark)
+            Text("\uD83D\uDE80 C\u00E0i \u0110\u1EB7t T\u1EF1 Kh\u1EDFi Ch\u1EA1y C\u00F9ng M\u00E1y (Autostart)", fontSize = 12.sp, color = TextPrimaryDark)
         }
     }
 }
@@ -2561,10 +2458,7 @@ private fun TimezoneAndBackupSection(
                             focusedBorderColor = PrimaryIndigo,
                             unfocusedBorderColor = CardBorder,
                             focusedTextColor = TextPrimaryDark,
-                            unfocusedTextColor = TextPrimaryDark,
-                            focusedLabelColor = AccentCyan,
-                            unfocusedLabelColor = TextSecondaryDark,
-                            cursorColor = AccentCyan
+                            unfocusedTextColor = TextPrimaryDark
                         )
                     )
                 }
@@ -2810,10 +2704,7 @@ private fun KeyItemRow(
                 onCheckedChange = onToggle,
                 colors = SwitchDefaults.colors(
                     checkedThumbColor = BackgroundDark,
-                    checkedTrackColor = PrimaryIndigo,
-                    uncheckedThumbColor = TextMutedDark,
-                    uncheckedTrackColor = SurfaceDark,
-                    uncheckedBorderColor = CardBorder
+                    checkedTrackColor = PrimaryIndigo
                 )
             )
             IconButton(onClick = onDelete) {
@@ -2867,16 +2758,13 @@ private fun EditKeyModelDialog(
                     value = modelInput,
                     onValueChange = { modelInput = it },
                     singleLine = true,
-                    placeholder = { Text("Ví dụ: gemini-2.5-flash", color = TextMutedDark) },
+                    placeholder = { Text("Ví dụ: gemini-2.5-flash") },
                     modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = PrimaryIndigo,
                         unfocusedBorderColor = CardBorder,
                         focusedTextColor = TextPrimaryDark,
-                        unfocusedTextColor = TextPrimaryDark,
-                        focusedPlaceholderColor = TextMutedDark,
-                        unfocusedPlaceholderColor = TextMutedDark,
-                        cursorColor = AccentCyan
+                        unfocusedTextColor = TextPrimaryDark
                     )
                 )
 
@@ -3019,7 +2907,6 @@ private fun AppToggleRow(
             colors = SwitchDefaults.colors(
                 checkedThumbColor = BackgroundDark,
                 checkedTrackColor = PrimaryIndigo,
-                uncheckedThumbColor = TextMutedDark,
                 uncheckedTrackColor = SurfaceDark,
                 uncheckedBorderColor = CardBorder
             )
@@ -3112,7 +2999,7 @@ private fun AppChatFilterDialog(
                     RadioButton(
                         selected = selectedMode == ChatFilterMode.NORMAL_WITH_BLOCK,
                         onClick = { selectedMode = ChatFilterMode.NORMAL_WITH_BLOCK },
-                        colors = RadioButtonDefaults.colors(selectedColor = PrimaryIndigo, unselectedColor = TextMutedDark)
+                        colors = RadioButtonDefaults.colors(selectedColor = PrimaryIndigo)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Column {
@@ -3152,7 +3039,7 @@ private fun AppChatFilterDialog(
                     RadioButton(
                         selected = selectedMode == ChatFilterMode.STRICT_WHITELIST,
                         onClick = { selectedMode = ChatFilterMode.STRICT_WHITELIST },
-                        colors = RadioButtonDefaults.colors(selectedColor = AccentEmerald, unselectedColor = TextMutedDark)
+                        colors = RadioButtonDefaults.colors(selectedColor = AccentEmerald)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Column {
@@ -3246,10 +3133,7 @@ private fun AppChatFilterDialog(
                             focusedBorderColor = PrimaryIndigo,
                             unfocusedBorderColor = GlassBorderSubtle,
                             focusedContainerColor = SurfaceDark,
-                            unfocusedContainerColor = SurfaceDark,
-                            focusedPlaceholderColor = TextMutedDark,
-                            unfocusedPlaceholderColor = TextMutedDark,
-                            cursorColor = AccentCyan
+                            unfocusedContainerColor = SurfaceDark
                         ),
                         textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.5.sp)
                     )
@@ -3270,13 +3154,12 @@ private fun AppChatFilterDialog(
                     ) {
                         Text("+ Th\u00EAm", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = BackgroundDark)
                     }
-                }
-
                 Text(
                     text = "💡 Mẹo: Dùng dấu * ở 2 đầu (vd: *Dự Án*) để tìm bao quát bất kể icon. Gõ không có dấu * (vd: Chi) để chặn đích danh 1 người.",
                     color = TextMutedDark,
                     fontSize = 10.5.sp
                 )
+                }
 
                 val unaddedRecents = recentSenders.filter { !chatNamesList.contains(it) }
                 if (unaddedRecents.isNotEmpty()) {
@@ -3297,8 +3180,7 @@ private fun AppChatFilterDialog(
                                     onClick = { chatNamesList.add(recentName) },
                                     label = { Text("+ $recentName", fontSize = 11.5.sp, color = AccentCyan) },
                                     colors = SuggestionChipDefaults.suggestionChipColors(
-                                        containerColor = Color(0xFF131B2A),
-                                        labelColor = AccentCyan
+                                        containerColor = Color(0xFF131B2A)
                                     ),
                                     border = BorderStroke(
                                         1.dp,
@@ -3484,7 +3366,6 @@ private fun BubbleConfigSection(
                 colors = SwitchDefaults.colors(
                     checkedThumbColor = BackgroundDark,
                     checkedTrackColor = PrimaryIndigo,
-                    uncheckedThumbColor = TextMutedDark,
                     uncheckedTrackColor = SurfaceDark,
                     uncheckedBorderColor = CardBorder
                 )
@@ -3991,209 +3872,5 @@ private fun AppInfoRow(
             fontWeight = FontWeight.SemiBold,
             fontSize = 11.5.sp
         )
-    }
-}
-
-@Composable
-private fun LanguageConfigSection(
-    appLanguage: AppLanguage,
-    aiLanguage: AiLanguage,
-    onAppLanguageChange: (AppLanguage) -> Unit,
-    onAiLanguageChange: (AiLanguage) -> Unit
-) {
-    val strings = LocalAppStrings.current
-    val isEn = appLanguage == AppLanguage.ENGLISH
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        // 1. UI Language Selection
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Default.Language,
-                    contentDescription = null,
-                    tint = AccentCyan,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = strings.labelUiLanguage,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = TextPrimaryDark
-                )
-            }
-            Text(
-                text = strings.descUiLanguage,
-                style = MaterialTheme.typography.bodySmall,
-                color = TextSecondaryDark,
-                fontSize = 11.5.sp
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                // Vietnamese Pill
-                val isViSelected = appLanguage == AppLanguage.VIETNAMESE
-                Surface(
-                    onClick = { onAppLanguageChange(AppLanguage.VIETNAMESE) },
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(44.dp),
-                    shape = RoundedCornerShape(10.dp),
-                    color = if (isViSelected) PrimaryIndigo.copy(alpha = 0.2f) else SurfaceDark,
-                    border = BorderStroke(
-                        width = if (isViSelected) 1.5.dp else 1.dp,
-                        color = if (isViSelected) AccentCyan else CardBorder
-                    )
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxSize(),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("🇻🇳 ", fontSize = 16.sp)
-                        Text(
-                            text = "Tiếng Việt",
-                            color = if (isViSelected) AccentCyan else TextPrimaryDark,
-                            fontWeight = if (isViSelected) FontWeight.Bold else FontWeight.Medium,
-                            fontSize = 13.sp
-                        )
-                    }
-                }
-
-                // English Pill
-                val isEnSelected = appLanguage == AppLanguage.ENGLISH
-                Surface(
-                    onClick = { onAppLanguageChange(AppLanguage.ENGLISH) },
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(44.dp),
-                    shape = RoundedCornerShape(10.dp),
-                    color = if (isEnSelected) PrimaryIndigo.copy(alpha = 0.2f) else SurfaceDark,
-                    border = BorderStroke(
-                        width = if (isEnSelected) 1.5.dp else 1.dp,
-                        color = if (isEnSelected) AccentCyan else CardBorder
-                    )
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxSize(),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("🇬🇧 ", fontSize = 16.sp)
-                        Text(
-                            text = "English",
-                            color = if (isEnSelected) AccentCyan else TextPrimaryDark,
-                            fontWeight = if (isEnSelected) FontWeight.Bold else FontWeight.Medium,
-                            fontSize = 13.sp
-                        )
-                    }
-                }
-            }
-        }
-
-        HorizontalDivider(color = GlassBorderSubtle)
-
-        // 2. AI Output & Prompt Language Selection
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Default.Psychology,
-                    contentDescription = null,
-                    tint = Color(0xFF8B5CF6),
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = strings.labelAiLanguage,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = TextPrimaryDark
-                )
-            }
-            Text(
-                text = strings.descAiLanguage,
-                style = MaterialTheme.typography.bodySmall,
-                color = TextSecondaryDark,
-                fontSize = 11.5.sp
-            )
-
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(SurfaceDark, RoundedCornerShape(10.dp))
-                    .border(1.dp, CardBorder, RoundedCornerShape(10.dp))
-                    .padding(vertical = 4.dp)
-            ) {
-                AiLanguage.entries.forEach { option ->
-                    val isSelected = aiLanguage == option
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onAiLanguageChange(option) }
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        RadioButton(
-                            selected = isSelected,
-                            onClick = { onAiLanguageChange(option) },
-                            colors = RadioButtonDefaults.colors(
-                                selectedColor = AccentCyan,
-                                unselectedColor = TextMutedDark
-                            )
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Column {
-                            val flag = when (option) {
-                                AiLanguage.AUTO -> "🔄"
-                                AiLanguage.VIETNAMESE -> "🇻🇳"
-                                AiLanguage.ENGLISH -> "🇬🇧"
-                            }
-                            Text(
-                                text = "$flag ${option.getDisplayName(appLanguage)}",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                color = if (isSelected) AccentCyan else TextPrimaryDark,
-                                fontSize = 13.sp
-                            )
-                            val subdesc = when (option) {
-                                AiLanguage.AUTO -> if (isEn) "Automatically follows app display language" else "Tự động chọn ngôn ngữ giống với giao diện ứng dụng"
-                                AiLanguage.VIETNAMESE -> if (isEn) "Force Vietnamese prompts & Vietnamese task summaries" else "Bắt buộc viết prompt & xuất bản tóm tắt bằng tiếng Việt"
-                                AiLanguage.ENGLISH -> if (isEn) "Force English prompts & English task summaries" else "Bắt buộc viết prompt & xuất bản tóm tắt bằng tiếng Anh"
-                            }
-                            Text(
-                                text = subdesc,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = TextMutedDark,
-                                fontSize = 11.sp
-                            )
-                        }
-                    }
-                }
-            }
-
-            // Info Box Hint
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Color(0xFF131B2A), RoundedCornerShape(8.dp))
-                    .border(1.dp, AccentCyan.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
-                    .padding(10.dp)
-            ) {
-                Text(
-                    text = strings.langAiHint,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = AccentCyan,
-                    fontSize = 11.5.sp,
-                    lineHeight = 16.sp
-                )
-            }
-        }
     }
 }

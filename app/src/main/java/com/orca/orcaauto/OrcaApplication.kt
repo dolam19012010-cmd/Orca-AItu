@@ -1,8 +1,6 @@
 package com.orca.orcaauto
 
-import android.app.Activity
 import android.app.Application
-import android.os.Bundle
 import android.util.Log
 import com.orca.orcaauto.data.local.AppDatabase
 import com.orca.orcaauto.data.preferences.UserPreferences
@@ -18,40 +16,18 @@ class OrcaApplication : Application() {
         super.onCreate()
         Log.i(TAG, "OrcaApplication initializing...")
 
-        // Theo dõi trạng thái màn hình của app (đang mở hay đang chạy ngầm)
-        registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
-            private var resumedActivities = 0
-            override fun onActivityResumed(activity: Activity) {
-                resumedActivities++
-                isAppInForeground = resumedActivities > 0
-            }
-            override fun onActivityPaused(activity: Activity) {
-                resumedActivities--
-                isAppInForeground = resumedActivities > 0
-            }
-            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
-            override fun onActivityStarted(activity: Activity) {}
-            override fun onActivityStopped(activity: Activity) {}
-            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
-            override fun onActivityDestroyed(activity: Activity) {}
-        })
-
         // Global crash guard to prevent silent termination
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             Log.e(TAG, "FATAL CRASH trên luồng ${thread.name}: ${throwable.message}", throwable)
             try {
-                // CHỈ mở màn hình CrashActivity nếu người dùng ĐANG MỞ APP trực tiếp.
-                // Nếu app đang chạy dịch vụ ngầm (người dùng đang chơi game, lướt web), TUYỆT ĐỐI KHÔNG cướp màn hình!
-                if (isAppInForeground) {
-                    val intent = android.content.Intent(this, com.orca.orcaauto.ui.CrashActivity::class.java).apply {
-                        putExtra(com.orca.orcaauto.ui.CrashActivity.EXTRA_ERROR_TYPE, throwable.javaClass.name)
-                        putExtra(com.orca.orcaauto.ui.CrashActivity.EXTRA_ERROR_MSG, throwable.message ?: "Không có chi tiết")
-                        putExtra(com.orca.orcaauto.ui.CrashActivity.EXTRA_ERROR_STACK, throwable.stackTraceToString())
-                        addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK)
-                    }
-                    startActivity(intent)
+                val intent = android.content.Intent(this, com.orca.orcaauto.ui.CrashActivity::class.java).apply {
+                    putExtra(com.orca.orcaauto.ui.CrashActivity.EXTRA_ERROR_TYPE, throwable.javaClass.name)
+                    putExtra(com.orca.orcaauto.ui.CrashActivity.EXTRA_ERROR_MSG, throwable.message ?: "Không có chi tiết")
+                    putExtra(com.orca.orcaauto.ui.CrashActivity.EXTRA_ERROR_STACK, throwable.stackTraceToString())
+                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK)
                 }
+                startActivity(intent)
                 android.os.Process.killProcess(android.os.Process.myPid())
                 System.exit(10)
             } catch (e: Throwable) {
@@ -81,8 +57,5 @@ class OrcaApplication : Application() {
 
     companion object {
         private const val TAG = "OrcaApplication"
-        @Volatile
-        var isAppInForeground: Boolean = false
-            private set
     }
 }

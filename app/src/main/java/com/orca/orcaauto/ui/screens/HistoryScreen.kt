@@ -60,10 +60,6 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.PendingActions
 import androidx.compose.material.icons.filled.Schedule
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.platform.LocalHapticFeedback
-import com.orca.orcaauto.domain.voice.VoiceBriefingManager
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -115,7 +111,6 @@ import com.orca.orcaauto.domain.alarm.SystemAlarmHelper
 import com.orca.orcaauto.domain.filter.SummaryParser
 import com.orca.orcaauto.domain.filter.TaskItem
 import com.orca.orcaauto.domain.filter.TaskStatus
-import com.orca.orcaauto.ui.locale.LocalAppStrings
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -145,14 +140,7 @@ fun HistoryScreen() {
     val database = remember { AppDatabase.getDatabase(context) }
     val preferences = remember { com.orca.orcaauto.data.preferences.UserPreferences.getInstance(context) }
     val wallpaperPath by preferences.wallpaperPathFlow.collectAsState()
-    val voiceManager = remember { VoiceBriefingManager.getInstance(context) }
     var selectedTab by remember { mutableIntStateOf(0) }
-
-    androidx.compose.runtime.DisposableEffect(Unit) {
-        onDispose {
-            voiceManager.stop()
-        }
-    }
 
     val shiftSummaries by database.summaryDao().getAllSummariesFlow().collectAsState(initial = emptyList())
     val recentNotifications by database.notificationDao().getRecentNotificationsFlow().collectAsState(initial = emptyList())
@@ -175,8 +163,6 @@ fun HistoryScreen() {
     }
 
     var showClearConfirmDialog by remember { mutableStateOf(false) }
-    val strings = LocalAppStrings.current
-    val isEn = strings.navHistory == "History & Tasks"
 
     Column(
         modifier = Modifier
@@ -186,13 +172,13 @@ fun HistoryScreen() {
     ) {
         // Title Header: Clean & Modern
         Text(
-            text = if (isEn) "AI Memory & Tasks" else "Trí nhớ AI",
+            text = "Trí nhớ AI",
             style = MaterialTheme.typography.titleLarge,
             color = TextPrimaryDark,
             fontWeight = FontWeight.Bold
         )
         Text(
-            text = if (isEn) "Shift summaries & automated task dispatch" else "Báo cáo ca & Nhiệm vụ tự động",
+            text = "Báo cáo ca & Nhiệm vụ tự động",
             style = MaterialTheme.typography.bodySmall,
             color = TextSecondaryDark
         )
@@ -215,12 +201,12 @@ fun HistoryScreen() {
             Tab(
                 selected = selectedTab == 0,
                 onClick = { selectedTab = 0 },
-                text = { Text("${strings.tabSummaries} (${shiftSummaries.size})", fontWeight = FontWeight.Medium, fontSize = 13.sp) }
+                text = { Text("Tóm Tắt Ca (${shiftSummaries.size})", fontWeight = FontWeight.Medium, fontSize = 13.sp) }
             )
             Tab(
                 selected = selectedTab == 1,
                 onClick = { selectedTab = 1 },
-                text = { Text("${strings.tabRawMessages} (${recentNotifications.size})", fontWeight = FontWeight.Medium, fontSize = 13.sp) }
+                text = { Text("Tin Đã Ghi (${recentNotifications.size})", fontWeight = FontWeight.Medium, fontSize = 13.sp) }
             )
         }
 
@@ -458,7 +444,6 @@ fun HistoryScreen() {
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TwoPartSummaryCard(
     item: SummaryHistoryEntity,
@@ -472,14 +457,6 @@ fun TwoPartSummaryCard(
     var taskToConfirmCancel by remember { mutableStateOf<Pair<TaskItem, String>?>(null) }
     var taskToConfirmRestore by remember { mutableStateOf<Pair<TaskItem, String>?>(null) }
     var taskToConfirmUncomplete by remember { mutableStateOf<Pair<TaskItem, String>?>(null) }
-
-    val voiceManager = remember { VoiceBriefingManager.getInstance(context) }
-    val isSpeaking by voiceManager.isSpeakingFlow.collectAsState()
-    val currentSpeakingId by voiceManager.currentSummaryIdFlow.collectAsState()
-    val isThisCardSpeaking = isSpeaking && currentSpeakingId == item.id
-    val haptic = LocalHapticFeedback.current
-    val strings = LocalAppStrings.current
-    val isEn = strings.navHistory == "History & Tasks"
 
     fun getAlarmInfoForTask(task: TaskItem): Pair<String, SmartAlarmEntity?> {
         val parsedDt = SystemAlarmHelper.parseDateTimeFromText(task.deadline)
@@ -594,81 +571,29 @@ fun TwoPartSummaryCard(
                     )
                 }
             } else {
-                // ================= PHẦN 1: GÓC NHÌN PHẢN BIỆN & LỜI KHUYÊN (Nhấn giữ để nghe giọng đọc) =================
+                // ================= PHẦN 1: GÓC NHÌN PHẢN BIỆN & LỜI KHUYÊN =================
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .border(
-                            width = 1.dp,
-                            color = if (isThisCardSpeaking) AccentCyan else PrimaryIndigo.copy(alpha = 0.35f),
-                            shape = RoundedCornerShape(12.dp)
-                        )
-                        .combinedClickable(
-                            onClick = {
-                                if (isThisCardSpeaking) {
-                                    voiceManager.stop()
-                                }
-                            },
-                            onLongClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                voiceManager.speakSummary(item.id, parsed, isEnglish = isEn)
-                            }
-                        ),
+                        .border(1.dp, PrimaryIndigo.copy(alpha = 0.35f), RoundedCornerShape(12.dp)),
                     shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (isThisCardSpeaking) GlassSurfaceInner else GlassSurfaceCard
-                    )
+                    colors = CardDefaults.cardColors(containerColor = GlassSurfaceCard)
                 ) {
                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    imageVector = Icons.Default.Lightbulb,
-                                    contentDescription = null,
-                                    tint = AccentCyan,
-                                    modifier = Modifier.size(15.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "💡 Lời khuyên & Lưu ý",
-                                    color = AccentCyan,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-
-                            if (isThisCardSpeaking) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier
-                                        .background(AccentCyan.copy(alpha = 0.2f), RoundedCornerShape(10.dp))
-                                        .padding(horizontal = 8.dp, vertical = 3.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.AutoMirrored.Filled.VolumeUp,
-                                        contentDescription = "Đang đọc",
-                                        tint = AccentCyan,
-                                        modifier = Modifier.size(13.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        text = "Đang đọc (Chạm dừng)",
-                                        color = AccentCyan,
-                                        fontSize = 10.5.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                            } else {
-                                Text(
-                                    text = "Nhấn giữ để nghe 🎧",
-                                    color = TextMutedDark,
-                                    fontSize = 10.5.sp
-                                )
-                            }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Lightbulb,
+                                contentDescription = null,
+                                tint = AccentCyan,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "💡 Lời khuyên & Lưu ý",
+                                color = AccentCyan,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold
+                            )
                         }
 
                         if (parsed.conciseAdvice.isNotBlank()) {
@@ -731,7 +656,7 @@ fun TwoPartSummaryCard(
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = if (isEn) "📋 Tasks & Action Plans" else "📋 Nhiệm vụ & Kế hoạch",
+                                text = "📋 Nhiệm vụ & Kế hoạch",
                                 color = AccentEmerald,
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold
@@ -969,11 +894,9 @@ private fun SwipeableTaskItemRow(
     val isCancelled = alarmEntity?.status == SmartAlarmStatus.CANCELLED
     val isAlarmActive = alarmEntity?.status == SmartAlarmStatus.ACTIVE
     val context = LocalContext.current
-    val strings = LocalAppStrings.current
-    val isEn = strings.navHistory == "History & Tasks"
 
     val parsedDt = remember(task.deadline) { SystemAlarmHelper.parseDateTimeFromText(task.deadline) }
-    val proposedTimeLabel = parsedDt?.timeLabel ?: (if (isEn) "Alarm" else "Hẹn giờ")
+    val proposedTimeLabel = parsedDt?.timeLabel ?: "Hẹn giờ"
 
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { dismissValue ->
@@ -1013,8 +936,8 @@ private fun SwipeableTaskItemRow(
                 else -> null
             }
             val text = when (direction) {
-                SwipeToDismissBoxValue.StartToEnd -> if (isEn) "Complete ✓" else "Hoàn thành ✓"
-                SwipeToDismissBoxValue.EndToStart -> if (isEn) "Cancel task ✕" else "Hủy việc ✕"
+                SwipeToDismissBoxValue.StartToEnd -> "Hoàn thành ✓"
+                SwipeToDismissBoxValue.EndToStart -> "Hủy việc ✕"
                 else -> ""
             }
 
@@ -1095,7 +1018,7 @@ private fun SwipeableTaskItemRow(
                             .background(AccentRose.copy(alpha = 0.15f), RoundedCornerShape(4.dp))
                             .padding(horizontal = 6.dp, vertical = 2.dp)
                     ) {
-                        Text(if (isEn) "Cancelled" else "Đã hủy", color = AccentRose, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Text("Đã hủy", color = AccentRose, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -1159,11 +1082,7 @@ private fun SwipeableTaskItemRow(
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = if (isAlarmActive) {
-                                    alarmEntity?.targetDateLabel?.let { "✓ $it" } ?: (if (isEn) "✓ Set $proposedTimeLabel" else "✓ Đã đặt $proposedTimeLabel")
-                                } else {
-                                    if (isEn) "🔔 Set $proposedTimeLabel" else "🔔 Đặt $proposedTimeLabel"
-                                },
+                                text = if (isAlarmActive) (alarmEntity?.targetDateLabel?.let { "✓ $it" } ?: "✓ Đã đặt $proposedTimeLabel") else "🔔 Đặt $proposedTimeLabel",
                                 color = pillColor,
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
@@ -1284,13 +1203,8 @@ fun TaskAlarmConfigDialog(
                         maxLines = 3,
                         shape = RoundedCornerShape(8.dp),
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = TextPrimaryDark,
-                            unfocusedTextColor = TextPrimaryDark,
-                            cursorColor = AccentCyan,
                             focusedBorderColor = AccentCyan,
                             unfocusedBorderColor = CardBorder,
-                            focusedPlaceholderColor = TextMutedDark,
-                            unfocusedPlaceholderColor = TextMutedDark,
                             focusedContainerColor = SurfaceVariantDark.copy(alpha = 0.5f),
                             unfocusedContainerColor = SurfaceVariantDark.copy(alpha = 0.3f)
                         )
@@ -1315,11 +1229,7 @@ fun TaskAlarmConfigDialog(
                     Checkbox(
                         checked = isAlarmEnabled,
                         onCheckedChange = { isAlarmEnabled = it },
-                        colors = CheckboxDefaults.colors(
-                            checkedColor = AccentCyan,
-                            checkmarkColor = BackgroundDark,
-                            uncheckedColor = TextMutedDark
-                        )
+                        colors = CheckboxDefaults.colors(checkedColor = AccentCyan)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Column {
@@ -1511,7 +1421,7 @@ fun TaskAlarmConfigDialog(
                                                         shape = RoundedCornerShape(8.dp)
                                                     )
                                                     .background(
-                                                        color = if (isSelected) PrimaryIndigo.copy(alpha = 0.25f) else SurfaceVariantDark.copy(alpha = 0.4f),
+                                                        color = if (isSelected) PrimaryIndigo.copy(alpha = 0.35f) else SurfaceVariantDark.copy(alpha = 0.4f),
                                                         shape = RoundedCornerShape(8.dp)
                                                     )
                                                     .clickable { cascadeIntervalMinutes = interval }
@@ -1520,7 +1430,7 @@ fun TaskAlarmConfigDialog(
                                             ) {
                                                 Text(
                                                     text = "${interval}p",
-                                                    color = if (isSelected) AccentCyan else TextPrimaryDark,
+                                                    color = if (isSelected) Color.White else TextPrimaryDark,
                                                     fontSize = 11.sp,
                                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                                                 )

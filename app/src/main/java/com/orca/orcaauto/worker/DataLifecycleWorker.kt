@@ -8,8 +8,6 @@ import com.orca.orcaauto.data.local.AppDatabase
 import com.orca.orcaauto.data.local.DailyMemoryEntity
 import com.orca.orcaauto.data.preferences.UserPreferences
 import com.orca.orcaauto.data.remote.UniversalAiClient
-import com.orca.orcaauto.service.NotificationMonitorService
-import com.orca.orcaauto.service.OemSurvivalHelper
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -103,16 +101,6 @@ class DataLifecycleWorker(
             Log.i(TAG, "Đã dọn dẹp các bản tóm tắt ca cũ hơn 30 ngày.")
         } catch (e: Exception) {
             Log.e(TAG, "Lỗi khi dọn dẹp tóm tắt 30 ngày: ${e.message}", e)
-        }
-
-        // 5. OEM Watchdog: Tự động hồi phục kết nối NotificationListenerService nếu bị OEM ngầm ngắt
-        try {
-            if (OemSurvivalHelper.isNotificationAccessGranted(applicationContext) && !NotificationMonitorService.isConnected) {
-                Log.w(TAG, "Watchdog phát hiện NotificationListenerService mất kết nối ngầm. Đang kích hoạt Component Toggle...")
-                OemSurvivalHelper.forceRebindNotificationListener(applicationContext)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Lỗi trong OEM Watchdog: ${e.message}", e)
         }
 
         return Result.success()

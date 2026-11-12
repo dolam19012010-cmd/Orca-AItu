@@ -59,7 +59,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.orca.orcaauto.R
-import com.orca.orcaauto.ui.theme.AccentAmber
 import com.orca.orcaauto.ui.theme.AccentCyan
 import com.orca.orcaauto.ui.theme.AccentEmerald
 import com.orca.orcaauto.ui.theme.AccentRose
@@ -257,7 +256,7 @@ fun OnboardingGuideDialog(
                         isExpanded = expandedSectionIndex == 3,
                         onToggle = { expandedSectionIndex = if (expandedSectionIndex == 3) null else 3 },
                         icon = Icons.Default.Alarm,
-                        iconBgColor = AccentAmber,
+                        iconBgColor = PrimaryIndigo,
                         title = "Báo thức thông minh & Lịch",
                         subtitle = "Chuông dồn x1/x2/x3, tự hủy báo thức quá hạn & Google Lịch"
                     ) {
@@ -280,7 +279,7 @@ fun OnboardingGuideDialog(
                         isExpanded = expandedSectionIndex == 4,
                         onToggle = { expandedSectionIndex = if (expandedSectionIndex == 4) null else 4 },
                         icon = Icons.Default.ChatBubbleOutline,
-                        iconBgColor = AccentCyan,
+                        iconBgColor = Color(0xFF27272A),
                         title = "Bong bóng chat & Lệnh trực tiếp",
                         subtitle = "Thanh nhập lệnh sát cạnh dưới, hỏi đáp AI tức thì"
                     ) {
@@ -421,9 +420,7 @@ private fun ExpandableGuideSection(
             .background(SurfaceVariantDark.copy(alpha = 0.40f), RoundedCornerShape(12.dp))
             .border(
                 1.dp,
-                if (isExpanded) {
-                    if (iconBgColor == Color(0xFF27272A) || iconBgColor == SurfaceVariantDark) AccentCyan.copy(alpha = 0.5f) else iconBgColor.copy(alpha = 0.45f)
-                } else GlassBorderSubtle,
+                if (isExpanded) iconBgColor.copy(alpha = 0.45f) else GlassBorderSubtle,
                 RoundedCornerShape(12.dp)
             )
     ) {
@@ -445,7 +442,7 @@ private fun ExpandableGuideSection(
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
-                    tint = if (iconBgColor == PrimaryIndigo || iconBgColor == Color.White) BackgroundDark else Color.White,
+                    tint = Color.White,
                     modifier = Modifier.size(18.dp)
                 )
             }
@@ -457,9 +454,7 @@ private fun ExpandableGuideSection(
                     text = title,
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Bold,
-                    color = if (isExpanded) {
-                        if (iconBgColor == Color(0xFF27272A) || iconBgColor == SurfaceVariantDark || iconBgColor == PrimaryIndigo || iconBgColor == Color.White) AccentCyan else iconBgColor
-                    } else TextPrimaryDark
+                    color = if (isExpanded) iconBgColor else TextPrimaryDark
                 )
                 Spacer(modifier = Modifier.height(1.dp))
                 Text(
@@ -474,9 +469,7 @@ private fun ExpandableGuideSection(
             Icon(
                 imageVector = Icons.Default.KeyboardArrowDown,
                 contentDescription = if (isExpanded) "Thu gọn" else "Mở rộng",
-                tint = if (isExpanded) {
-                    if (iconBgColor == Color(0xFF27272A) || iconBgColor == SurfaceVariantDark || iconBgColor == PrimaryIndigo || iconBgColor == Color.White) AccentCyan else iconBgColor
-                } else TextMutedDark,
+                tint = if (isExpanded) iconBgColor else TextMutedDark,
                 modifier = Modifier
                     .size(20.dp)
                     .rotate(rotationAngle)

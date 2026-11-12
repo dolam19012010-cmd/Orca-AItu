@@ -33,9 +33,8 @@ object SummaryNotificationHelper {
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         createReportChannel(notificationManager)
 
-        val isEn = com.orca.orcaauto.data.preferences.UserPreferences.getInstance(context).getAppLanguage() == com.orca.orcaauto.ui.locale.AppLanguage.ENGLISH
         val urgentCount = parsed.tasksToDo.size
-        val title = if (isEn) "🎯 AI Report [$timeSlot]: $urgentCount Tasks To-Do!" else "🎯 Báo Cáo AI [$timeSlot]: $urgentCount Việc Cần Làm!"
+        val title = "\uD83C\uDFAF B\u00E1o C\u00E1o AI [$timeSlot]: $urgentCount Vi\u1EC7c C\u1EA7n L\u00E0m!"
 
         // 1. PendingIntent for opening History in MainActivity
         val contentIntent = Intent(context, MainActivity::class.java).apply {
@@ -74,7 +73,7 @@ object SummaryNotificationHelper {
                 append("💡 $cleanAdvice\n\n")
             }
             if (parsed.tasksToDo.isNotEmpty()) {
-                append(if (isEn) "🔴 To-Do Tasks (${parsed.tasksToDo.size}):\n" else "🔴 Việc Cần Làm (${parsed.tasksToDo.size}):\n")
+                append("🔴 Việc Cần Làm (${parsed.tasksToDo.size}):\n")
                 parsed.tasksToDo.take(3).forEach { task ->
                     append("• ${task.title}")
                     if (task.deadline.isNotBlank()) append(" (${task.deadline})")
@@ -82,17 +81,17 @@ object SummaryNotificationHelper {
                 }
             }
             if (parsed.tasksPlanned.isNotEmpty()) {
-                append(if (isEn) "\n🟡 Planned (${parsed.tasksPlanned.size}):\n" else "\n🟡 Kế Hoạch (${parsed.tasksPlanned.size}):\n")
+                append("\n🟡 Kế Hoạch (${parsed.tasksPlanned.size}):\n")
                 parsed.tasksPlanned.take(2).forEach { task ->
                     append("• ${task.title}\n")
                 }
             }
-        }.ifBlank { if (isEn) "Summarized $messageCount messages in shift." else "Đã tóm tắt $messageCount tin nhắn trong ca." }
+        }.ifBlank { "Đã tóm tắt $messageCount tin nhắn trong ca." }
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
-            .setContentText(cleanAdvice.ifBlank { if (isEn) "Summarized $messageCount messages in shift." else "Đã tóm tắt $messageCount tin nhắn trong ca." })
+            .setContentText(cleanAdvice.ifBlank { "Đã tóm tắt $messageCount tin nhắn trong ca." })
             .setStyle(NotificationCompat.BigTextStyle().bigText(bigBodyText))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
@@ -102,12 +101,12 @@ object SummaryNotificationHelper {
             .setContentIntent(contentPendingIntent)
             .addAction(
                 R.drawable.ic_notification,
-                if (isEn) "Open App" else "Xem Ứng Dụng",
+                "Xem Ứng Dụng",
                 contentPendingIntent
             )
             .addAction(
                 R.drawable.ic_notification,
-                if (isEn) "Floating Bubble" else "Bong Bóng Nổi",
+                "Bong Bóng Nổi",
                 bubblePendingIntent
             )
             .build()

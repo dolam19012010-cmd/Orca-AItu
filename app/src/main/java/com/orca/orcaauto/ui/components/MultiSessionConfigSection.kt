@@ -338,10 +338,7 @@ fun SessionConfigDialog(
                         focusedLabelColor = AccentCyan,
                         unfocusedLabelColor = Color(0xFFA1A1AA),
                         focusedBorderColor = AccentCyan,
-                        unfocusedBorderColor = CardBorder,
-                        focusedPlaceholderColor = TextMutedDark,
-                        unfocusedPlaceholderColor = TextMutedDark,
-                        cursorColor = AccentCyan
+                        unfocusedBorderColor = CardBorder
                     )
                 )
 
@@ -422,10 +419,7 @@ fun SessionConfigDialog(
                             focusedTextColor = Color.White,
                             unfocusedTextColor = Color.White,
                             focusedBorderColor = AccentCyan,
-                            unfocusedBorderColor = CardBorder,
-                            focusedPlaceholderColor = TextMutedDark,
-                            unfocusedPlaceholderColor = TextMutedDark,
-                            cursorColor = AccentCyan
+                            unfocusedBorderColor = CardBorder
                         )
                     )
                     Spacer(modifier = Modifier.width(6.dp))
@@ -647,10 +641,7 @@ fun SessionConfigDialog(
                         focusedLabelColor = AccentCyan,
                         unfocusedLabelColor = Color(0xFFA1A1AA),
                         focusedBorderColor = AccentCyan,
-                        unfocusedBorderColor = GlassBorderSubtle,
-                        focusedPlaceholderColor = TextMutedDark,
-                        unfocusedPlaceholderColor = TextMutedDark,
-                        cursorColor = AccentCyan
+                        unfocusedBorderColor = GlassBorderSubtle
                     )
                 )
 
@@ -680,10 +671,7 @@ fun SessionConfigDialog(
                         onCheckedChange = { isScheduled = it },
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = Color.White,
-                            checkedTrackColor = Color(0xFF2563EB),
-                            uncheckedThumbColor = Color(0xFFA1A1AA),
-                            uncheckedTrackColor = Color(0xFF141418),
-                            uncheckedBorderColor = Color(0x33FFFFFF)
+                            checkedTrackColor = Color(0xFF2563EB)
                         )
                     )
                 }
@@ -714,10 +702,7 @@ fun SessionConfigDialog(
                         onCheckedChange = { autoCompleteOverdue = it },
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = Color.White,
-                            checkedTrackColor = Color(0xFF10B981),
-                            uncheckedThumbColor = Color(0xFFA1A1AA),
-                            uncheckedTrackColor = Color(0xFF141418),
-                            uncheckedBorderColor = Color(0x33FFFFFF)
+                            checkedTrackColor = Color(0xFF10B981)
                         )
                     )
                 }

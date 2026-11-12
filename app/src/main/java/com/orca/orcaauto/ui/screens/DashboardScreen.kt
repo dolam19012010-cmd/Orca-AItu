@@ -67,7 +67,6 @@ import com.orca.orcaauto.ui.theme.AccentCyan
 import com.orca.orcaauto.ui.theme.AccentEmerald
 import com.orca.orcaauto.ui.theme.AccentRose
 import com.orca.orcaauto.ui.theme.BackgroundDark
-import com.orca.orcaauto.ui.locale.LocalAppStrings
 import com.orca.orcaauto.ui.theme.CardBorder
 import com.orca.orcaauto.ui.theme.GlassBorder
 import com.orca.orcaauto.ui.theme.GlassSurfaceDark
@@ -177,7 +176,6 @@ fun DashboardScreen() {
 
 @Composable
 private fun DashboardHeader() {
-    val strings = LocalAppStrings.current
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically
@@ -203,13 +201,13 @@ private fun DashboardHeader() {
         Spacer(modifier = Modifier.width(12.dp))
         Column {
             Text(
-                text = strings.dashboardTitle,
+                text = "AItu Bảng Điều Khiển",
                 style = MaterialTheme.typography.titleLarge,
                 color = TextPrimaryDark,
                 fontWeight = FontWeight.Bold
             )
             Text(
-                text = strings.dashboardSubtitle,
+                text = "Trạng thái vận hành & Điều phối thông báo",
                 style = MaterialTheme.typography.bodyMedium,
                 color = TextSecondaryDark
             )
@@ -223,8 +221,6 @@ private fun ExecutiveQuickActionsCard(
     onTestAiClick: () -> Unit,
     onOpenBubbleClick: () -> Unit
 ) {
-    val strings = LocalAppStrings.current
-    val isEn = strings.navDashboard == "Dashboard"
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -237,7 +233,7 @@ private fun ExecutiveQuickActionsCard(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(
-                text = if (isEn) "Quick Actions" else "Thao Tác Nhanh",
+                text = "Thao Tác Nhanh",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = TextPrimaryDark
@@ -265,11 +261,11 @@ private fun ExecutiveQuickActionsCard(
                             strokeWidth = 2.dp
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text(strings.processing, fontSize = 12.sp, color = BackgroundDark, fontWeight = FontWeight.Bold)
+                        Text("Đang xử lý...", fontSize = 12.sp, color = BackgroundDark, fontWeight = FontWeight.Bold)
                     } else {
                         Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp), tint = BackgroundDark)
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text(strings.btnInstantAi, fontSize = 12.sp, color = BackgroundDark, fontWeight = FontWeight.Bold)
+                        Text("Tóm Tắt AI Ngay", fontSize = 12.sp, color = BackgroundDark, fontWeight = FontWeight.Bold)
                     }
                 }
 
@@ -283,7 +279,7 @@ private fun ExecutiveQuickActionsCard(
                 ) {
                     Icon(imageVector = Icons.Default.ChatBubbleOutline, contentDescription = null, modifier = Modifier.size(18.dp), tint = AccentCyan)
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text(strings.btnOpenBubble, fontSize = 12.sp, color = TextPrimaryDark)
+                    Text("M\u1EDF Bong B\u00F3ng", fontSize = 12.sp, color = TextPrimaryDark)
                 }
             }
         }
@@ -297,8 +293,6 @@ private fun SystemStatusCockpitCard(
     unprocessedCount: Int,
     scheduledHours: List<String>
 ) {
-    val strings = LocalAppStrings.current
-    val isEn = strings.navDashboard == "Dashboard"
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -311,7 +305,7 @@ private fun SystemStatusCockpitCard(
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Text(
-                text = if (isEn) "System Status" else "Trạng Thái Hệ Thống",
+                text = "Trạng Thái Hệ Thống",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = TextPrimaryDark
@@ -332,17 +326,13 @@ private fun SystemStatusCockpitCard(
                     Spacer(modifier = Modifier.width(8.dp))
                     Column {
                         Text(
-                            text = strings.cockpitBgEngine,
+                            text = "Tiến trình theo dõi thông báo",
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.Medium,
                             color = TextPrimaryDark
                         )
                         Text(
-                            text = if (isNotificationGranted) {
-                                if (isEn) "Active automatically (Zero battery drain)" else "Đang hoạt động tự động (Không tốn pin)"
-                            } else {
-                                if (isEn) "Notification access not granted" else "Chưa cấp quyền truy cập"
-                            },
+                            text = if (isNotificationGranted) "Đang hoạt động tự động (Không tốn pin)" else "Chưa cấp quyền truy cập",
                             style = MaterialTheme.typography.labelSmall,
                             color = if (isNotificationGranted) AccentEmerald else AccentRose
                         )
@@ -356,11 +346,7 @@ private fun SystemStatusCockpitCard(
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentCyan),
                     border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.5f))
                 ) {
-                    Text(
-                        text = if (isNotificationGranted) (if (isEn) "Check" else "Kiểm tra") else (if (isEn) "Grant" else "Cấp quyền"),
-                        fontSize = 11.sp,
-                        color = AccentCyan
-                    )
+                    Text(if (isNotificationGranted) "Ki\u1EC3m tra" else "C\u1EA5p quy\u1EC1n", fontSize = 11.sp, color = AccentCyan)
                 }
             }
 
@@ -373,14 +359,10 @@ private fun SystemStatusCockpitCard(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(imageVector = Icons.Default.Notifications, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = if (isEn) "Pending messages:" else "Tin nhắn chờ xử lý:",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = TextSecondaryDark
-                    )
+                    Text("Tin nhắn chờ xử lý:", style = MaterialTheme.typography.bodySmall, color = TextSecondaryDark)
                 }
                 Text(
-                    text = if (isEn) "$unprocessedCount unsummarized" else "$unprocessedCount tin chưa tóm tắt",
+                    text = "$unprocessedCount tin chưa tóm tắt",
                     style = MaterialTheme.typography.bodySmall,
                     fontWeight = FontWeight.Bold,
                     color = AccentCyan
@@ -396,14 +378,10 @@ private fun SystemStatusCockpitCard(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(imageVector = Icons.Default.Schedule, contentDescription = null, tint = AccentEmerald, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = if (isEn) "Summary schedule:" else "Khung giờ tóm tắt:",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = TextSecondaryDark
-                    )
+                    Text("Khung giờ tóm tắt:", style = MaterialTheme.typography.bodySmall, color = TextSecondaryDark)
                 }
                 Text(
-                    text = if (scheduledHours.isNotEmpty()) scheduledHours.joinToString(", ") else (if (isEn) "Not scheduled" else "Chưa đặt giờ"),
+                    text = if (scheduledHours.isNotEmpty()) scheduledHours.joinToString(", ") else "Chưa đặt giờ",
                     style = MaterialTheme.typography.bodySmall,
                     fontWeight = FontWeight.Bold,
                     color = TextPrimaryDark
@@ -422,7 +400,7 @@ private fun SystemStatusCockpitCard(
                     Icon(imageVector = Icons.Default.Info, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = if (isEn) "View message logs in '${strings.navHistory}'. Configure keys and language in '${strings.navSettings}'." else "Xem chi tiết tin nhắn tại '${strings.navHistory}'. Cấp quyền & sao lưu tại '${strings.navSettings}'.",
+                        text = "Xem chi tiết tin nhắn tại 'Lịch Sử AI'. Cấp quyền & sao lưu tại 'Cấu Hình'.",
                         style = MaterialTheme.typography.labelSmall,
                         color = TextSecondaryDark,
                         lineHeight = 15.sp

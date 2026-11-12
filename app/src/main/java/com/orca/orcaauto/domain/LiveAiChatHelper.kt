@@ -67,19 +67,11 @@ object LiveAiChatHelper {
             prefs.getPromptPersona()
         }
         val latestSummaryRecord = db.summaryDao().getLatestSummaryForSession(session.id)
-        val rawPreviousSummary = if (prefs.isRecentSummaryContextEnabled()) latestSummaryRecord?.summaryContent.orEmpty() else ""
+        val previousSummary = if (prefs.isRecentSummaryContextEnabled()) latestSummaryRecord?.summaryContent.orEmpty() else ""
         val activeAlarms = if (prefs.isLongTermTasksContextEnabled()) db.smartAlarmDao().getActiveAlarms() else emptyList()
-        // Luôn nạp danh sách việc đã hủy để chặn tái sinh qua nhiều phiên
-        val cancelledTasks = db.smartAlarmDao().getCancelledAlarms()
+        val cancelledTasks = if (prefs.isLongTermTasksContextEnabled()) db.smartAlarmDao().getCancelledAlarms() else emptyList()
         val completedTasks = if (prefs.isLongTermTasksContextEnabled()) db.smartAlarmDao().getCompletedAlarms() else emptyList()
         val taskNotes = prefs.getTaskNotes()
-
-        // Gắn nhãn [ĐÃ HỦY] cho các việc đã bị hủy trong ca trước để AI tự biết và không nối tiếp
-        val previousSummary = if (cancelledTasks.isNotEmpty() && rawPreviousSummary.isNotBlank()) {
-            tagCancelledTasksInSummary(rawPreviousSummary, cancelledTasks)
-        } else {
-            rawPreviousSummary
-        }
 
         val instructionParts = mutableListOf<String>()
         if (session.customInstruction.isNotBlank()) {
@@ -89,12 +81,6 @@ object LiveAiChatHelper {
             instructionParts.add(userQueryOrInstruction.trim())
         }
         val effectiveInstruction = instructionParts.joinToString("\n\n")
-
-        val effectiveAiLang = when (session.aiLanguage) {
-            "vi" -> com.orca.orcaauto.ui.locale.AppLanguage.VIETNAMESE
-            "en" -> com.orca.orcaauto.ui.locale.AppLanguage.ENGLISH
-            else -> prefs.getEffectiveAiLanguage()
-        }
 
         val prompt = GeminiPromptBuilder.buildSummaryPrompt(
             notifications = sessionNotifications,
@@ -107,8 +93,7 @@ object LiveAiChatHelper {
             completedTasks = completedTasks,
             taskNotes = taskNotes,
             timezoneId = prefs.getUserTimezone(),
-            autoCompleteOverdue = session.autoCompleteOverdue,
-            language = effectiveAiLang
+            autoCompleteOverdue = session.autoCompleteOverdue
         )
 
         // 4. Execute strictly sequentially through SequentialAiQueue (FIFO with session key priorities)
@@ -141,35 +126,5 @@ object LiveAiChatHelper {
         } else {
             result
         }
-    }
-
-    /**
-     * Tags cancelled tasks in previous summary with [ĐÃ HỦY] so the AI sees the explicit cancelled label.
-     */
-    fun tagCancelledTasksInSummary(
-        summaryContent: String,
-        cancelledTasks: List<com.orca.orcaauto.data.local.SmartAlarmEntity>
-    ): String {
-        if (cancelledTasks.isEmpty() || summaryContent.isBlank()) return summaryContent
-        val lines = summaryContent.lines()
-        val taggedLines = lines.map { line ->
-            val trimmed = line.trim()
-            val isTaskLine = trimmed.startsWith("- [ ]") || trimmed.startsWith("- [x]") || trimmed.startsWith("- [X]") || trimmed.startsWith("•")
-            if (isTaskLine && !trimmed.contains("[ĐÃ HỦY]")) {
-                val cleanLineTitle = trimmed
-                    .replace(Regex("""^[-*•]\s*(\[[ xX]?\])?\s*"""), "")
-                    .replace(Regex("""\s*\([Hh]ạn:[^)]+\)"""), "")
-                    .trim()
-                val isCancelled = cancelledTasks.any { com.orca.orcaauto.domain.alarm.SystemAlarmHelper.isTitleMatching(it.taskTitle, cleanLineTitle) }
-                if (isCancelled) {
-                    "$line [ĐÃ HỦY]"
-                } else {
-                    line
-                }
-            } else {
-                line
-            }
-        }
-        return taggedLines.joinToString("\n")
     }
 }
