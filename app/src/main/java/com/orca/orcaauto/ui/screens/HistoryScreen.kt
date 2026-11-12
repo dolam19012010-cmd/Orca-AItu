@@ -606,7 +606,8 @@ fun TwoPartSummaryCard(
                             },
                             onLongClick = {
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                voiceManager.speakSummary(item.id, parsed)
+                                val speakableParsed = SystemAlarmHelper.filterOutCancelled(parsed, allAlarmMap)
+                                voiceManager.speakSummary(item.id, speakableParsed)
                             }
                         ),
                     shape = RoundedCornerShape(12.dp),

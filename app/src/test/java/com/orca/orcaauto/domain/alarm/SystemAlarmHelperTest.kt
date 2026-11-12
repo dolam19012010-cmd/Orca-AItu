@@ -252,4 +252,99 @@ class SystemAlarmHelperTest {
         assertTrue(tagged.contains("Đón con ở trường"))
         assertTrue(tagged.contains("Mua văn phòng phẩm (Hạn: 15:00) [ĐÃ HỦY]"))
     }
+
+    @Test
+    fun testTagCancelledTasksInSummary_handlesPipeSyntaxWithoutCheckbox() {
+        val summary = """
+            === PHẦN 1: LỜI KHUYÊN & LƯU Ý ===
+            - Mua văn phòng phẩm cần chú ý hóa đơn.
+
+            === PHẦN 2: BẢNG ĐIỀU PHỐI NHIỆM VỤ ===
+            ### 🔴 NHIỆM VỤ PHẢI LÀM (TO-DO)
+            - Mua văn phòng phẩm | Nguồn: Zalo | Hạn: 15:00
+            - Gửi báo cáo tuần | Nguồn: Sếp | Hạn: 17:00
+            ### 🟡 KẾ HOẠCH DỰ KIẾN (PLANNED)
+            1. **Đón con ở trường** | Nguồn: Gia đình | Mục tiêu: 16:30
+        """.trimIndent()
+
+        val cancelled = listOf(
+            com.orca.orcaauto.data.local.SmartAlarmEntity(
+                alarmId = "ALM_1",
+                taskTitle = "Mua văn phòng phẩm",
+                targetTimeMillis = System.currentTimeMillis(),
+                targetDateLabel = "Đã hủy",
+                status = com.orca.orcaauto.data.local.SmartAlarmStatus.CANCELLED
+            ),
+            com.orca.orcaauto.data.local.SmartAlarmEntity(
+                alarmId = "ALM_2",
+                taskTitle = "Đón con ở trường",
+                targetTimeMillis = System.currentTimeMillis(),
+                targetDateLabel = "Đã hủy",
+                status = com.orca.orcaauto.data.local.SmartAlarmStatus.CANCELLED
+            )
+        )
+
+        val tagged = com.orca.orcaauto.domain.LiveAiChatHelper.tagCancelledTasksInSummary(summary, cancelled)
+
+        assertTrue(tagged.contains("- Mua văn phòng phẩm cần chú ý hóa đơn.\n"))
+        assertTrue(tagged.contains("- Mua văn phòng phẩm | Nguồn: Zalo | Hạn: 15:00 [ĐÃ HỦY]"))
+        assertTrue(tagged.contains("1. **Đón con ở trường** | Nguồn: Gia đình | Mục tiêu: 16:30 [ĐÃ HỦY]"))
+        org.junit.Assert.assertFalse(tagged.contains("Gửi báo cáo tuần | Nguồn: Sếp | Hạn: 17:00 [ĐÃ HỦY]"))
+    }
+
+    @Test
+    fun testFilterRecentCancelled_enforces48HourWindow() {
+        val now = 1_700_000_000_000L
+        val recent = com.orca.orcaauto.data.local.SmartAlarmEntity(
+            alarmId = "ALM_RECENT",
+            taskTitle = "Họp hôm nay",
+            targetTimeMillis = now,
+            targetDateLabel = "15:00",
+            status = com.orca.orcaauto.data.local.SmartAlarmStatus.CANCELLED,
+            updatedAt = now - 24 * 3600 * 1000L
+        )
+        val expired = com.orca.orcaauto.data.local.SmartAlarmEntity(
+            alarmId = "ALM_OLD",
+            taskTitle = "Việc tuần trước",
+            targetTimeMillis = now + 72 * 3600 * 1000L,
+            targetDateLabel = "Tuần sau",
+            status = com.orca.orcaauto.data.local.SmartAlarmStatus.CANCELLED,
+            updatedAt = now - 49 * 3600 * 1000L
+        )
+
+        val filtered = SystemAlarmHelper.filterRecentCancelled(listOf(recent, expired), nowMillis = now)
+        assertEquals(1, filtered.size)
+        assertEquals("ALM_RECENT", filtered.first().alarmId)
+    }
+
+    @Test
+    fun testFilterOutCancelled_removesCancelledTasksFromVoiceAndBubbleSummary() {
+        val parsed = com.orca.orcaauto.domain.filter.ParsedSummary(
+            rawCleanText = "raw",
+            conciseAdvice = "Lời khuyên ngắn",
+            criticalQuestions = emptyList(),
+            tasksToDo = listOf(
+                com.orca.orcaauto.domain.filter.TaskItem(title = "Mua văn phòng phẩm"),
+                com.orca.orcaauto.domain.filter.TaskItem(title = "Gửi báo cáo tuần")
+            ),
+            tasksDone = emptyList(),
+            tasksPlanned = listOf(
+                com.orca.orcaauto.domain.filter.TaskItem(title = "Đón con ở trường")
+            )
+        )
+        val alarmMap = mapOf(
+            "ALM_1" to com.orca.orcaauto.data.local.SmartAlarmEntity(
+                alarmId = "ALM_1",
+                taskTitle = "Mua văn phòng phẩm",
+                targetTimeMillis = System.currentTimeMillis(),
+                targetDateLabel = "Đã hủy",
+                status = com.orca.orcaauto.data.local.SmartAlarmStatus.CANCELLED
+            )
+        )
+
+        val speakable = SystemAlarmHelper.filterOutCancelled(parsed, alarmMap)
+        assertEquals(1, speakable.tasksToDo.size)
+        assertEquals("Gửi báo cáo tuần", speakable.tasksToDo.first().title)
+        assertEquals(1, speakable.tasksPlanned.size)
+    }
 }

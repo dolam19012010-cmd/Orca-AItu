@@ -11,6 +11,7 @@ import androidx.compose.runtime.Immutable
 import com.orca.orcaauto.data.local.AppDatabase
 import com.orca.orcaauto.data.local.SmartAlarmEntity
 import com.orca.orcaauto.data.local.SmartAlarmStatus
+import com.orca.orcaauto.domain.filter.ParsedSummary
 import com.orca.orcaauto.receiver.SmartAlarmReceiver
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -64,6 +65,7 @@ data class ParsedDateTime(
 object SystemAlarmHelper {
 
     private const val TAG = "SystemAlarmHelper"
+    const val CANCELLED_RETENTION_MS = 48L * 3600L * 1000L
     private val scope = CoroutineScope(Dispatchers.IO)
 
     /**
@@ -121,7 +123,7 @@ object SystemAlarmHelper {
         val norm = normalizeTitle(taskTitle)
         if (norm.isEmpty()) return null
         val now = System.currentTimeMillis()
-        val cutoff = now - 48 * 3600 * 1000L // Giữ trạng thái trong 48 giờ (2 ngày) theo chu kỳ dọn tin nhắn 24h
+        val cutoff = now - CANCELLED_RETENTION_MS // Giữ trạng thái trong 48 giờ (2 ngày) theo chu kỳ dọn tin nhắn 24h
 
         val matches = alarmMap.values.filter { isTitleMatching(it.taskTitle, taskTitle) }
         if (matches.isEmpty()) return null
@@ -132,8 +134,37 @@ object SystemAlarmHelper {
 
         // 2. Xét các bản ghi trạng thái (CANCELLED, COMPLETED, PROPOSED) trong vòng 48h (2 ngày)
         return matches
-            .filter { it.targetTimeMillis >= cutoff || it.updatedAt >= cutoff }
+            .filter {
+                if (it.status == SmartAlarmStatus.CANCELLED) it.updatedAt >= cutoff
+                else it.targetTimeMillis >= cutoff || it.updatedAt >= cutoff
+            }
             .maxByOrNull { it.updatedAt }
+    }
+
+    /**
+     * Lọc giữ các việc đã hủy trong vòng 48 giờ kể từ lúc người dùng bấm hủy.
+     */
+    fun filterRecentCancelled(
+        alarms: List<SmartAlarmEntity>,
+        nowMillis: Long = System.currentTimeMillis()
+    ): List<SmartAlarmEntity> {
+        val cutoff = nowMillis - CANCELLED_RETENTION_MS
+        return alarms.filter { it.status == SmartAlarmStatus.CANCELLED && it.updatedAt >= cutoff }
+    }
+
+    /**
+     * Loại bỏ các nhiệm vụ đã bị hủy khỏi ParsedSummary để dùng chung cho bong bóng nổi và đọc giọng nói.
+     */
+    fun filterOutCancelled(
+        parsed: ParsedSummary,
+        alarmMap: Map<String, SmartAlarmEntity>
+    ): ParsedSummary {
+        if (alarmMap.isEmpty()) return parsed
+        return parsed.copy(
+            tasksToDo = parsed.tasksToDo.filterNot { isTaskCancelled(it.title, alarmMap) },
+            tasksDone = parsed.tasksDone.filterNot { isTaskCancelled(it.title, alarmMap) },
+            tasksPlanned = parsed.tasksPlanned.filterNot { isTaskCancelled(it.title, alarmMap) }
+        )
     }
 
     fun isTaskCancelled(taskTitle: String, alarmMap: Map<String, SmartAlarmEntity>): Boolean {

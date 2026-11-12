@@ -7,6 +7,7 @@ import com.orca.orcaauto.data.preferences.SummarySessionConfig
 import com.orca.orcaauto.data.preferences.UserPreferences
 import com.orca.orcaauto.data.remote.ApiKeyConfig
 import com.orca.orcaauto.domain.ai.SequentialAiQueue
+import com.orca.orcaauto.domain.alarm.SystemAlarmHelper
 import com.orca.orcaauto.domain.filter.SessionMessageFilter
 import com.orca.orcaauto.domain.prompt.GeminiPromptBuilder
 import kotlinx.coroutines.Dispatchers
@@ -69,8 +70,8 @@ object LiveAiChatHelper {
         val latestSummaryRecord = db.summaryDao().getLatestSummaryForSession(session.id)
         val rawPreviousSummary = if (prefs.isRecentSummaryContextEnabled()) latestSummaryRecord?.summaryContent.orEmpty() else ""
         val activeAlarms = if (prefs.isLongTermTasksContextEnabled()) db.smartAlarmDao().getActiveAlarms() else emptyList()
-        // Luôn nạp danh sách việc đã hủy để chặn tái sinh qua nhiều phiên
-        val cancelledTasks = db.smartAlarmDao().getCancelledAlarms()
+        // Luôn nạp danh sách việc đã hủy trong vòng 48 giờ để chặn tái sinh qua nhiều phiên
+        val cancelledTasks = SystemAlarmHelper.filterRecentCancelled(db.smartAlarmDao().getCancelledAlarms())
         val completedTasks = if (prefs.isLongTermTasksContextEnabled()) db.smartAlarmDao().getCompletedAlarms() else emptyList()
         val taskNotes = prefs.getTaskNotes()
 
@@ -144,24 +145,39 @@ object LiveAiChatHelper {
         cancelledTasks: List<com.orca.orcaauto.data.local.SmartAlarmEntity>
     ): String {
         if (cancelledTasks.isEmpty() || summaryContent.isBlank()) return summaryContent
-        val lines = summaryContent.lines()
-        val taggedLines = lines.map { line ->
+        var inTaskSection = true
+        val taggedLines = summaryContent.lines().map { line ->
             val trimmed = line.trim()
-            val isTaskLine = trimmed.startsWith("- [ ]") || trimmed.startsWith("- [x]") || trimmed.startsWith("- [X]") || trimmed.startsWith("•")
-            if (isTaskLine && !trimmed.contains("[ĐÃ HỦY]")) {
-                val cleanLineTitle = trimmed
-                    .replace(Regex("""^[-*•]\s*(\[[ xX]?\])?\s*"""), "")
-                    .replace(Regex("""\s*\([Hh]ạn:[^)]+\)"""), "")
-                    .trim()
-                val isCancelled = cancelledTasks.any { com.orca.orcaauto.domain.alarm.SystemAlarmHelper.isTitleMatching(it.taskTitle, cleanLineTitle) }
-                if (isCancelled) {
-                    "$line [ĐÃ HỦY]"
-                } else {
-                    line
+            val lower = trimmed.lowercase()
+            val isBullet = trimmed.startsWith("-") || trimmed.startsWith("•") ||
+                trimmed.startsWith("*") || trimmed.startsWith("[") || trimmed.matches(Regex("""^\d+\..*"""))
+
+            if (!isBullet) {
+                when {
+                    lower.contains("nhiệm vụ") || lower.contains("kế hoạch") ||
+                        lower.contains("phần 2") || lower.contains("to-do") ||
+                        lower.contains("planned") || lower.contains("done") -> inTaskSection = true
+                    lower.contains("phần 1") || lower.contains("góc nhìn") || lower.contains("lời khuyên") -> inTaskSection = false
                 }
-            } else {
-                line
+                return@map line
             }
+
+            if (!inTaskSection || trimmed.contains("[ĐÃ HỦY]")) {
+                return@map line
+            }
+
+            val rawTitleSegment = trimmed.substringBefore("|")
+            val cleanLineTitle = rawTitleSegment
+                .replace(Regex("""^[\-*•\d.]+\s*"""), "")
+                .replace(Regex("""^\[[ xX]?\]\s*"""), "")
+                .replace(Regex("""[*_`~]"""), "")
+                .replace(Regex("""\s*\((?:[Hh]ạn|[Mm]ục tiêu|[Tt]hời gian):[^)]+\)"""), "")
+                .trim()
+
+            val isCancelled = cleanLineTitle.isNotBlank() &&
+                cancelledTasks.any { SystemAlarmHelper.isTitleMatching(it.taskTitle, cleanLineTitle) }
+
+            if (isCancelled) "$line [ĐÃ HỦY]" else line
         }
         return taggedLines.joinToString("\n")
     }

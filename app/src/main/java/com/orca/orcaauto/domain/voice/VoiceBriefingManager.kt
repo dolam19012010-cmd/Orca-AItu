@@ -19,6 +19,8 @@ class VoiceBriefingManager private constructor(context: Context) : TextToSpeech.
     private val appContext = context.applicationContext
     private var tts: TextToSpeech? = null
     private var isInitialized = false
+    @Volatile
+    private var pendingSpeech: Pair<Long, String>? = null
     private val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
     private var audioFocusRequest: AudioFocusRequest? = null
 
@@ -63,19 +65,26 @@ class VoiceBriefingManager private constructor(context: Context) : TextToSpeech.
                 }
             })
             isInitialized = true
+            pendingSpeech?.let { (pendingId, pendingScript) ->
+                pendingSpeech = null
+                startSpeaking(pendingId, pendingScript)
+            }
         } else {
+            pendingSpeech = null
             Log.e(TAG, "Khởi tạo TextToSpeech thất bại: status=$status")
         }
     }
 
     fun speakSummary(summaryId: Long, parsed: ParsedSummary) {
-        if (!isInitialized || tts == null) {
+        if (tts == null) {
             Log.w(TAG, "TextToSpeech chưa sẵn sàng.")
             return
         }
 
-        // Nếu đang đọc chính thẻ này thì dừng lại (Toggle Stop)
-        if (_isSpeakingFlow.value && _currentSummaryIdFlow.value == summaryId) {
+        // Nếu đang đọc chính thẻ này hoặc đang chờ đọc chính thẻ này thì dừng lại (Toggle Stop)
+        if ((_isSpeakingFlow.value && _currentSummaryIdFlow.value == summaryId) ||
+            pendingSpeech?.first == summaryId
+        ) {
             stop()
             return
         }
@@ -85,6 +94,15 @@ class VoiceBriefingManager private constructor(context: Context) : TextToSpeech.
         val script = buildSpokenScript(parsed)
         if (script.isBlank()) return
 
+        if (!isInitialized) {
+            pendingSpeech = summaryId to script
+            return
+        }
+
+        startSpeaking(summaryId, script)
+    }
+
+    private fun startSpeaking(summaryId: Long, script: String) {
         requestAudioFocus()
         _currentSummaryIdFlow.value = summaryId
         _isSpeakingFlow.value = true
@@ -94,6 +112,7 @@ class VoiceBriefingManager private constructor(context: Context) : TextToSpeech.
     }
 
     fun stop() {
+        pendingSpeech = null
         tts?.stop()
         _isSpeakingFlow.value = false
         _currentSummaryIdFlow.value = null

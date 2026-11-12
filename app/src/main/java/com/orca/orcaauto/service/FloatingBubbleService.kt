@@ -1422,6 +1422,7 @@ class FloatingBubbleService : Service() {
 
         // Section 1: Clean Advice Box or Direct Message View
         val cleanAdvice = SummaryParser.cleanAdviceText(parsed.conciseAdvice)
+        val speakableParsed = SystemAlarmHelper.filterOutCancelled(parsed, alarmDbMap)
         val allTasks = parsed.tasksToDo + parsed.tasksPlanned + parsed.tasksDone
         val effectiveAdvice = when {
             cleanAdvice.isNotBlank() -> cleanAdvice
@@ -1446,7 +1447,8 @@ class FloatingBubbleService : Service() {
                 setOnLongClickListener {
                     try {
                         performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
-                        com.orca.orcaauto.domain.voice.VoiceBriefingManager.getInstance(this@FloatingBubbleService).speakSummary(0L, parsed)
+                        com.orca.orcaauto.domain.voice.VoiceBriefingManager.getInstance(this@FloatingBubbleService)
+                            .speakSummary(0L, speakableParsed)
                     } catch (e: Exception) {
                         Log.e(TAG, "Voice briefing failed", e)
                     }
@@ -1494,9 +1496,9 @@ class FloatingBubbleService : Service() {
             contentLayout.addView(emptyBox)
         } else {
             // Lọc bỏ hoàn toàn các việc đã bị HỦY để không hiện chiếm chỗ trên bóng chat nổi
-            val visibleToDo = parsed.tasksToDo.filterNot { SystemAlarmHelper.isTaskCancelled(it.title, alarmDbMap) }
-            val visiblePlanned = parsed.tasksPlanned.filterNot { SystemAlarmHelper.isTaskCancelled(it.title, alarmDbMap) }
-            val visibleDone = parsed.tasksDone.filterNot { SystemAlarmHelper.isTaskCancelled(it.title, alarmDbMap) }
+            val visibleToDo = speakableParsed.tasksToDo
+            val visiblePlanned = speakableParsed.tasksPlanned
+            val visibleDone = speakableParsed.tasksDone
 
             if (visibleToDo.isEmpty() && visiblePlanned.isEmpty() && visibleDone.isEmpty()) {
                 val allDoneBox = LinearLayout(this).apply {
