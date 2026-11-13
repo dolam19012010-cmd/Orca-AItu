@@ -161,6 +161,7 @@ class LocalRetriever(
         
         2. [CREATE: Tiêu đề | Nội dung | private] hoặc [CREATE: Tiêu đề | Nội dung | public]
            Tạo một ghi chú mới vào kho ghi chú của người dùng. Nếu không chỉ định cờ thứ 3, mặc định là public.
+           LƯU Ý QUAN TRỌNG: Chỉ sử dụng lệnh này khi thật sự cần thiết hoặc khi được người dùng yêu cầu rõ ràng (ví dụ: bảo lưu lại, ghi nhớ vào máy, tạo ghi chú). Tuyệt đối không tự tiện tạo ghi chú cho các câu hỏi đáp thông thường, các cuộc trò chuyện chào hỏi, hoặc các đầu việc ngắn hạn hàng ngày để tránh làm rác kho ghi chú cá nhân của người dùng.
            DÙNG DẤU '|' ĐỂ PHÂN TÁCH, cho phép tiêu đề và nội dung chứa mốc giờ (ví dụ 14:30) hoặc dấu hai chấm ':' mà không bị lỗi.
            Ví dụ: [CREATE: Lịch họp 14:30 | Gặp đối tác tại phòng 201 lúc 15:00 | public]
            Ví dụ ghi chú riêng tư: [CREATE: Mật khẩu két sắt | Mã số 8899 lúc 10:00 | private]

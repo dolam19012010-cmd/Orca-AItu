@@ -5,7 +5,10 @@ import android.util.Log
 import com.orca.orcaauto.data.local.AppDatabase
 import com.orca.orcaauto.data.local.NotificationDao
 import com.orca.orcaauto.data.local.SharedNoteEntity
+import com.orca.orcaauto.data.local.SummaryDao
+import com.orca.orcaauto.data.local.SummaryHistoryEntity
 import com.orca.orcaauto.data.preferences.AssistantThinkingLevel
+import com.orca.orcaauto.data.preferences.SummarySessionConfig
 import com.orca.orcaauto.data.preferences.UserPreferences
 import com.orca.orcaauto.domain.prompt.PromptPersona
 import com.orca.orcaauto.data.remote.ApiKeyConfig
@@ -19,6 +22,9 @@ import com.orca.orcaauto.domain.notes.SharedNoteRepositoryImpl
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * 5-Stage Orchestrator for Assistant Interactions ("Trợ lý của trợ lý").
@@ -46,6 +52,7 @@ class AssistantPipeline(
     private val round1Router: Round1Router = Round1Router(universalAiClient),
     private val localRetriever: LocalRetriever,
     private val notificationDao: NotificationDao? = null,
+    private val summaryDao: SummaryDao? = null,
     private val keyPoolProvider: () -> List<ApiKeyConfig>,
     private val thinkingLevelProvider: (() -> AssistantThinkingLevel)? = null,
     private val personaProvider: (() -> PromptPersona)? = null
@@ -64,6 +71,7 @@ class AssistantPipeline(
             val db = AppDatabase.getDatabase(context)
             val noteRepo = SharedNoteRepositoryImpl(db.sharedNoteDao())
             val notifDao = db.notificationDao()
+            val summaryDao = db.summaryDao()
             val userPrefs = UserPreferences.getInstance(context)
 
             val universalClient = UniversalAiClient()
@@ -82,6 +90,7 @@ class AssistantPipeline(
                 round1Router = router,
                 localRetriever = retriever,
                 notificationDao = notifDao,
+                summaryDao = summaryDao,
                 keyPoolProvider = { userPrefs.getKeyPool() },
                 thinkingLevelProvider = { userPrefs.getAssistantThinkingLevel() },
                 personaProvider = { userPrefs.getPromptPersona() }
@@ -402,6 +411,44 @@ class AssistantPipeline(
                     errorMessage = null
                 )
             )
+
+            // Tự động lưu lịch sử phiên tương tác vào Tóm Tắt Ca để người dùng xem lại được trong Trí Nhớ AI
+            val activeSummaryDao = summaryDao ?: context?.let { AppDatabase.getDatabase(it).summaryDao() }
+            if (activeSummaryDao != null && finalCleanContent.isNotBlank()) {
+                try {
+                    val userPrefs = context?.let { UserPreferences.getInstance(it) }
+                    val currentSessionId = userPrefs?.getSelectedSessionId() ?: SummarySessionConfig.MAIN_SESSION_ID
+                    val sessions = userPrefs?.sessionsFlow?.value ?: emptyList()
+                    val currentSession = sessions.find { it.id == currentSessionId }
+                    val sessionName = currentSession?.name ?: "Phiên chính"
+
+                    val timeSlot = SimpleDateFormat("HH:mm - dd/MM", Locale.getDefault()).format(Date()) + " [$sessionName]"
+                    val modelInfo = activeUsedKey?.let { "${it.provider.displayName} • ${it.modelName}" }.orEmpty()
+
+                    val summaryContentToSave = if (userPrompt.isNotBlank() && !userPrompt.startsWith("Tóm tắt")) {
+                        "Hỏi: $userPrompt\n\n$finalCleanContent"
+                    } else {
+                        finalCleanContent
+                    }
+
+                    val notifCount = retrievedContext.relevantNotificationsSnippet.lines().count { it.isNotBlank() }.coerceAtLeast(1)
+
+                    val summaryRecord = SummaryHistoryEntity(
+                        timestamp = System.currentTimeMillis(),
+                        targetTimeSlot = timeSlot,
+                        messageCount = notifCount,
+                        summaryContent = summaryContentToSave,
+                        status = "SUCCESS",
+                        modelInfo = modelInfo,
+                        sessionId = currentSessionId,
+                        sessionName = sessionName
+                    )
+                    activeSummaryDao.insert(summaryRecord)
+                    Log.i(TAG, "Đã lưu lịch sử phiên chat vào Tóm tắt ca (id: ${summaryRecord.id}, session: $sessionName)")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Không thể lưu lịch sử chat vào summaryDao: ${e.message}")
+                }
+            }
 
         } catch (e: CancellationException) {
             Log.i(TAG, "AssistantPipeline coroutine cancelled cleanly.")
