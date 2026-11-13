@@ -59,7 +59,8 @@ data class PackagedContext(
     val catalogItems: List<NoteCatalogItem>,
     val catalogPromptSnippet: String,
     val notificationSummarySnippet: String,
-    val fullOverviewPrompt: String
+    val fullOverviewPrompt: String,
+    val ticketMap: Map<Int, Long> = emptyMap()
 )
 
 /**
@@ -70,7 +71,8 @@ data class Round1Decision(
     val neededNoteIds: List<Long> = emptyList(),
     val senderFilter: List<String> = emptyList(),
     val reasoning: String = "",
-    val rawAiResponse: String = ""
+    val rawAiResponse: String = "",
+    val deleteSpamTicketIds: List<Int> = emptyList()
 )
 
 /**

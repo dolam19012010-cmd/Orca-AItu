@@ -3,6 +3,7 @@ package com.orca.orcaauto.domain.assistant
 import android.content.Context
 import android.util.Log
 import com.orca.orcaauto.data.local.AppDatabase
+import com.orca.orcaauto.data.local.NotificationDao
 import com.orca.orcaauto.data.local.SharedNoteEntity
 import com.orca.orcaauto.data.preferences.UserPreferences
 import com.orca.orcaauto.data.remote.ApiKeyConfig
@@ -42,8 +43,12 @@ class AssistantPipeline(
     private val contextPacker: ContextPacker,
     private val round1Router: Round1Router = Round1Router(universalAiClient),
     private val localRetriever: LocalRetriever,
+    private val notificationDao: NotificationDao? = null,
     private val keyPoolProvider: () -> List<ApiKeyConfig>
 ) {
+
+    private val activeNotificationDao: NotificationDao?
+        get() = notificationDao ?: localRetriever.notificationDao
 
     companion object {
         private const val TAG = "AssistantPipeline"
@@ -72,6 +77,7 @@ class AssistantPipeline(
                 contextPacker = packer,
                 round1Router = router,
                 localRetriever = retriever,
+                notificationDao = notifDao,
                 keyPoolProvider = { userPrefs.getKeyPool() }
             )
         }
@@ -135,6 +141,25 @@ class AssistantPipeline(
             val routerDecision = round1Router.route(userPrompt, packagedContext, keyPool)
 
             // =========================================================================
+            // Xử lý xóa tin nhắn rác (Spam Deletion) phát hiện từ Vòng 1
+            // =========================================================================
+            val deleteSpamTickets = routerDecision.deleteSpamTicketIds
+            val realIdsToDelete = if (deleteSpamTickets.isNotEmpty()) {
+                deleteSpamTickets.mapNotNull { packagedContext.ticketMap[it] }.distinct()
+            } else {
+                emptyList()
+            }
+
+            if (realIdsToDelete.isNotEmpty()) {
+                try {
+                    activeNotificationDao?.deleteByIds(realIdsToDelete)
+                    Log.i(TAG, "Đã xóa ${realIdsToDelete.size} tin nhắn rác khỏi Room DB: $realIdsToDelete")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Lỗi khi xóa tin nhắn rác $realIdsToDelete: ${e.message}")
+                }
+            }
+
+            // =========================================================================
             // GIAI ĐOẠN 3: Truy xuất Room DB & Thực thi Sealed Pointer (LocalRetriever)
             // =========================================================================
             emit(
@@ -143,7 +168,11 @@ class AssistantPipeline(
                     stepDescription = "Đang mở dữ liệu trên máy..."
                 )
             )
-            val retrievedContext = localRetriever.retrieve(userPrompt, routerDecision)
+            val retrievedContext = localRetriever.retrieve(
+                userPrompt = userPrompt,
+                decision = routerDecision,
+                excludedNotificationIds = realIdsToDelete.toSet()
+            )
 
             // =========================================================================
             // GIAI ĐOẠN 4: Vòng 2 Stream qua SSE ra UI (StreamingAiClient)
@@ -362,15 +391,15 @@ class AssistantPipeline(
  */
 object CommandStripper {
 
-    // Regex for fully closed commands: [SHOW_NOTE:1], [CREATE:t:c], [APPEND:1:t], [UPDATE:1:t], [DELETE:1]
+    // Regex for fully closed commands: [SHOW_NOTE:1], [CREATE:t:c], [APPEND:1:t], [UPDATE:1:t], [DELETE:1], [DELETE_MSG:1]
     private val completedCommandRegex = Regex(
-        """\[(SHOW_NOTE|CREATE|APPEND|UPDATE|DELETE)\s*[:|](.*?)\]""",
+        """\[(SHOW_NOTE|CREATE|APPEND|UPDATE|DELETE|DELETE_MSG)\s*[:|](.*?)\]""",
         setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
     )
 
-    // Regex for pending/partial command tag at the tail of a streaming string
+    // Regex for pending/partial command tag or dangling '[' at the tail of a streaming string
     private val pendingTailCommandRegex = Regex(
-        """\[(?:SHOW_NOTE|CREATE|APPEND|UPDATE|DELETE|SHOW|CREA|APP|UPD|DEL)[^\]]*$""",
+        """\[\s*(?:$|(?:SHOW_NOTE|CREATE|APPEND|UPDATE|DELETE|DELETE_MSG|SHOW|CREA|APP|UPD|DEL|[SCAUD])[^\]]*$)""",
         RegexOption.IGNORE_CASE
     )
 
@@ -382,17 +411,19 @@ object CommandStripper {
         if (raw.isBlank()) return ""
         // 1. Strip completed command tags
         val stripped = completedCommandRegex.replace(raw, "")
-        // 2. Suppress unclosed trailing command prefix
+        // 2. Suppress unclosed trailing command prefix (including dangling '[')
         return pendingTailCommandRegex.replace(stripped, "").trimEnd()
     }
 
     /**
      * Strips all completed command tags from final completed text, normalizing excessive whitespace.
+     * Also cleans any dangling incomplete command tags if stream was cut off.
      */
     fun cleanFinal(raw: String): String {
         if (raw.isBlank()) return ""
         val stripped = completedCommandRegex.replace(raw, "")
-        return stripped.replace(Regex("""\n{3,}"""), "\n\n").trim()
+        val cleanTail = pendingTailCommandRegex.replace(stripped, "")
+        return cleanTail.replace(Regex("""\n{3,}"""), "\n\n").trim()
     }
 
     /**
@@ -453,26 +484,65 @@ object CommandStripper {
     }
 
     private fun parseCreateParameters(body: String): NoteCommand.Create? {
-        // Delimiters can be '|' or ':'
-        val delimiter = if (body.contains('|')) '|' else ':'
-        val firstSplitIndex = body.indexOf(delimiter)
+        if (body.isBlank()) return null
+
+        // 1. Prioritize '|' delimiter with limit = 3
+        if (body.contains('|')) {
+            val parts = body.split('|', limit = 3)
+            if (parts.size < 2) return null
+
+            val title = parts[0].trim()
+            if (title.isBlank()) return null
+
+            var content: String
+            var isPrivate = false
+
+            if (parts.size == 3) {
+                val potentialPrivacy = parts[2].trim().lowercase()
+                when (potentialPrivacy) {
+                    "true", "private", "riêng tư", "rieng tu", "bí mật", "bi mat" -> {
+                        isPrivate = true
+                        content = parts[1].trim()
+                    }
+                    "false", "public", "thường", "thuong", "công khai", "cong khai" -> {
+                        isPrivate = false
+                        content = parts[1].trim()
+                    }
+                    else -> {
+                        isPrivate = false
+                        content = "${parts[1]}|${parts[2]}".trim()
+                    }
+                }
+            } else {
+                content = parts[1].trim()
+                isPrivate = false
+            }
+
+            return NoteCommand.Create(
+                title = title,
+                content = content,
+                isPrivate = isPrivate
+            )
+        }
+
+        // 2. Backward compatibility fallback for ':' delimiter
+        val firstSplitIndex = body.indexOf(':')
         if (firstSplitIndex == -1) return null
 
         val title = body.substring(0, firstSplitIndex).trim()
         val remainder = body.substring(firstSplitIndex + 1).trim()
         if (title.isBlank()) return null
 
-        // Check if remainder has an optional privacy flag at the end
-        val secondSplitIndex = remainder.lastIndexOf(delimiter)
+        val secondSplitIndex = remainder.lastIndexOf(':')
         var content = remainder
         var isPrivate = false
 
         if (secondSplitIndex != -1) {
             val potentialPrivacy = remainder.substring(secondSplitIndex + 1).trim().lowercase()
-            if (potentialPrivacy == "true" || potentialPrivacy == "private" || potentialPrivacy == "riêng tư") {
+            if (potentialPrivacy in setOf("true", "private", "riêng tư", "rieng tu", "bí mật", "bi mat")) {
                 isPrivate = true
                 content = remainder.substring(0, secondSplitIndex).trim()
-            } else if (potentialPrivacy == "false" || potentialPrivacy == "public" || potentialPrivacy == "thường") {
+            } else if (potentialPrivacy in setOf("false", "public", "thường", "thuong", "công khai", "cong khai")) {
                 isPrivate = false
                 content = remainder.substring(0, secondSplitIndex).trim()
             }
@@ -486,8 +556,21 @@ object CommandStripper {
     }
 
     private fun parseAppendParameters(body: String): NoteCommand.Append? {
-        val delimiter = if (body.contains('|')) '|' else ':'
-        val splitIndex = body.indexOf(delimiter)
+        if (body.isBlank()) return null
+
+        // 1. Prioritize '|' delimiter with limit = 2
+        if (body.contains('|')) {
+            val parts = body.split('|', limit = 2)
+            if (parts.size < 2) return null
+            val idStr = parts[0].trim()
+            val textToAppend = parts[1].trim()
+            val id = idStr.toLongOrNull() ?: extractFirstLong(idStr) ?: return null
+            if (textToAppend.isBlank()) return null
+            return NoteCommand.Append(id, textToAppend)
+        }
+
+        // 2. Backward compatibility fallback for ':' delimiter
+        val splitIndex = body.indexOf(':')
         if (splitIndex == -1) return null
 
         val idStr = body.substring(0, splitIndex).trim()
@@ -499,8 +582,20 @@ object CommandStripper {
     }
 
     private fun parseUpdateParameters(body: String): NoteCommand.Update? {
-        val delimiter = if (body.contains('|')) '|' else ':'
-        val splitIndex = body.indexOf(delimiter)
+        if (body.isBlank()) return null
+
+        // 1. Prioritize '|' delimiter with limit = 2
+        if (body.contains('|')) {
+            val parts = body.split('|', limit = 2)
+            if (parts.size < 2) return null
+            val idStr = parts[0].trim()
+            val newContent = parts[1].trim()
+            val id = idStr.toLongOrNull() ?: extractFirstLong(idStr) ?: return null
+            return NoteCommand.Update(id, newContent)
+        }
+
+        // 2. Backward compatibility fallback for ':' delimiter
+        val splitIndex = body.indexOf(':')
         if (splitIndex == -1) return null
 
         val idStr = body.substring(0, splitIndex).trim()

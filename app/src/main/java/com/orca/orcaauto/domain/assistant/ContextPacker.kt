@@ -32,8 +32,21 @@ class ContextPacker(
             emptyList()
         }
 
+        val notifications = try {
+            notificationDao.getNotificationsWithin24Hours(limit = 100)
+        } catch (e: Exception) {
+            emptyList()
+        }
+
         val catalogText = buildCatalogSnippet(catalogItems)
-        val notificationSummaryText = buildNotificationSummarySnippet()
+        val notificationSummaryText = buildNotificationSummarySnippet(notifications)
+
+        val coalesceResult = MessageCoalescer.coalesce(
+            notifications = notifications,
+            assignTicketIds = true,
+            sanitizePii = true
+        )
+        val ticketedDetail = MessageCoalescer.formatForPrompt(coalesceResult, withTicketIds = true)
 
         val fullPrompt = buildString {
             appendLine("=== DANH MỤC KHO GHI CHÚ (MỤC LỤC NHẸ - 0 BYTE NỘI DUNG RIÊNG TƯ) ===")
@@ -41,6 +54,11 @@ class ContextPacker(
             appendLine()
             appendLine("=== TỔNG QUAN TIN NHẮN 24H GẦN ĐÂY ===")
             appendLine(notificationSummaryText)
+            if (notifications.isNotEmpty() && ticketedDetail.isNotBlank() && ticketedDetail != "(Không có tin nhắn liên quan nào)") {
+                appendLine()
+                appendLine("=== CHI TIẾT TIN NHẮN 24H KÈM VÉ ID (ĐỂ NHẬN DIỆN VÀ XÓA SPAM) ===")
+                appendLine(ticketedDetail)
+            }
             appendLine()
             appendLine("=== YÊU CẦU CỦA NGƯỜI DÙNG ===")
             appendLine(userPrompt.trim())
@@ -51,7 +69,8 @@ class ContextPacker(
             catalogItems = catalogItems,
             catalogPromptSnippet = catalogText,
             notificationSummarySnippet = notificationSummaryText,
-            fullOverviewPrompt = fullPrompt
+            fullOverviewPrompt = fullPrompt,
+            ticketMap = coalesceResult.ticketMap
         )
     }
 
@@ -71,34 +90,29 @@ class ContextPacker(
         }
     }
 
-    private suspend fun buildNotificationSummarySnippet(): String {
-        return try {
-            val notifications = notificationDao.getNotificationsWithin24Hours(limit = 100)
-            if (notifications.isEmpty()) {
-                return "(Không có thông báo/tin nhắn mới trong 24 giờ qua)"
-            }
+    private fun buildNotificationSummarySnippet(notifications: List<NotificationEntity>): String {
+        if (notifications.isEmpty()) {
+            return "(Không có thông báo/tin nhắn mới trong 24 giờ qua)"
+        }
 
-            // Group by appName/package and sender
-            val grouped = notifications.groupBy { notification ->
-                val app = notification.appName.ifBlank { notification.appPackage }
-                val sender = notification.sender.ifBlank { "Không rõ người gửi" }
-                "$app: $sender"
-            }
+        // Group by appName/package and sender
+        val grouped = notifications.groupBy { notification ->
+            val app = notification.appName.ifBlank { notification.appPackage }
+            val sender = notification.sender.ifBlank { "Không rõ người gửi" }
+            "$app: $sender"
+        }
 
-            grouped.entries.joinToString("\n") { (key, list) ->
-                val latest = list.maxByOrNull { it.timestamp }
-                val latestTime = latest?.let {
-                    try {
-                        timeFormat.format(Date(it.timestamp))
-                    } catch (e: Exception) {
-                        ""
-                    }
-                }.orEmpty()
-                val timeSuffix = if (latestTime.isNotBlank()) " (Gần nhất lúc $latestTime)" else ""
-                "- $key: ${list.size} tin nhắn$timeSuffix"
-            }
-        } catch (e: Exception) {
-            "(Không thể tải tổng quan tin nhắn 24h: ${e.message})"
+        return grouped.entries.joinToString("\n") { (key, list) ->
+            val latest = list.maxByOrNull { it.timestamp }
+            val latestTime = latest?.let {
+                try {
+                    timeFormat.format(Date(it.timestamp))
+                } catch (e: Exception) {
+                    ""
+                }
+            }.orEmpty()
+            val timeSuffix = if (latestTime.isNotBlank()) " (Gần nhất lúc $latestTime)" else ""
+            "- $key: ${list.size} tin nhắn$timeSuffix"
         }
     }
 }

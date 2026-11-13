@@ -2,6 +2,7 @@ package com.orca.orcaauto.domain.prompt
 
 import com.orca.orcaauto.data.local.NotificationEntity
 import com.orca.orcaauto.data.local.SmartAlarmEntity
+import com.orca.orcaauto.domain.assistant.MessageCoalescer
 import com.orca.orcaauto.domain.filter.PiiSanitizer
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -28,8 +29,6 @@ object GeminiPromptBuilder {
         timezoneId: String = "Asia/Ho_Chi_Minh",
         autoCompleteOverdue: Boolean = false
     ): String {
-        val groupedByApp = notifications.groupBy { it.appName }
-
         val tz = try { java.util.TimeZone.getTimeZone(timezoneId) } catch (_: Exception) { java.util.TimeZone.getDefault() }
         val localizedDateFormat = SimpleDateFormat("EEEE, 'ngày' dd/MM/yyyy 'lúc' HH:mm", Locale("vi", "VN")).apply {
             timeZone = tz
@@ -124,19 +123,13 @@ object GeminiPromptBuilder {
         if (notifications.isEmpty()) {
             contentBuilder.append("(Không có tin nhắn mới nào trong ca. Hãy trả lời trực tiếp câu hỏi/yêu cầu của người dùng ở trên).\n")
         } else {
-            for ((appName, appNotifications) in groupedByApp) {
-                contentBuilder.append("\n【 Ứng dụng: $appName 】\n")
-                val groupedBySender = appNotifications.groupBy { it.sender }
-
-                for ((sender, senderMsgs) in groupedBySender) {
-                    contentBuilder.append("- Người gửi: **$sender**\n")
-                    for (msg in senderMsgs) {
-                        val timeStr = timeFormat.format(Date(msg.timestamp))
-                        val sanitizedContent = PiiSanitizer.sanitize(msg.content)
-                        contentBuilder.append("  • [$timeStr] $sanitizedContent\n")
-                    }
-                }
-            }
+            val coalesced = MessageCoalescer.coalesce(
+                notifications = notifications,
+                assignTicketIds = false,
+                sanitizePii = true
+            )
+            contentBuilder.append(MessageCoalescer.formatForPrompt(coalesced, withTicketIds = false))
+            contentBuilder.append("\n\n")
         }
 
         // 12. HƯỚNG DẪN SUY LUẬN TỪNG BƯỚC QUA THẺ NHÁP <scratchpad>

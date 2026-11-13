@@ -86,18 +86,20 @@ open class Round1Router(
     private fun buildRouterPrompt(userPrompt: String, packagedContext: PackagedContext): String {
         return buildString {
             appendLine("Bạn là Bộ điều hướng bối cảnh (Context Router) chạy ngầm của OrcaAuto.")
-            appendLine("Nhiệm vụ: Phân tích yêu cầu người dùng cùng với danh mục ghi chú và tổng quan tin nhắn để quyết định xem có cần truy xuất nội dung ghi chú cụ thể (noteIds) hoặc lọc tin nhắn của người gửi nào không.")
+            appendLine("Nhiệm vụ: Phân tích yêu cầu người dùng cùng với danh mục ghi chú và tổng quan tin nhắn để quyết định xem có cần truy xuất nội dung ghi chú cụ thể (noteIds), lọc tin nhắn của người gửi nào, hoặc phát hiện tin nhắn rác để xóa.")
             appendLine()
             appendLine("QUY TẮC BẮT BUỘC:")
             appendLine("1. Chỉ chọn noteId nếu câu hỏi của người dùng thực sự liên quan hoặc nhắc đến ghi chú đó.")
             appendLine("2. ĐẶC BIỆT: Nếu câu hỏi hoặc yêu cầu của người dùng có chủ đề, từ khóa hoặc ý định trùng khớp/tương đồng với tiêu đề hoặc nội dung gợi ý của bất kỳ ghi chú nào trong danh mục (ví dụ người dùng hỏi về 'quay chụp bóng đá', 'kinh nghiệm quay chụp' hoặc 'Tip đi làm quay chụp bóng đá'), BẮT BUỘC phải đưa noteId đó vào 'neededNoteIds' để trích xuất nội dung thực tế trên máy, kể cả khi người dùng không viết rõ từ 'ghi chú'.")
             appendLine("3. Chỉ dùng ID có thực trong danh mục bên dưới. KHÔNG tự bịa ID.")
-            appendLine("4. Nếu câu hỏi hoàn toàn chung chung và không liên quan gì đến danh mục ghi chú (ví dụ: chào hỏi, hỏi kiến thức chung, dịch thuật), trả về neededNoteIds là [].")
-            appendLine("5. Trả về DUY NHẤT một đối tượng JSON hợp lệ theo cấu trúc sau (không kèm lời giải thích thừa ngoài JSON):")
+            appendLine("4. PHÁT HIỆN & XÓA TIN NHẮN RÁC (SPAM): Nếu trong danh sách tin nhắn có tin nhắn quảng cáo rác, vay tiền, cờ bạc lừa đảo, hãy đưa danh sách vé ID tạm [1], [2]... vào mảng 'deleteSpamTicketIds'. Nếu không có tin rác cần xóa, để mảng này rỗng [].")
+            appendLine("5. Nếu câu hỏi hoàn toàn chung chung và không liên quan gì đến danh mục ghi chú (ví dụ: chào hỏi, hỏi kiến thức chung, dịch thuật), trả về neededNoteIds là [].")
+            appendLine("6. Trả về DUY NHẤT một đối tượng JSON hợp lệ theo cấu trúc sau (không kèm lời giải thích thừa ngoài JSON):")
             appendLine("```json")
             appendLine("{")
             appendLine("  \"neededNoteIds\": [1, 2],")
             appendLine("  \"senderFilter\": [\"tên người gửi nếu cần\"],")
+            appendLine("  \"deleteSpamTicketIds\": [3, 4],")
             appendLine("  \"reasoning\": \"lý do ngắn gọn\"")
             appendLine("}")
             appendLine("```")
@@ -142,6 +144,8 @@ open class Round1Router(
                 }
             }
 
+            val deleteSpamIds = extractDeleteSpamIds(rawResponse, jsonObject)
+
             val reasoning = jsonObject.optString("reasoning", "").trim()
 
             // If JSON was parsed but no note IDs found, do a quick heuristic check
@@ -156,12 +160,55 @@ open class Round1Router(
                 neededNoteIds = combinedIds.distinct(),
                 senderFilter = senders.distinct(),
                 reasoning = reasoning.ifBlank { "Đã phân tích bối cảnh tự động" },
-                rawAiResponse = rawResponse
+                rawAiResponse = rawResponse,
+                deleteSpamTicketIds = deleteSpamIds.distinct()
             )
         } catch (e: Exception) {
             Log.w(TAG, "Failed to parse JSON from Round 1 response: ${e.message}. Attempting regex fallback...")
             return parseLooseTextOrFallback(rawResponse, userPrompt, packagedContext, validCatalogIds)
         }
+    }
+
+    private fun extractDeleteSpamIds(rawResponse: String, jsonObject: JSONObject?): List<Int> {
+        val deleteSpamIds = mutableListOf<Int>()
+
+        // 1. JSON array parsing
+        if (jsonObject != null) {
+            val spamArray = jsonObject.optJSONArray("deleteSpamTicketIds")
+                ?: jsonObject.optJSONArray("delete_spam")
+            if (spamArray != null) {
+                for (i in 0 until spamArray.length()) {
+                    val ticket = spamArray.optInt(i, -1)
+                    if (ticket > 0) {
+                        deleteSpamIds.add(ticket)
+                    }
+                }
+            }
+        }
+
+        // 2. Fallback: Tag-based [DELETE_MSG: 1, 2] or [DELETE_MSG: 1 | 2]
+        if (deleteSpamIds.isEmpty()) {
+            val tagRegex = Regex("""\[DELETE_MSG\s*[:|]\s*([0-9,\s|]+)\]""", RegexOption.IGNORE_CASE)
+            for (match in tagRegex.findAll(rawResponse)) {
+                val rawIds = match.groupValues[1]
+                rawIds.split(Regex("""[,\s|]+""")).mapNotNull { it.toIntOrNull() }.filter { it > 0 }.forEach { id ->
+                    deleteSpamIds.add(id)
+                }
+            }
+        }
+
+        // 3. Fallback: Function-calling style delete_spam(ids=[1, 2]) or delete_spam([1, 2])
+        if (deleteSpamIds.isEmpty()) {
+            val funcRegex = Regex("""delete_spam\s*\(\s*(?:ids\s*=\s*)?\[?([0-9,\s]+)\]?\s*\)""", RegexOption.IGNORE_CASE)
+            for (match in funcRegex.findAll(rawResponse)) {
+                val rawIds = match.groupValues[1]
+                rawIds.split(Regex("""[,\s]+""")).mapNotNull { it.toIntOrNull() }.filter { it > 0 }.forEach { id ->
+                    deleteSpamIds.add(id)
+                }
+            }
+        }
+
+        return deleteSpamIds
     }
 
     private fun extractJsonSubstring(text: String): String {
@@ -202,12 +249,15 @@ open class Round1Router(
             }
         }
 
-        if (extractedIds.isNotEmpty()) {
+        val deleteSpamIds = extractDeleteSpamIds(rawResponse, null)
+
+        if (extractedIds.isNotEmpty() || deleteSpamIds.isNotEmpty()) {
             return Round1Decision(
                 neededNoteIds = extractedIds.distinct(),
                 senderFilter = emptyList(),
-                reasoning = "Trích xuất ID ghi chú qua biểu thức chính quy",
-                rawAiResponse = rawResponse
+                reasoning = "Trích xuất thông tin qua biểu thức chính quy",
+                rawAiResponse = rawResponse,
+                deleteSpamTicketIds = deleteSpamIds.distinct()
             )
         }
 

@@ -20,14 +20,15 @@ import java.util.Locale
  */
 class LocalRetriever(
     private val noteRepository: SharedNoteRepository,
-    private val notificationDao: NotificationDao
+    val notificationDao: NotificationDao
 ) {
 
     private val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
 
     suspend fun retrieve(
         userPrompt: String,
-        decision: Round1Decision
+        decision: Round1Decision,
+        excludedNotificationIds: Set<Long> = emptySet()
     ): RetrievedContext {
         // 1. Retrieve notes from Room DB
         val retrievedNotes = try {
@@ -37,7 +38,7 @@ class LocalRetriever(
         }
 
         // 2. Retrieve relevant notifications if sender filters were determined
-        val relevantNotifications = retrieveRelevantNotifications(decision.senderFilter)
+        val relevantNotifications = retrieveRelevantNotifications(decision.senderFilter, excludedNotificationIds)
 
         // 3. Assemble notes snippet (strictly enforcing Sealed Pointer)
         val notesSnippet = buildNotesSnippet(retrievedNotes)
@@ -78,20 +79,23 @@ class LocalRetriever(
                     - Nội dung ghi chú này được mã hóa bảo mật cục bộ trên thiết bị của người dùng.
                     - AI KHÔNG thể đọc nội dung cũ và KHÔNG ĐƯỢC bịa đặt nội dung.
                     - Để người dùng xem nội dung ghi chú này, hãy đưa lệnh [SHOW_NOTE:${note.id}] vào câu trả lời của bạn.
-                    - Bạn có thể ghi thêm nội dung vào ghi chú này bằng lệnh [APPEND:${note.id}:nội dung cần thêm].
-                    - Tuyệt đối KHÔNG sử dụng [UPDATE:${note.id}:...] hoặc [DELETE:${note.id}] vì hệ thống sẽ từ chối ngay lập tức.
+                    - Bạn có thể ghi thêm nội dung vào ghi chú này bằng lệnh [APPEND: ${note.id} | nội dung cần thêm].
+                    - Tuyệt đối KHÔNG sử dụng [UPDATE: ${note.id} | ...] hoặc [DELETE: ${note.id}] vì hệ thống sẽ từ chối ngay lập tức.
                     """.trimIndent()
                 }
             }
         }
     }
 
-    private suspend fun retrieveRelevantNotifications(senderFilters: List<String>): List<NotificationEntity> {
+    private suspend fun retrieveRelevantNotifications(
+        senderFilters: List<String>,
+        excludedNotificationIds: Set<Long> = emptySet()
+    ): List<NotificationEntity> {
         val all24h = try {
             notificationDao.getNotificationsWithin24Hours(limit = 100)
         } catch (e: Exception) {
             emptyList()
-        }
+        }.filter { it.id !in excludedNotificationIds }
 
         if (senderFilters.isEmpty()) {
             return all24h.takeLast(20) // Default to latest 20 messages if no specific sender filter
@@ -114,17 +118,12 @@ class LocalRetriever(
         if (notifications.isEmpty()) {
             return "(Không có tin nhắn liên quan nào)"
         }
-
-        return notifications.joinToString("\n") { notif ->
-            val time = try {
-                timeFormat.format(Date(notif.timestamp))
-            } catch (e: Exception) {
-                ""
-            }
-            val timePrefix = if (time.isNotBlank()) "[$time] " else ""
-            val app = notif.appName.ifBlank { notif.appPackage }
-            "- $timePrefix$app | ${notif.sender}: ${notif.content}"
-        }
+        val coalesced = MessageCoalescer.coalesce(
+            notifications = notifications,
+            assignTicketIds = false,
+            sanitizePii = true
+        )
+        return MessageCoalescer.formatForPrompt(coalesced, withTicketIds = false)
     }
 
     private fun buildSystemInstruction(): String {
@@ -137,25 +136,30 @@ class LocalRetriever(
         2. Nếu người dùng hỏi về ghi chú của mình nhưng không có ghi chú nào khớp trong dữ liệu trích xuất hoặc nội dung ghi chú trống, hãy thông báo rõ ràng là không tìm thấy ghi chú phù hợp trên thiết bị của người dùng, tuyệt đối KHÔNG được tự bịa ra nội dung thay thế.
         3. Đối với Ghi chú Riêng tư (Sealed Pointer): Bạn KHÔNG có quyền đọc nội dung cũ; hãy giải thích rõ ghi chú được bảo mật riêng tư trên máy và BẮT BUỘC gọi lệnh [SHOW_NOTE:id] để người dùng xem trực tiếp trên thiết bị của họ!
         
-        KHI CẦN THAO TÁC HOẶC HIỂN THỊ KHO GHI CHÚ, BẠN CÓ THỂ SỬ DỤNG CÁC THẺ LỆNH HỆ THỐNG SAU:
+        KHI CẦN THAO TÁC HOẶC HIỂN THỊ KHO GHI CHÚ, BẠN CÓ THỂ SỬ DỤNG CÁC THẺ LỆNH HỆ THỐNG SAU (ƯU TIÊN PHÂN TÁCH CÁC THAM SỐ BẰNG DẤU '|'):
         1. [SHOW_NOTE:id]
            Hiển thị thẻ ghi chú tương ứng trên màn hình người dùng ngay dưới câu trả lời.
            Ví dụ: "Dưới đây là ghi chú kế hoạch của bạn: [SHOW_NOTE:1]"
            Đặc biệt với Ghi chú Riêng tư: Bạn không thể đọc nội dung, hãy dùng [SHOW_NOTE:id] để người dùng xem trực tiếp trên máy của họ!
         
-        2. [CREATE:tiêu đề:nội dung]
-           Tạo một ghi chú mới vào kho ghi chú của người dùng.
-           Ví dụ: [CREATE:Mua sắm cuối tuần:1. Sữa tươi\n2. Bánh mì\n3. Trái cây]
+        2. [CREATE: Tiêu đề | Nội dung | private] hoặc [CREATE: Tiêu đề | Nội dung | public]
+           Tạo một ghi chú mới vào kho ghi chú của người dùng. Nếu không chỉ định cờ thứ 3, mặc định là public.
+           DÙNG DẤU '|' ĐỂ PHÂN TÁCH, cho phép tiêu đề và nội dung chứa mốc giờ (ví dụ 14:30) hoặc dấu hai chấm ':' mà không bị lỗi.
+           Ví dụ: [CREATE: Lịch họp 14:30 | Gặp đối tác tại phòng 201 lúc 15:00 | public]
+           Ví dụ ghi chú riêng tư: [CREATE: Mật khẩu két sắt | Mã số 8899 lúc 10:00 | private]
         
-        3. [APPEND:id:nội dung thêm]
+        3. [APPEND: id | nội dung thêm]
            Thêm nội dung vào cuối một ghi chú đã có (áp dụng cho cả ghi chú thường và ghi chú riêng tư).
-           Ví dụ: [APPEND:4:\n- Đã thanh toán tiền điện thoại tháng 11]
+           Dùng dấu '|' để nội dung thêm thoải mái chứa mốc giờ hoặc dấu ':'.
+           Ví dụ: [APPEND: 4 | \n- Đã thanh toán tiền điện thoại tháng 11 lúc 14:30]
         
-        4. [UPDATE:id:nội dung mới]
+        4. [UPDATE: id | nội dung mới]
            Cập nhật toàn bộ nội dung của ghi chú thường (CHỈ áp dụng cho ghi chú thường, CẤM dùng trên ghi chú riêng tư).
+           Ví dụ: [UPDATE: 2 | Danh sách cập nhật mới lúc 09:00: Mục 1, Mục 2]
         
-        5. [DELETE:id]
+        5. [DELETE: id]
            Xóa ghi chú thường vào thùng rác (CẤM dùng trên ghi chú riêng tư).
+           Ví dụ: [DELETE: 5]
         
         QUY TẮC HIỂN THỊ:
         - Ứng dụng sẽ tự động ẩn các thẻ lệnh trên khỏi văn bản mà người dùng nhìn thấy, đồng thời chuyển chúng thành các hành động thực tế (hiển thị thẻ ghi chú, thêm ghi chú, v.v.).

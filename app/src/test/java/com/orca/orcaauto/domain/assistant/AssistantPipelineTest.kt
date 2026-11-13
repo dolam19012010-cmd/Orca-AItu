@@ -25,6 +25,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
+import okio.Buffer
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -684,6 +685,247 @@ class AssistantPipelineTest {
 
         // Round 2 prompt must contain fidelity warning
         assertTrue("Prompt Vòng 2 phải nhắc nhở AI bám sát thông tin ghi chú", retrieved.assembledRound2Prompt.contains("ưu tiên và bám sát tuyệt đối nội dung này để trả lời trung thực"))
+    }
+
+    // =========================================================================
+    // 7. MILESTONE 3: SPAM DETECTION, ROOM DB DELETION & CONTEXT COALESCING
+    // =========================================================================
+
+    @Test
+    fun stage1_contextPacker_assignsTicketIdsAndBuildsTicketMap() = runTest {
+        val now = System.currentTimeMillis()
+        fakeNotificationDao.insert(
+            NotificationEntity(
+                id = 101L,
+                appPackage = "com.zing.zalo",
+                appName = "Zalo",
+                sender = "Sếp Hùng",
+                content = "Gửi báo cáo trước 17h",
+                timestamp = now - 5000L
+            )
+        )
+        fakeNotificationDao.insert(
+            NotificationEntity(
+                id = 102L,
+                appPackage = "com.shopee.vn",
+                appName = "Shopee",
+                sender = "Khuyến Mãi",
+                content = "Voucher 50% chỉ hôm nay",
+                timestamp = now - 1000L
+            )
+        )
+
+        val packaged = contextPacker.pack("Kiểm tra thông báo")
+
+        // 1. Verify ticketMap contains sequential tickets mapping to real Room DB IDs
+        assertEquals(2, packaged.ticketMap.size)
+        assertEquals(101L, packaged.ticketMap[1])
+        assertEquals(102L, packaged.ticketMap[2])
+
+        // 2. Verify ticket tags appear in fullOverviewPrompt
+        assertTrue(packaged.fullOverviewPrompt.contains("[1]"))
+        assertTrue(packaged.fullOverviewPrompt.contains("[2]"))
+        assertTrue(packaged.fullOverviewPrompt.contains("CHI TIẾT TIN NHẮN 24H KÈM VÉ ID"))
+
+        // 3. Verify backward-compatible notificationSummarySnippet is preserved
+        assertTrue(packaged.notificationSummarySnippet.contains("Zalo: Sếp Hùng: 1 tin nhắn"))
+        assertTrue(packaged.notificationSummarySnippet.contains("Shopee: Khuyến Mãi: 1 tin nhắn"))
+    }
+
+    @Test
+    fun stage2_round1Router_parsesDeleteSpamTicketIds_jsonAndFallback() {
+        val packaged = PackagedContext(
+            userPrompt = "Lọc rác",
+            catalogItems = emptyList(),
+            catalogPromptSnippet = "",
+            notificationSummarySnippet = "",
+            fullOverviewPrompt = "",
+            ticketMap = mapOf(1 to 10L, 2 to 20L, 3 to 30L)
+        )
+
+        // 1. JSON format: deleteSpamTicketIds
+        val jsonResponse = """
+            {
+              "neededNoteIds": [],
+              "senderFilter": [],
+              "deleteSpamTicketIds": [2, 3],
+              "reasoning": "Vé 2 và 3 là spam quảng cáo"
+            }
+        """.trimIndent()
+        val decisionJson = invokeParseRouterResponse(
+            router = round1Router,
+            rawResponse = jsonResponse,
+            userPrompt = "Lọc rác",
+            packagedContext = packaged,
+            validCatalogIds = emptySet()
+        )
+        assertEquals(listOf(2, 3), decisionJson.deleteSpamTicketIds)
+
+        // 2. Tag fallback: [DELETE_MSG: 1, 2]
+        val tagResponse = "Tôi phát hiện tin rác nên yêu cầu xóa [DELETE_MSG: 1, 2]"
+        val decisionTag = invokeParseRouterResponse(
+            router = round1Router,
+            rawResponse = tagResponse,
+            userPrompt = "Lọc rác",
+            packagedContext = packaged,
+            validCatalogIds = emptySet()
+        )
+        assertEquals(listOf(1, 2), decisionTag.deleteSpamTicketIds)
+
+        // 3. Function call fallback: delete_spam(ids=[1, 3])
+        val funcResponse = "delete_spam(ids=[1, 3])"
+        val decisionFunc = invokeParseRouterResponse(
+            router = round1Router,
+            rawResponse = funcResponse,
+            userPrompt = "Lọc rác",
+            packagedContext = packaged,
+            validCatalogIds = emptySet()
+        )
+        assertEquals(listOf(1, 3), decisionFunc.deleteSpamTicketIds)
+    }
+
+    @Test
+    fun round1_detectsSpam_deletesFromDatabaseAndExcludesFromRound2() = runBlocking {
+        val now = System.currentTimeMillis()
+        val notif1Id = fakeNotificationDao.insert(
+            NotificationEntity(
+                id = 10L,
+                appPackage = "com.zing.zalo",
+                appName = "Zalo",
+                sender = "Sếp Hùng",
+                content = "Giao hợp đồng trước 17h nhé",
+                timestamp = now - 5000L
+            )
+        )
+        val notif2Id = fakeNotificationDao.insert(
+            NotificationEntity(
+                id = 20L,
+                appPackage = "com.zing.zalo",
+                appName = "Zalo",
+                sender = "QC Cho Vay",
+                content = "Vay tiền nhanh 0% lãi suất giải ngân 5p",
+                timestamp = now - 1000L
+            )
+        )
+
+        // Custom router that detects ticket [2] as spam
+        val customRouter = createMockRound1Router { _, _ ->
+            """
+            {
+              "neededNoteIds": [],
+              "senderFilter": [],
+              "deleteSpamTicketIds": [2],
+              "reasoning": "Phát hiện vé [2] là spam quảng cáo cho vay tài chính"
+            }
+            """.trimIndent()
+        }
+
+        var capturedRound2Prompt = ""
+        val okHttpClient = OkHttpClient.Builder()
+            .addInterceptor(Interceptor { chain ->
+                val request = chain.request()
+                val buffer = Buffer()
+                request.body?.writeTo(buffer)
+                capturedRound2Prompt = buffer.readUtf8()
+                val sseBody = "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Đã lọc và dọn dẹp tin nhắn rác.\"}]}}]}\ndata: [DONE]\n"
+                val body = sseBody.toResponseBody("text/event-stream".toMediaType())
+                Response.Builder()
+                    .request(request)
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(200)
+                    .message("OK")
+                    .body(body)
+                    .build()
+            })
+            .build()
+
+        val streamingClient = StreamingAiClient(httpClient = okHttpClient)
+
+        val pipeline = AssistantPipeline(
+            noteRepository = noteRepository,
+            streamingAiClient = streamingClient,
+            contextPacker = contextPacker,
+            round1Router = customRouter,
+            localRetriever = localRetriever,
+            notificationDao = fakeNotificationDao,
+            keyPoolProvider = { listOf(testApiKey) }
+        )
+
+        val emitted = pipeline.askStreaming("Kiểm tra tin nhắn và dọn rác").toList()
+
+        // 1. Verify pipeline completed successfully
+        val finalState = emitted.last()
+        assertEquals(AssistantStep.COMPLETED, finalState.step)
+        assertNull(finalState.errorMessage)
+
+        // 2. Verify Room DB deletion: Spam notification (notif2Id) was permanently deleted from fakeNotificationDao
+        assertEquals(1, fakeNotificationDao.getTotalNotificationCount())
+        val remaining = fakeNotificationDao.getRecentNotifications(10)
+        assertEquals(1, remaining.size)
+        assertEquals(notif1Id, remaining[0].id)
+        assertEquals("Giao hợp đồng trước 17h nhé", remaining[0].content)
+
+        // 3. Verify Round 2 prompt contains clean messages only:
+        // - Legitimate message is present
+        assertTrue(capturedRound2Prompt.contains("Giao hợp đồng trước 17h"))
+        // - Spam message is strictly excluded
+        assertFalse(capturedRound2Prompt.contains("Vay tiền nhanh"))
+        // - Temporary ticket tags [1], [2] are NOT leaked into Round 2 prompt
+        assertFalse(capturedRound2Prompt.contains("[1]"))
+        assertFalse(capturedRound2Prompt.contains("[2]"))
+    }
+
+    @Test
+    fun round1_bogusTicketId_safelyIgnored() = runBlocking {
+        val now = System.currentTimeMillis()
+        val notif1Id = fakeNotificationDao.insert(
+            NotificationEntity(
+                id = 100L,
+                appPackage = "com.zing.zalo",
+                appName = "Zalo",
+                sender = "Sếp Hùng",
+                content = "Báo cáo công việc tuần",
+                timestamp = now
+            )
+        )
+
+        // Router returns a bogus ticket ID (999) not present in ticketMap
+        val customRouter = createMockRound1Router { _, _ ->
+            """
+            {
+              "neededNoteIds": [],
+              "senderFilter": [],
+              "deleteSpamTicketIds": [999],
+              "reasoning": "Hallucinated bogus ticket ID"
+            }
+            """.trimIndent()
+        }
+
+        val sseResponse = "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Không có gì.\"}]}}]}\ndata: [DONE]\n"
+        val streamingClient = createMockStreamingClient(sseResponse)
+
+        val pipeline = AssistantPipeline(
+            noteRepository = noteRepository,
+            streamingAiClient = streamingClient,
+            contextPacker = contextPacker,
+            round1Router = customRouter,
+            localRetriever = localRetriever,
+            notificationDao = fakeNotificationDao,
+            keyPoolProvider = { listOf(testApiKey) }
+        )
+
+        val emitted = pipeline.askStreaming("Kiểm tra tin").toList()
+
+        // 1. Pipeline succeeds with zero errors
+        val finalState = emitted.last()
+        assertEquals(AssistantStep.COMPLETED, finalState.step)
+        assertNull(finalState.errorMessage)
+
+        // 2. Safe resilience: Database intact, no false deletion occurred
+        assertEquals(1, fakeNotificationDao.getTotalNotificationCount())
+        val remaining = fakeNotificationDao.getRecentNotifications(10)
+        assertEquals(1, remaining.size)
+        assertEquals(notif1Id, remaining[0].id)
     }
 
     // =========================================================================

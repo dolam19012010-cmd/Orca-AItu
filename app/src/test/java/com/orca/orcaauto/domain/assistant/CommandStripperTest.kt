@@ -31,10 +31,13 @@ class CommandStripperTest {
 
     @Test
     fun cleanLive_suppressesIncompleteTrailingCommandPrefixes() {
-        // As tokens stream in, unclosed command prefixes must be hidden from user
+        // As tokens stream in, unclosed command prefixes (including dangling '[') must be hidden from user
         val tokenSequence = listOf(
             "Tôi sẽ hiển thị ghi chú cho bạn: ",
             "Tôi sẽ hiển thị ghi chú cho bạn: [",
+            "Tôi sẽ hiển thị ghi chú cho bạn: [S",
+            "Tôi sẽ hiển thị ghi chú cho bạn: [SH",
+            "Tôi sẽ hiển thị ghi chú cho bạn: [SHO",
             "Tôi sẽ hiển thị ghi chú cho bạn: [SHOW",
             "Tôi sẽ hiển thị ghi chú cho bạn: [SHOW_NOTE",
             "Tôi sẽ hiển thị ghi chú cho bạn: [SHOW_NOTE:",
@@ -44,8 +47,8 @@ class CommandStripperTest {
 
         val expected = "Tôi sẽ hiển thị ghi chú cho bạn:"
 
-        // All intermediate states with pending tag must hide the tag
-        for (i in 2 until tokenSequence.size - 1) {
+        // All intermediate states from index 1 (dangling '[') until before closing ']' must hide the tag
+        for (i in 1 until tokenSequence.size - 1) {
             val state = tokenSequence[i]
             val cleaned = CommandStripper.cleanLive(state)
             assertEquals("State '$state' must suppress pending command prefix", expected, cleaned)
@@ -58,11 +61,17 @@ class CommandStripperTest {
 
     @Test
     fun cleanLive_suppressesIncompleteTrailingCreateAndAppend() {
+        assertEquals("Đang tạo ghi chú:", CommandStripper.cleanLive("Đang tạo ghi chú: ["))
+        assertEquals("Đang tạo ghi chú:", CommandStripper.cleanLive("Đang tạo ghi chú: [C"))
         assertEquals("Đang tạo ghi chú:", CommandStripper.cleanLive("Đang tạo ghi chú: [CREA"))
         assertEquals("Đang tạo ghi chú:", CommandStripper.cleanLive("Đang tạo ghi chú: [CREATE:Tiêu đề mới"))
+        assertEquals("Đang tạo ghi chú:", CommandStripper.cleanLive("Đang tạo ghi chú: [CREATE: Lịch họp 14:30 | Phòng 201"))
+        assertEquals("Đang nối thêm:", CommandStripper.cleanLive("Đang nối thêm: [A"))
         assertEquals("Đang nối thêm:", CommandStripper.cleanLive("Đang nối thêm: [APP"))
         assertEquals("Đang nối thêm:", CommandStripper.cleanLive("Đang nối thêm: [APPEND:5:Nội dung dở dang"))
+        assertEquals("Đang cập nhật:", CommandStripper.cleanLive("Đang cập nhật: [U"))
         assertEquals("Đang cập nhật:", CommandStripper.cleanLive("Đang cập nhật: [UPD"))
+        assertEquals("Đang xóa:", CommandStripper.cleanLive("Đang xóa: [D"))
         assertEquals("Đang xóa:", CommandStripper.cleanLive("Đang xóa: [DEL"))
     }
 
@@ -100,6 +109,19 @@ class CommandStripperTest {
         assertFalse(cleaned.contains("[SHOW_NOTE:1]"))
         assertFalse(cleaned.contains("\n\n\n"))
         assertTrue(cleaned.contains("Dòng 1\n\nDòng 2"))
+    }
+
+    @Test
+    fun cleanFinal_stripsDanglingIncompleteCommandTags() {
+        val input = "Dưới đây là thông tin bạn cần: [CREATE: Lịch họp 14:30 | Phòng 201"
+        val cleaned = CommandStripper.cleanFinal(input)
+        assertEquals("Dưới đây là thông tin bạn cần:", cleaned)
+
+        val danglingBracket = "Xem kết quả tại [SHOW"
+        assertEquals("Xem kết quả tại", CommandStripper.cleanFinal(danglingBracket))
+
+        val singleBracket = "Xem kết quả tại ["
+        assertEquals("Xem kết quả tại", CommandStripper.cleanFinal(singleBracket))
     }
 
     // =========================================================================
@@ -196,6 +218,53 @@ class CommandStripperTest {
 
         val deleteCmd = commands[1] as NoteCommand.Delete
         assertEquals(9L, deleteCmd.noteId)
+    }
+
+    @Test
+    fun extractCommands_create_pipeDelimiterWithColonsInTitleAndContent() {
+        // [CREATE: Lịch họp 14:30 | Phòng 201 lúc 15:00 | private]
+        val raw = "[CREATE: Lịch họp 14:30 | Phòng 201 lúc 15:00 | private]"
+        val commands = CommandStripper.extractCommands(raw)
+        assertEquals(1, commands.size)
+        val cmd = commands[0] as NoteCommand.Create
+        assertEquals("Lịch họp 14:30", cmd.title)
+        assertEquals("Phòng 201 lúc 15:00", cmd.content)
+        assertTrue(cmd.isPrivate)
+
+        // Public flag with timestamps in title
+        val rawPublic = "[CREATE: Lịch sinh hoạt 08:00 : Họp sáng | Nội dung chi tiết: mục 1 | public]"
+        val cmdPublic = CommandStripper.extractCommands(rawPublic).first() as NoteCommand.Create
+        assertEquals("Lịch sinh hoạt 08:00 : Họp sáng", cmdPublic.title)
+        assertEquals("Nội dung chi tiết: mục 1", cmdPublic.content)
+        assertFalse(cmdPublic.isPrivate)
+
+        // Multiple pipes without privacy flag (merged content preserved)
+        val rawTable = "[CREATE: Bảng dữ liệu | Cột 1 | Cột 2]"
+        val cmdTable = CommandStripper.extractCommands(rawTable).first() as NoteCommand.Create
+        assertEquals("Bảng dữ liệu", cmdTable.title)
+        assertEquals("Cột 1 | Cột 2", cmdTable.content)
+        assertFalse(cmdTable.isPrivate)
+    }
+
+    @Test
+    fun extractCommands_append_pipeDelimiterWithColons() {
+        // [APPEND: 1 | Điểm danh 14:30 : Đủ người]
+        val raw = "[APPEND: 1 | Điểm danh 14:30 : Đủ người]"
+        val commands = CommandStripper.extractCommands(raw)
+        assertEquals(1, commands.size)
+        val appendCmd = commands[0] as NoteCommand.Append
+        assertEquals(1L, appendCmd.noteId)
+        assertEquals("Điểm danh 14:30 : Đủ người", appendCmd.textToAppend)
+    }
+
+    @Test
+    fun extractCommands_update_pipeDelimiterWithColons() {
+        val raw = "[UPDATE: 2 | Danh sách cập nhật mới lúc 09:00: Mục 1, Mục 2]"
+        val commands = CommandStripper.extractCommands(raw)
+        assertEquals(1, commands.size)
+        val updateCmd = commands[0] as NoteCommand.Update
+        assertEquals(2L, updateCmd.noteId)
+        assertEquals("Danh sách cập nhật mới lúc 09:00: Mục 1, Mục 2", updateCmd.newContent)
     }
 
     @Test
