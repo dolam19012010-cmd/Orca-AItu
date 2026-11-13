@@ -289,12 +289,12 @@ Người dùng có thể chọn 4 chế độ chuông báo để chống ngủ q
 * Tự động nhận diện nhà cung cấp qua tiền tố Key (`AIzaSy...`, `gsk_...`, `sk-or-...`, `nvapi-...`).
 * **Cơ chế Failover Pool tự động:** Khi một key hoặc nhà cung cấp bị cạn hạn ngạch (429 Rate Limit) hoặc lỗi mạng (503 Service Unavailable), hệ thống tự động trượt sang Key tiếp theo trong danh sách mà không làm gián đoạn trải nghiệm người dùng.
 * **Danh mục Model mới nhất được cập nhật:**
-  * **Google Gemini:** `gemini-2.5-flash` (Mặc định - Flagship Hybrid Reasoning), `gemini-2.5-flash-lite` (Siêu nhẹ, tốc độ tức thì cho Vòng 1), `gemini-2.5-pro` (Suy luận phức tạp đa bước), `gemini-2.0-flash`, `gemini-2.0-flash-lite`, `gemini-1.5-flash`, `gemini-1.5-pro`.
-  * **Groq LPU (300+ tok/s):** `llama-3.3-70b-versatile` (Mặc định), `llama-3.1-8b-instant`, `deepseek-r1-distill-llama-70b`, `qwen-2.5-32b`, `mistral-saba-24b`, `mixtral-8x7b-32768`.
-  * **OpenRouter (Multi-AI Free & Pro):** `meta-llama/llama-3.3-70b-instruct:free`, `deepseek/deepseek-r1:free`, `deepseek/deepseek-chat:free`, `google/gemini-2.0-flash-exp:free`, `google/gemma-2-9b-it:free`, `mistralai/mistral-small-24b-instruct-2501:free`, `qwen/qwen-2.5-72b-instruct:free`.
-  * **DeepSeek Native:** `deepseek-chat` (DeepSeek V3), `deepseek-reasoner` (DeepSeek R1).
-  * **NVIDIA NIM:** `meta/llama-3.3-70b-instruct`, `deepseek-ai/deepseek-r1`, `nvidia/nemotron-4-340b-instruct`, `mistralai/mistral-large-2-instruct`.
-  * **OpenAI:** `gpt-4o-mini`, `gpt-4o`, `o3-mini`, `o1-mini`.
+  * **Google Gemini:** `gemini-3.8-flash` (Mặc định - Flagship 2026 siêu tốc & agentic workflow), `gemini-3.5-flash-lite` (Siêu nhẹ, tốc độ tức thì cho Vòng 1 & Micro-tasks), `gemini-4-hydrogen` (Frontier thế hệ 4 lý luận sâu), `gemini-3.6-flash` (Cân bằng token & phản biện đa tầng), `gemini-3.0-flash`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-2.5-pro`, `gemini-2.0-flash`, `gemini-1.5-flash`.
+  * **Groq LPU (300+ tok/s):** `llama-3.3-70b-versatile` (Mặc định), `qwen/qwen3.8-27b` (Qwen đa ngôn ngữ thế hệ mới), `deepseek-r1-distill-llama-70b` (DeepSeek R1 reasoning), `llama-3.1-8b-instant`, `qwen-2.5-32b`, `mistral-saba-24b`, `mixtral-8x7b-32768`.
+  * **OpenRouter (Multi-AI Free & Pro):** `openrouter/free` (Tự động chuyển tiếp model miễn phí tối ưu), `nvidia/nemotron-3-ultra-550b-a55b:free`, `google/gemma-4-31b-it:free` (Gemma 4 thế hệ mới), `meta-llama/llama-3.3-70b-instruct:free`, `deepseek/deepseek-r1:free`, `deepseek/deepseek-chat:free`, `google/gemini-2.0-flash-exp:free`, `qwen/qwen-2.5-72b-instruct:free`, `mistralai/mistral-small-24b-instruct-2501:free`.
+  * **DeepSeek Native:** `deepseek-chat` (DeepSeek V3 / V4.1-Flash MoE 1M context), `deepseek-reasoner` (DeepSeek R1 CoT).
+  * **NVIDIA NIM:** `nvidia/llama-3.1-nemotron-70b-instruct`, `meta/llama-3.3-70b-instruct`, `deepseek-ai/deepseek-r1`, `nvidia/nemotron-4-340b-instruct`, `mistralai/mixtral-8x22b-instruct-v0.1`.
+  * **OpenAI:** `o3-mini`, `o1`, `gpt-4o`, `gpt-4o-mini`.
 
 ---
 
