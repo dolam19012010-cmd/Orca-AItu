@@ -22,7 +22,8 @@ sealed interface StreamUiEvent {
     data class SpikeDetected(
         val delayMs: Long,
         val backupProvider: String,
-        val backupModel: String
+        val backupModel: String,
+        val isInFlightReset: Boolean = false
     ) : StreamUiEvent
 
     /** Entire stream completed successfully */

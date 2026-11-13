@@ -375,4 +375,159 @@ class MessageCoalescerTest {
         assertEquals("Nam", groupResult.conversations.first().turns.first().speaker)
         assertEquals("Chiều nay ai rảnh đi cafe không?", groupResult.conversations.first().turns.first().messages.first().content)
     }
+
+    // =========================================================================
+    // 16. TURN DURATION CEILING (MAX_TURN_DURATION_MS = 15 MINUTES) TESTS (R6)
+    // =========================================================================
+
+    @Test
+    fun turnDurationUnder15Minutes_coalescesIntoSingleTurn() {
+        val t0 = 1700000000000L
+        val min = 60_000L
+        // Messages at T0, T0+2.5m, T0+5m, T0+7.5m, T0+10m, T0+12.5m, T0+15m
+        // Silence gap is 2.5 minutes (<= COALESCE_WINDOW_MS 3m)
+        // Total duration is exactly 15 minutes (<= MAX_TURN_DURATION_MS 15m)
+        val notifications = listOf(
+            NotificationEntity(id = 1L, appPackage = "com.zing.zalo", appName = "Zalo", sender = "Sếp Tuấn", content = "Tin 0m", timestamp = t0),
+            NotificationEntity(id = 2L, appPackage = "com.zing.zalo", appName = "Zalo", sender = "Sếp Tuấn", content = "Tin 2.5m", timestamp = t0 + (2.5 * min).toLong()),
+            NotificationEntity(id = 3L, appPackage = "com.zing.zalo", appName = "Zalo", sender = "Sếp Tuấn", content = "Tin 5m", timestamp = t0 + 5 * min),
+            NotificationEntity(id = 4L, appPackage = "com.zing.zalo", appName = "Zalo", sender = "Sếp Tuấn", content = "Tin 7.5m", timestamp = t0 + (7.5 * min).toLong()),
+            NotificationEntity(id = 5L, appPackage = "com.zing.zalo", appName = "Zalo", sender = "Sếp Tuấn", content = "Tin 10m", timestamp = t0 + 10 * min),
+            NotificationEntity(id = 6L, appPackage = "com.zing.zalo", appName = "Zalo", sender = "Sếp Tuấn", content = "Tin 12.5m", timestamp = t0 + (12.5 * min).toLong()),
+            NotificationEntity(id = 7L, appPackage = "com.zing.zalo", appName = "Zalo", sender = "Sếp Tuấn", content = "Tin 15m", timestamp = t0 + 15 * min)
+        )
+
+        val result = MessageCoalescer.coalesce(notifications)
+
+        assertEquals(1, result.conversations.size)
+        val conv = result.conversations.first()
+        assertEquals(1, conv.turns.size)
+
+        val turn = conv.turns.first()
+        assertEquals("Sếp Tuấn", turn.speaker)
+        assertEquals(7, turn.messages.size)
+        assertEquals(t0, turn.startTimestamp)
+        assertEquals(t0 + 15 * min, turn.lastTimestamp)
+    }
+
+    @Test
+    fun turnDurationExceeds15Minutes_splitsIntoNewTurnAndPrintsTimestamp() {
+        val t0 = 1700000000000L
+        val min = 60_000L
+        // Messages 2 minutes apart: 0m, 2m, 4m, 6m, 8m, 10m, 12m, 14m (each gap <= 3m)
+        // Then next message at 15m + 1s (gap from 14m is 1m + 1s <= 3m, but duration from start is > 15m)
+        val notifications = mutableListOf<NotificationEntity>()
+        var idCounter = 1L
+        for (m in 0..14 step 2) {
+            notifications.add(
+                NotificationEntity(
+                    id = idCounter++,
+                    appPackage = "com.zing.zalo",
+                    appName = "Zalo",
+                    sender = "Sếp Tuấn",
+                    content = "Tin ${m}m",
+                    timestamp = t0 + m * min
+                )
+            )
+        }
+        notifications.add(
+            NotificationEntity(
+                id = idCounter++,
+                appPackage = "com.zing.zalo",
+                appName = "Zalo",
+                sender = "Sếp Tuấn",
+                content = "Tin 15m01s (vượt trần 15 phút)",
+                timestamp = t0 + 15 * min + 1_000L
+            )
+        )
+
+        val result = MessageCoalescer.coalesce(notifications)
+
+        val conv = result.conversations.first()
+        assertEquals("Phải tách thành 2 turns khi thời lượng độc thoại vượt quá 15 phút", 2, conv.turns.size)
+
+        val turn1 = conv.turns[0]
+        assertEquals(8, turn1.messages.size)
+        assertEquals(t0, turn1.startTimestamp)
+
+        val turn2 = conv.turns[1]
+        assertEquals(1, turn2.messages.size)
+        assertEquals(t0 + 15 * min + 1_000L, turn2.startTimestamp)
+        assertEquals("Tin 15m01s (vượt trần 15 phút)", turn2.messages[0].content)
+
+        // Verify formatForPrompt prints separate • [HH:mm] headers for both turns
+        val prompt = MessageCoalescer.formatForPrompt(result)
+        val headerMatches = Regex("""• \[\d{2}:\d{2}\] Sếp Tuấn:""").findAll(prompt).count()
+        assertEquals(2, headerMatches)
+    }
+
+    @Test
+    fun monologueExceeding30Minutes_splitsIntoThreeTurns() {
+        val t0 = 1700000000000L
+        val min = 60_000L
+        // Continuous monologue with messages 2 minutes apart spanning 32 minutes:
+        // Window 1: 0m, 2m, ..., 14m (Turn 1, duration 14m <= 15m)
+        // Window 2: 16m, 18m, ..., 30m (Turn 2, starts at 16m, duration at 30m is 14m <= 15m)
+        // Window 3: 32m (Turn 3, starts at 32m)
+        val notifs = mutableListOf<NotificationEntity>()
+        var idCounter = 1L
+        for (m in 0..32 step 2) {
+            notifs.add(
+                NotificationEntity(
+                    id = idCounter++,
+                    appPackage = "com.zing.zalo",
+                    appName = "Zalo",
+                    sender = "Giảng viên",
+                    content = "Nội dung bài giảng phút thứ $m",
+                    timestamp = t0 + m * min
+                )
+            )
+        }
+
+        val result = MessageCoalescer.coalesce(notifs)
+
+        val conv = result.conversations.first()
+        assertEquals("Độc thoại 32 phút phải được chia thành 3 turns liên tiếp", 3, conv.turns.size)
+
+        val turn1 = conv.turns[0]
+        assertEquals(8, turn1.messages.size) // 0, 2, 4, 6, 8, 10, 12, 14
+        assertEquals(t0, turn1.startTimestamp)
+
+        val turn2 = conv.turns[1]
+        assertEquals(8, turn2.messages.size) // 16, 18, 20, 22, 24, 26, 28, 30
+        assertEquals(t0 + 16 * min, turn2.startTimestamp)
+
+        val turn3 = conv.turns[2]
+        assertEquals(1, turn3.messages.size) // 32
+        assertEquals(t0 + 32 * min, turn3.startTimestamp)
+    }
+
+    @Test
+    fun ticketIdsRemainSequentialAcrossTurnSplits() {
+        val t0 = 1700000000000L
+        val min = 60_000L
+        val notifs = listOf(
+            NotificationEntity(id = 101L, appPackage = "com.zing.zalo", appName = "Zalo", sender = "Tuấn", content = "Tin 1", timestamp = t0),
+            NotificationEntity(id = 102L, appPackage = "com.zing.zalo", appName = "Zalo", sender = "Tuấn", content = "Tin 2", timestamp = t0 + 2 * min),
+            NotificationEntity(id = 103L, appPackage = "com.zing.zalo", appName = "Zalo", sender = "Tuấn", content = "Tin 3 tách turn", timestamp = t0 + 16 * min),
+            NotificationEntity(id = 104L, appPackage = "com.zing.zalo", appName = "Zalo", sender = "Tuấn", content = "Tin 4", timestamp = t0 + 18 * min)
+        )
+
+        val result = MessageCoalescer.coalesce(notifs, assignTicketIds = true)
+
+        assertEquals(2, result.conversations.first().turns.size)
+
+        // Ticket IDs must be [1], [2], [3], [4] sequentially mapped to real IDs
+        assertEquals(4, result.ticketMap.size)
+        assertEquals(101L, result.ticketMap[1])
+        assertEquals(102L, result.ticketMap[2])
+        assertEquals(103L, result.ticketMap[3])
+        assertEquals(104L, result.ticketMap[4])
+
+        val prompt = MessageCoalescer.formatForPrompt(result, withTicketIds = true)
+        assertTrue(prompt.contains("  - [1] Tin 1"))
+        assertTrue(prompt.contains("  - [2] Tin 2"))
+        assertTrue(prompt.contains("  - [3] Tin 3 tách turn"))
+        assertTrue(prompt.contains("  - [4] Tin 4"))
+    }
 }

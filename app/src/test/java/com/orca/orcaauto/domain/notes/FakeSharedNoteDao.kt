@@ -79,6 +79,8 @@ class FakeSharedNoteDao : SharedNoteDao {
                     id = it.id,
                     title = it.title,
                     isPrivate = it.isPrivate,
+                    isPinned = it.isPinned,
+                    createdAt = it.createdAt,
                     updatedAt = it.updatedAt
                 )
             }

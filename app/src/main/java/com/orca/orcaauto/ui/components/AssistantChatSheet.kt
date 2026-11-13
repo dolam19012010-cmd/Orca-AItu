@@ -78,6 +78,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -95,6 +96,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.orca.orcaauto.data.local.SharedNoteEntity
+import com.orca.orcaauto.data.preferences.AssistantThinkingLevel
+import com.orca.orcaauto.data.preferences.UserPreferences
 import com.orca.orcaauto.domain.assistant.AssistantPipeline
 import com.orca.orcaauto.domain.assistant.AssistantStep
 import com.orca.orcaauto.domain.assistant.AssistantUiState
@@ -161,6 +164,9 @@ fun AssistantChatSheet(
     var inputText by remember { mutableStateOf("") }
     var isProcessing by remember { mutableStateOf(false) }
     var activeJob by remember { mutableStateOf<Job?>(null) }
+
+    val userPrefs = remember { UserPreferences.getInstance(context) }
+    val thinkingLevel by userPrefs.assistantThinkingLevelFlow.collectAsState()
 
     val listState = rememberLazyListState()
 
@@ -322,11 +328,15 @@ fun AssistantChatSheet(
                 }
             }
 
-            // Input Bar with IME Padding
+            // Input Bar with IME Padding and Thinking Level Chips
             AssistantInputBar(
                 inputText = inputText,
                 onInputChanged = { inputText = it },
                 isProcessing = isProcessing,
+                thinkingLevel = thinkingLevel,
+                onThinkingLevelChanged = { newLevel ->
+                    userPrefs.setAssistantThinkingLevel(newLevel)
+                },
                 onSend = { sendMessage(inputText) },
                 onCancel = {
                     activeJob?.cancel()
@@ -1069,6 +1079,8 @@ private fun AssistantInputBar(
     inputText: String,
     onInputChanged: (String) -> Unit,
     isProcessing: Boolean,
+    thinkingLevel: AssistantThinkingLevel,
+    onThinkingLevelChanged: (AssistantThinkingLevel) -> Unit,
     onSend: () -> Unit,
     onCancel: () -> Unit
 ) {
@@ -1078,69 +1090,132 @@ private fun AssistantInputBar(
             .fillMaxWidth()
             .imePadding()
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .padding(horizontal = 14.dp, vertical = 6.dp)
         ) {
-            OutlinedTextField(
-                value = inputText,
-                onValueChange = onInputChanged,
-                placeholder = {
-                    Text(
-                        text = "Hỏi trợ lý về tin nhắn, ghi chú...",
-                        color = TextMutedDark,
-                        fontSize = 13.5.sp
-                    )
-                },
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = TextPrimaryDark,
-                    unfocusedTextColor = TextPrimaryDark,
-                    focusedContainerColor = GlassSurfaceInner,
-                    unfocusedContainerColor = GlassSurfaceInner,
-                    focusedBorderColor = AccentCyan,
-                    unfocusedBorderColor = GlassBorderSubtle
-                ),
-                shape = RoundedCornerShape(22.dp),
-                maxLines = 4,
+            // Thinking level chip selector row (⚡ Nhanh, ⚖ Cân bằng, 🧠 Sâu sắc)
+            Row(
                 modifier = Modifier
-                    .weight(1f)
-                    .padding(end = 8.dp)
-            )
+                    .fillMaxWidth()
+                    .padding(bottom = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                ThinkingLevelChip(
+                    label = "⚡ Nhanh",
+                    selected = thinkingLevel == AssistantThinkingLevel.FAST,
+                    onClick = { onThinkingLevelChanged(AssistantThinkingLevel.FAST) },
+                    modifier = Modifier.weight(1f)
+                )
+                ThinkingLevelChip(
+                    label = "⚖ Cân bằng",
+                    selected = thinkingLevel == AssistantThinkingLevel.BALANCED,
+                    onClick = { onThinkingLevelChanged(AssistantThinkingLevel.BALANCED) },
+                    modifier = Modifier.weight(1f)
+                )
+                ThinkingLevelChip(
+                    label = "🧠 Sâu sắc",
+                    selected = thinkingLevel == AssistantThinkingLevel.DEEP,
+                    onClick = { onThinkingLevelChanged(AssistantThinkingLevel.DEEP) },
+                    modifier = Modifier.weight(1f)
+                )
+            }
 
-            if (isProcessing) {
-                IconButton(
-                    onClick = onCancel,
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = inputText,
+                    onValueChange = onInputChanged,
+                    placeholder = {
+                        Text(
+                            text = "Hỏi trợ lý về tin nhắn, ghi chú...",
+                            color = TextMutedDark,
+                            fontSize = 13.5.sp
+                        )
+                    },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = TextPrimaryDark,
+                        unfocusedTextColor = TextPrimaryDark,
+                        focusedContainerColor = GlassSurfaceInner,
+                        unfocusedContainerColor = GlassSurfaceInner,
+                        focusedBorderColor = AccentCyan,
+                        unfocusedBorderColor = GlassBorderSubtle
+                    ),
+                    shape = RoundedCornerShape(22.dp),
+                    maxLines = 4,
                     modifier = Modifier
-                        .size(42.dp)
-                        .clip(CircleShape)
-                        .background(AccentRose)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Stop,
-                        contentDescription = "Hủy phản hồi",
-                        tint = PrimaryWhite,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-            } else {
-                IconButton(
-                    onClick = onSend,
-                    enabled = inputText.isNotBlank(),
-                    modifier = Modifier
-                        .size(42.dp)
-                        .clip(CircleShape)
-                        .background(if (inputText.isNotBlank()) AccentCyan else GlassSurfaceInner)
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.Send,
-                        contentDescription = "Gửi",
-                        tint = if (inputText.isNotBlank()) BackgroundDark else TextMutedDark,
-                        modifier = Modifier.size(18.dp)
-                    )
+                        .weight(1f)
+                        .padding(end = 8.dp)
+                )
+
+                if (isProcessing) {
+                    IconButton(
+                        onClick = onCancel,
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(CircleShape)
+                            .background(AccentRose)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Stop,
+                            contentDescription = "Hủy phản hồi",
+                            tint = PrimaryWhite,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                } else {
+                    IconButton(
+                        onClick = onSend,
+                        enabled = inputText.isNotBlank(),
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(CircleShape)
+                            .background(if (inputText.isNotBlank()) AccentCyan else GlassSurfaceInner)
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Send,
+                            contentDescription = "Gửi",
+                            tint = if (inputText.isNotBlank()) BackgroundDark else TextMutedDark,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ThinkingLevelChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val backgroundColor = if (selected) AccentCyan.copy(alpha = 0.18f) else GlassSurfaceInner.copy(alpha = 0.6f)
+    val borderColor = if (selected) AccentCyan else GlassBorderSubtle
+    val textColor = if (selected) AccentCyan else TextSecondaryDark
+    val fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
+
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(backgroundColor)
+            .border(BorderStroke(1.dp, borderColor), RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 5.dp, horizontal = 4.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = label,
+            color = textColor,
+            fontSize = 11.5.sp,
+            fontWeight = fontWeight,
+            maxLines = 1
+        )
     }
 }

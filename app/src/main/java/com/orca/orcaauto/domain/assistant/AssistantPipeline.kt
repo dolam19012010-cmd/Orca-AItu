@@ -5,6 +5,7 @@ import android.util.Log
 import com.orca.orcaauto.data.local.AppDatabase
 import com.orca.orcaauto.data.local.NotificationDao
 import com.orca.orcaauto.data.local.SharedNoteEntity
+import com.orca.orcaauto.data.preferences.AssistantThinkingLevel
 import com.orca.orcaauto.data.preferences.UserPreferences
 import com.orca.orcaauto.data.remote.ApiKeyConfig
 import com.orca.orcaauto.data.remote.StreamUiEvent
@@ -44,7 +45,8 @@ class AssistantPipeline(
     private val round1Router: Round1Router = Round1Router(universalAiClient),
     private val localRetriever: LocalRetriever,
     private val notificationDao: NotificationDao? = null,
-    private val keyPoolProvider: () -> List<ApiKeyConfig>
+    private val keyPoolProvider: () -> List<ApiKeyConfig>,
+    private val thinkingLevelProvider: (() -> AssistantThinkingLevel)? = null
 ) {
 
     private val activeNotificationDao: NotificationDao?
@@ -78,7 +80,8 @@ class AssistantPipeline(
                 round1Router = router,
                 localRetriever = retriever,
                 notificationDao = notifDao,
-                keyPoolProvider = { userPrefs.getKeyPool() }
+                keyPoolProvider = { userPrefs.getKeyPool() },
+                thinkingLevelProvider = { userPrefs.getAssistantThinkingLevel() }
             )
         }
 
@@ -188,10 +191,21 @@ class AssistantPipeline(
             val rawThoughtAcc = StringBuilder()
             var activeUsedKey: ApiKeyConfig? = null
 
+            val thinkingLevel = thinkingLevelProvider?.invoke()
+                ?: context?.let {
+                    try {
+                        UserPreferences.getInstance(it).getAssistantThinkingLevel()
+                    } catch (_: Throwable) {
+                        AssistantThinkingLevel.BALANCED
+                    }
+                }
+                ?: AssistantThinkingLevel.BALANCED
+
             val streamFlow = streamingAiClient.streamWithSpikeRacing(
                 keyPool = keyPool,
                 prompt = retrievedContext.assembledRound2Prompt,
-                systemInstruction = retrievedContext.systemInstruction
+                systemInstruction = retrievedContext.systemInstruction,
+                thinkingLevel = thinkingLevel
             )
 
             streamFlow.collect { event ->
@@ -236,10 +250,18 @@ class AssistantPipeline(
                     }
 
                     is StreamUiEvent.SpikeDetected -> {
+                        if (event.isInFlightReset) {
+                            rawContentAcc.setLength(0)
+                            rawThoughtAcc.setLength(0)
+                        }
                         emit(
                             AssistantUiState(
                                 step = AssistantStep.STAGE_4_STREAMING_ANSWER,
-                                stepDescription = "Mạng hơi chậm, đang chuyển sang kênh dự phòng...",
+                                stepDescription = if (event.isInFlightReset) {
+                                    "Kênh chính bị gián đoạn, đang chuyển sang kênh dự phòng..."
+                                } else {
+                                    "Mạng hơi chậm, đang chuyển sang kênh dự phòng..."
+                                },
                                 streamedThought = rawThoughtAcc.toString(),
                                 streamedContentClean = CommandStripper.cleanLive(rawContentAcc.toString()),
                                 activeUsedKey = activeUsedKey

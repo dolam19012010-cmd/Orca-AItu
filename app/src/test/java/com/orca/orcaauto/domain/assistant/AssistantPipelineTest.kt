@@ -24,8 +24,11 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Response
+import okhttp3.ResponseBody
 import okhttp3.ResponseBody.Companion.toResponseBody
 import okio.Buffer
+import okio.buffer
+import okio.source
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -35,7 +38,10 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.io.InputStream
+import java.io.IOException
 import java.lang.reflect.Method
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Comprehensive Unit Test Suite for [AssistantPipeline] and its 5 Stages:
@@ -492,6 +498,139 @@ class AssistantPipelineTest {
         assertNotNull(noteInDb)
         assertEquals("Dữ liệu tối mật", noteInDb!!.content)
         assertFalse(noteInDb.isDeleted)
+    }
+
+    @Test
+    fun spikeDetected_withInFlightResetTrue_clearsAccumulators() = runBlocking {
+        val callCount = AtomicInteger(0)
+
+        val leaderKey = ApiKeyConfig(
+            provider = AiProviderType.GEMINI,
+            rawKey = "AIzaSyTest_LeaderStall",
+            modelName = "gemini-3.5-flash-lite",
+            endpointUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=AIzaSyTest_LeaderStall",
+            isEnabled = true
+        )
+        val backupKey = ApiKeyConfig(
+            provider = AiProviderType.GEMINI,
+            rawKey = "AIzaSyTest_BackupKey",
+            modelName = "gemini-2.0-flash",
+            endpointUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=AIzaSyTest_BackupKey",
+            isEnabled = true
+        )
+
+        val okHttpClient = OkHttpClient.Builder()
+            .addInterceptor(Interceptor { chain ->
+                val call = chain.call()
+                val reqNum = callCount.incrementAndGet()
+
+                if (reqNum == 1) {
+                    // Stalling leader worker: emits partial thought and partial content, then stalls until watchdog cancels it
+                    val leaderSse = """
+                        data: {"candidates":[{"content":{"parts":[{"text":"Suy nghĩ dang dở của model cũ...","thought":true}]}}]}
+                        data: {"candidates":[{"content":{"parts":[{"text":"Câu trả lời dang dở của model cũ..."}]}}]}
+                    """.trimIndent() + "\n\n"
+                    val bytes = leaderSse.toByteArray(Charsets.UTF_8)
+
+                    val stallingStream = object : InputStream() {
+                        private var offset = 0
+
+                        override fun read(): Int {
+                            if (offset < bytes.size) {
+                                return bytes[offset++].toInt() and 0xFF
+                            }
+                            while (!call.isCanceled()) {
+                                try {
+                                    Thread.sleep(50)
+                                } catch (e: InterruptedException) {
+                                    throw IOException("Leader interrupted")
+                                }
+                            }
+                            throw IOException("Leader cancelled by watchdog stall reset")
+                        }
+
+                        override fun read(b: ByteArray, off: Int, len: Int): Int {
+                            if (offset < bytes.size) {
+                                val toRead = Math.min(len, bytes.size - offset)
+                                System.arraycopy(bytes, offset, b, off, toRead)
+                                offset += toRead
+                                return toRead
+                            }
+                            while (!call.isCanceled()) {
+                                try {
+                                    Thread.sleep(50)
+                                } catch (e: InterruptedException) {
+                                    throw IOException("Leader interrupted")
+                                }
+                            }
+                            throw IOException("Leader cancelled by watchdog stall reset")
+                        }
+                    }
+
+                    val body = object : ResponseBody() {
+                        override fun contentType() = "text/event-stream".toMediaType()
+                        override fun contentLength() = -1L
+                        override fun source() = stallingStream.source().buffer()
+                    }
+
+                    Response.Builder()
+                        .request(chain.request())
+                        .protocol(Protocol.HTTP_1_1)
+                        .code(200)
+                        .message("OK")
+                        .body(body)
+                        .build()
+                } else {
+                    // Backup worker launched after watchdog stall reset: emits fresh clean thoughts and answer
+                    val backupSse = """
+                        data: {"candidates":[{"content":{"parts":[{"text":"Suy nghĩ mới từ backup...","thought":true}]}}]}
+                        data: {"candidates":[{"content":{"parts":[{"text":"Câu trả lời mới từ backup hoàn toàn sạch."}]}}]}
+                        data: [DONE]
+                    """.trimIndent()
+
+                    Response.Builder()
+                        .request(chain.request())
+                        .protocol(Protocol.HTTP_1_1)
+                        .code(200)
+                        .message("OK")
+                        .body(backupSse.toResponseBody("text/event-stream".toMediaType()))
+                        .build()
+                }
+            })
+            .build()
+
+        val streamingClient = StreamingAiClient(httpClient = okHttpClient)
+
+        val pipeline = AssistantPipeline(
+            noteRepository = noteRepository,
+            streamingAiClient = streamingClient,
+            contextPacker = contextPacker,
+            round1Router = round1Router,
+            localRetriever = localRetriever,
+            keyPoolProvider = { listOf(leaderKey, backupKey) }
+        )
+
+        val emittedStates = pipeline.askStreaming("Kiểm tra buffer reset khi nghẽn mạng").toList()
+
+        // 1. Verify SpikeDetected event occurred with in-flight reset message
+        val spikeResetState = emittedStates.find {
+            it.stepDescription.contains("Kênh chính bị gián đoạn")
+        }
+        assertNotNull("Phải phát hiện state phản hồi sự kiện in-flight reset", spikeResetState)
+        assertEquals("Khi in-flight reset xảy ra, accumulators phải được làm sạch ngay", "", spikeResetState!!.streamedContentClean)
+        assertEquals("Khi in-flight reset xảy ra, thought accumulator phải được làm sạch ngay", "", spikeResetState.streamedThought)
+
+        // 2. Verify completed final state does NOT contain stale leader content or thought
+        val finalState = emittedStates.last()
+        assertEquals(AssistantStep.COMPLETED, finalState.step)
+
+        // Verify clean content: ONLY contains backup response, no concatenated stale text
+        assertEquals("Câu trả lời mới từ backup hoàn toàn sạch.", finalState.streamedContentClean)
+        assertFalse("Tuyệt đối không chứa đoạn văn dang dở của model cũ", finalState.streamedContentClean.contains("Câu trả lời dang dở của model cũ"))
+
+        // Verify clean thought: ONLY contains backup thought, no concatenated stale thoughts
+        assertEquals("Suy nghĩ mới từ backup...", finalState.streamedThought)
+        assertFalse("Tuyệt đối không chứa suy nghĩ dang dở của model cũ", finalState.streamedThought.contains("Suy nghĩ dang dở của model cũ"))
     }
 
     // =========================================================================

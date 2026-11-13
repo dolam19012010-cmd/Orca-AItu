@@ -2,6 +2,7 @@ package com.orca.orcaauto.data.remote
 
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
+import com.orca.orcaauto.data.preferences.AssistantThinkingLevel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -83,7 +84,8 @@ class StreamingAiClient(
         systemInstruction: String = "",
         spikeThresholdMs: Long = 10_000L,
         stallThresholdMs: Long = 15_000L,
-        hardTimeoutMs: Long = 120_000L
+        hardTimeoutMs: Long = 120_000L,
+        thinkingLevel: AssistantThinkingLevel = AssistantThinkingLevel.BALANCED
     ): Flow<StreamUiEvent> = channelFlow {
         if (prompt.isBlank()) {
             send(StreamUiEvent.Error(IllegalArgumentException("Prompt must not be blank")))
@@ -135,7 +137,8 @@ class StreamingAiClient(
                         fullContentAcc = fullContentAcc,
                         fullThoughtAcc = fullThoughtAcc,
                         isCompleted = isCompleted,
-                        completionSignal = completionSignal
+                        completionSignal = completionSignal,
+                        thinkingLevel = thinkingLevel
                     )
                 } catch (e: Throwable) {
                     if (e is CancellationException) {
@@ -215,7 +218,8 @@ class StreamingAiClient(
                                 StreamUiEvent.SpikeDetected(
                                     delayMs = timeSinceHeartbeat,
                                     backupProvider = backupKey.provider.displayName,
-                                    backupModel = backupKey.modelName
+                                    backupModel = backupKey.modelName,
+                                    isInFlightReset = true
                                 )
                             )
                             lastHeartbeat.set(now)
@@ -262,12 +266,13 @@ class StreamingAiClient(
         fullContentAcc: StringBuilder,
         fullThoughtAcc: StringBuilder,
         isCompleted: AtomicBoolean,
-        completionSignal: CompletableDeferred<Unit>
+        completionSignal: CompletableDeferred<Unit>,
+        thinkingLevel: AssistantThinkingLevel
     ) {
         val request = if (key.provider == AiProviderType.GEMINI) {
-            buildGeminiRequest(key, prompt, systemInstruction)
+            buildGeminiRequest(key, prompt, systemInstruction, thinkingLevel)
         } else {
-            buildOpenAiCompatibleRequest(key, prompt, systemInstruction)
+            buildOpenAiCompatibleRequest(key, prompt, systemInstruction, thinkingLevel)
         }
 
         if (isCompleted.get()) return
@@ -415,7 +420,12 @@ class StreamingAiClient(
         }
     }
 
-    private fun buildGeminiRequest(config: ApiKeyConfig, prompt: String, systemInstruction: String): Request {
+    private fun buildGeminiRequest(
+        config: ApiKeyConfig,
+        prompt: String,
+        systemInstruction: String,
+        thinkingLevel: AssistantThinkingLevel
+    ): Request {
         val model = config.modelName.ifBlank { "gemini-3.8-flash" }
         val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:streamGenerateContent?alt=sse&key=${config.rawKey}"
 
@@ -450,9 +460,11 @@ class StreamingAiClient(
 
             // Include thinking config for Gemini 2.0+ and 3.x models
             if (!model.contains("1.5")) {
+                val budget = thinkingLevel.geminiBudget
                 val genConfig = JsonObject().apply {
                     val thinkingConfig = JsonObject().apply {
-                        addProperty("includeThoughts", true)
+                        addProperty("thinkingBudget", budget)
+                        addProperty("includeThoughts", budget > 0)
                     }
                     add("thinkingConfig", thinkingConfig)
                 }
@@ -471,7 +483,12 @@ class StreamingAiClient(
             .build()
     }
 
-    private fun buildOpenAiCompatibleRequest(config: ApiKeyConfig, prompt: String, systemInstruction: String): Request {
+    private fun buildOpenAiCompatibleRequest(
+        config: ApiKeyConfig,
+        prompt: String,
+        systemInstruction: String,
+        thinkingLevel: AssistantThinkingLevel
+    ): Request {
         val endpointUrl = config.endpointUrl.ifBlank {
             when (config.provider) {
                 AiProviderType.GROQ -> "https://api.groq.com/openai/v1/chat/completions"
@@ -501,6 +518,14 @@ class StreamingAiClient(
                 add(userMsg)
             }
             add("messages", messagesArray)
+
+            // OpenRouter reasoning effort support (low, medium, high)
+            if (config.provider == AiProviderType.OPENROUTER) {
+                val reasoningObj = JsonObject().apply {
+                    addProperty("effort", thinkingLevel.openRouterEffort)
+                }
+                add("reasoning", reasoningObj)
+            }
         }
 
         val requestBody = jsonBody.toString().toRequestBody("application/json; charset=utf-8".toMediaType())

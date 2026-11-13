@@ -11,7 +11,9 @@ data class NoteCatalogTuple(
     val id: Long,
     val title: String,
     val isPrivate: Boolean,
-    val updatedAt: Long
+    val isPinned: Boolean = false,
+    val createdAt: Long = 0L,
+    val updatedAt: Long = 0L
 )
 
 @Dao
@@ -38,7 +40,7 @@ interface SharedNoteDao {
     @Query("SELECT * FROM shared_notes WHERE isDeleted = 1 ORDER BY updatedAt DESC")
     fun getTrashNotesFlow(): Flow<List<SharedNoteEntity>>
 
-    @Query("SELECT id, title, isPrivate, updatedAt FROM shared_notes WHERE isDeleted = 0 ORDER BY isPinned DESC, updatedAt DESC")
+    @Query("SELECT id, title, isPrivate, isPinned, createdAt, updatedAt FROM shared_notes WHERE isDeleted = 0 ORDER BY isPinned DESC, updatedAt DESC")
     suspend fun getCatalogNotes(): List<NoteCatalogTuple>
 
     @Query("SELECT * FROM shared_notes WHERE id IN (:ids) AND isDeleted = 0")

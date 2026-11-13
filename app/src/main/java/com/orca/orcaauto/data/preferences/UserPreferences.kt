@@ -69,6 +69,9 @@ class UserPreferences private constructor(context: Context) {
     private val _selectedSessionIdFlow = MutableStateFlow(getSelectedSessionId())
     val selectedSessionIdFlow: StateFlow<String> = _selectedSessionIdFlow.asStateFlow()
 
+    private val _assistantThinkingLevelFlow = MutableStateFlow(getAssistantThinkingLevel())
+    val assistantThinkingLevelFlow: StateFlow<AssistantThinkingLevel> = _assistantThinkingLevelFlow.asStateFlow()
+
     private fun loadKeyPool(): List<ApiKeyConfig> {
         val json = try {
             prefs.getString(KEY_API_KEY_POOL, null)
@@ -446,6 +449,24 @@ class UserPreferences private constructor(context: Context) {
         _hasUnreadSummaryFlow.value = hasUnread
     }
 
+    fun getAssistantThinkingLevel(): AssistantThinkingLevel {
+        val id = try {
+            prefs.getString(KEY_ASSISTANT_THINKING_LEVEL, AssistantThinkingLevel.BALANCED.id)
+        } catch (e: Throwable) {
+            AssistantThinkingLevel.BALANCED.id
+        }
+        return AssistantThinkingLevel.fromId(id)
+    }
+
+    fun setAssistantThinkingLevel(level: AssistantThinkingLevel) {
+        try {
+            prefs.edit().putString(KEY_ASSISTANT_THINKING_LEVEL, level.id).apply()
+        } catch (e: Throwable) {
+            android.util.Log.e("UserPreferences", "Lỗi setAssistantThinkingLevel: ${e.message}")
+        }
+        _assistantThinkingLevelFlow.value = level
+    }
+
     fun getTaskNotes(): Map<String, String> {
         val json = try {
             prefs.getString(KEY_TASK_NOTES, null)
@@ -712,6 +733,7 @@ class UserPreferences private constructor(context: Context) {
         private const val KEY_SHAKE_TO_WAKE = "key_shake_to_wake"
         private const val KEY_HAS_UNREAD_SUMMARY = "key_has_unread_summary"
         private const val KEY_TASK_NOTES = "key_task_notes"
+        private const val KEY_ASSISTANT_THINKING_LEVEL = "key_assistant_thinking_level"
 
         const val PACKAGE_ZALO = "com.zing.zalo"
         const val PACKAGE_TELEGRAM = "org.telegram.messenger"

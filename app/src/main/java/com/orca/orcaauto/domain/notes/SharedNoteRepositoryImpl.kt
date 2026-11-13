@@ -106,7 +106,9 @@ class SharedNoteRepositoryImpl(
                 id = tuple.id,
                 title = tuple.title,
                 isPrivate = tuple.isPrivate,
-                updatedAt = tuple.updatedAt
+                updatedAt = tuple.updatedAt,
+                isPinned = tuple.isPinned,
+                createdAt = tuple.createdAt
             )
         }
     }

@@ -25,6 +25,14 @@ class LocalRetriever(
 
     private val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
 
+    fun getRealTimeAnchorLine(timestamp: Long = System.currentTimeMillis()): String =
+        ContextPacker.getRealTimeAnchorLine(timestamp)
+
+    companion object {
+        fun getRealTimeAnchorLine(timestamp: Long = System.currentTimeMillis()): String =
+            ContextPacker.getRealTimeAnchorLine(timestamp)
+    }
+
     suspend fun retrieve(
         userPrompt: String,
         decision: Round1Decision,
@@ -121,7 +129,7 @@ class LocalRetriever(
         val coalesced = MessageCoalescer.coalesce(
             notifications = notifications,
             assignTicketIds = false,
-            sanitizePii = true
+            sanitizePii = false
         )
         return MessageCoalescer.formatForPrompt(coalesced, withTicketIds = false)
     }
@@ -173,6 +181,8 @@ class LocalRetriever(
         notificationsSnippet: String
     ): String {
         return buildString {
+            appendLine(getRealTimeAnchorLine())
+            appendLine()
             appendLine("=== THÔNG TIN GHI CHÚ TRÍCH XUẤT CỤC BỘ ===")
             appendLine(notesSnippet)
             appendLine("LƯU Ý: Nếu thông tin trên có ghi chú liên quan đến câu hỏi, hãy ưu tiên và bám sát tuyệt đối nội dung này để trả lời trung thực, không tự bịa đặt kiến thức ngoài lề.")

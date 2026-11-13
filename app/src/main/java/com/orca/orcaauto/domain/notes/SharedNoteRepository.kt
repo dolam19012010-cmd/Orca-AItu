@@ -11,7 +11,9 @@ data class NoteCatalogItem(
     val id: Long,
     val title: String,
     val isPrivate: Boolean,
-    val updatedAt: Long
+    val updatedAt: Long,
+    val isPinned: Boolean = false,
+    val createdAt: Long = updatedAt
 )
 
 /**

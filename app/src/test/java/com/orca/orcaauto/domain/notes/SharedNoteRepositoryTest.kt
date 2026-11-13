@@ -71,6 +71,69 @@ class SharedNoteRepositoryTest {
     }
 
     @Test
+    fun getCatalogForAi_preservesIsPinnedAndCreatedAt_sortedPinnedFirst() = runTest {
+        // Insert unpinned note with earlier createdAt and higher updatedAt
+        val unpinnedNote = SharedNoteEntity(
+            id = 1L,
+            title = "Ghi chú thường cập nhật gần nhất",
+            content = "Nội dung thường",
+            isPrivate = false,
+            isPinned = false,
+            createdAt = 100_000L,
+            updatedAt = 500_000L
+        )
+        fakeDao.insert(unpinnedNote)
+
+        // Insert pinned note with later createdAt but lower updatedAt
+        val pinnedNote1 = SharedNoteEntity(
+            id = 2L,
+            title = "Ghi chú ghim 1",
+            content = "Nội dung ghim 1",
+            isPrivate = true,
+            isPinned = true,
+            createdAt = 200_000L,
+            updatedAt = 300_000L
+        )
+        fakeDao.insert(pinnedNote1)
+
+        // Insert another pinned note with higher updatedAt than pinnedNote1
+        val pinnedNote2 = SharedNoteEntity(
+            id = 3L,
+            title = "Ghi chú ghim 2 (mới hơn)",
+            content = "Nội dung ghim 2",
+            isPrivate = false,
+            isPinned = true,
+            createdAt = 150_000L,
+            updatedAt = 400_000L
+        )
+        fakeDao.insert(pinnedNote2)
+
+        val catalog = repository.getCatalogForAi()
+
+        // 1. Verify size
+        assertEquals(3, catalog.size)
+
+        // 2. Verify sorting: Pinned notes first (ordered by updatedAt DESC), then unpinned notes
+        // Index 0: pinnedNote2 (isPinned = true, updatedAt = 400_000)
+        // Index 1: pinnedNote1 (isPinned = true, updatedAt = 300_000)
+        // Index 2: unpinnedNote (isPinned = false, updatedAt = 500_000)
+        assertEquals(3L, catalog[0].id)
+        assertTrue(catalog[0].isPinned)
+        assertEquals(150_000L, catalog[0].createdAt)
+        assertEquals(400_000L, catalog[0].updatedAt)
+
+        assertEquals(2L, catalog[1].id)
+        assertTrue(catalog[1].isPinned)
+        assertEquals(200_000L, catalog[1].createdAt)
+        assertEquals(300_000L, catalog[1].updatedAt)
+
+        assertEquals(1L, catalog[2].id)
+        assertFalse(catalog[2].isPinned)
+        assertEquals(100_000L, catalog[2].createdAt)
+        assertEquals(500_000L, catalog[2].updatedAt)
+    }
+
+    @Test
     fun retrieveNotesForAi_privateNote_returnsSealedPrivatePointerWithNoContent() = runTest {
         val publicId = repository.createNote(
             title = "Công việc hôm nay",

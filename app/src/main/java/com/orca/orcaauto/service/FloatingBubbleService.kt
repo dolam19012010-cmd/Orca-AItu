@@ -65,6 +65,7 @@ import com.orca.orcaauto.data.local.AppDatabase
 import com.orca.orcaauto.data.local.SharedNoteEntity
 import com.orca.orcaauto.data.local.SmartAlarmEntity
 import com.orca.orcaauto.data.local.SmartAlarmStatus
+import com.orca.orcaauto.data.preferences.AssistantThinkingLevel
 import com.orca.orcaauto.data.preferences.UserPreferences
 import com.orca.orcaauto.domain.LiveAiChatHelper
 import com.orca.orcaauto.domain.alarm.AlarmCascadeMode
@@ -1731,6 +1732,68 @@ class FloatingBubbleService : Service() {
                 }
             }
         }
+
+        // 3-Level Thinking Mode Selector Row (⚡ Nhanh, ⚖ Cân bằng, 🧠 Sâu sắc)
+        var activeThinkingLevel = prefs.getAssistantThinkingLevel()
+        val thinkingChipViews = mutableMapOf<AssistantThinkingLevel, TextView>()
+
+        fun updateThinkingChipStyle(chipView: TextView, isSelected: Boolean) {
+            chipView.typeface = if (isSelected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+            chipView.setTextColor(if (isSelected) Color.parseColor("#38BDF8") else Color.parseColor("#94A3B8"))
+            chipView.background = GradientDrawable().apply {
+                if (isSelected) {
+                    setColor(Color.parseColor("#1E3A5F"))
+                    cornerRadius = dpToPx(12).toFloat()
+                    setStroke(dpToPx(1), Color.parseColor("#38BDF8"))
+                } else {
+                    setColor(Color.parseColor("#18181B"))
+                    cornerRadius = dpToPx(12).toFloat()
+                    setStroke(dpToPx(1), Color.parseColor("#33FFFFFF"))
+                }
+            }
+        }
+
+        val thinkingChipRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                bottomMargin = dpToPx(6)
+            }
+        }
+
+        val thinkingLevels = listOf(
+            AssistantThinkingLevel.FAST to "⚡ Nhanh",
+            AssistantThinkingLevel.BALANCED to "⚖ Cân bằng",
+            AssistantThinkingLevel.DEEP to "🧠 Sâu sắc"
+        )
+
+        for ((index, item) in thinkingLevels.withIndex()) {
+            val (level, label) = item
+            val chip = TextView(this).apply {
+                text = label
+                textSize = 11f
+                gravity = Gravity.CENTER
+                isSingleLine = true
+                setPadding(dpToPx(6), dpToPx(4), dpToPx(6), dpToPx(4))
+                layoutParams = LinearLayout.LayoutParams(0, dpToPx(28), 1f).apply {
+                    if (index > 0) leftMargin = dpToPx(6)
+                }
+                isClickable = true
+                setOnClickListener {
+                    if (activeThinkingLevel != level) {
+                        activeThinkingLevel = level
+                        prefs.setAssistantThinkingLevel(level)
+                        thinkingChipViews.forEach { (lvl, view) ->
+                            updateThinkingChipStyle(view, isSelected = (lvl == level))
+                        }
+                    }
+                }
+            }
+            updateThinkingChipStyle(chip, isSelected = (level == activeThinkingLevel))
+            thinkingChipViews[level] = chip
+            thinkingChipRow.addView(chip)
+        }
+        inputCard.addView(thinkingChipRow)
 
         val inputRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL

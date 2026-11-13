@@ -1,6 +1,7 @@
 package com.orca.orcaauto.domain.assistant
 
 import android.util.Log
+import com.orca.orcaauto.data.remote.AiProviderType
 import com.orca.orcaauto.data.remote.ApiKeyConfig
 import com.orca.orcaauto.data.remote.UniversalAiClient
 import kotlinx.coroutines.CancellationException
@@ -56,12 +57,13 @@ open class Round1Router(
         }
 
         val promptForRouter = buildRouterPrompt(userPrompt, packagedContext)
+        val prioritizedKeyPool = sortKeyPoolForRound1(keyPool)
 
         val rawResponse = try {
             val result = if (aiCaller != null) {
-                aiCaller.invoke(keyPool, promptForRouter)
+                aiCaller.invoke(prioritizedKeyPool, promptForRouter)
             } else {
-                aiClient.executeWithFailover(keyPool, promptForRouter)
+                aiClient.executeWithFailover(prioritizedKeyPool, promptForRouter)
             }
             if (result.isSuccess) {
                 result.getOrNull()?.first.orEmpty()
@@ -81,6 +83,41 @@ open class Round1Router(
         val decision = parseRouterResponse(rawResponse, userPrompt, packagedContext, validCatalogIds)
         Log.i(TAG, "Round 1 decision: neededNotes=${decision.neededNoteIds}, senders=${decision.senderFilter}, reasoning='${decision.reasoning}'")
         return decision
+    }
+
+    /**
+     * Prioritizes fast, lightweight models at the head of the Round 1 list.
+     * Round 1 only selects catalog note IDs and message spam filters;
+     * fast execution avoids blocking UI transitions.
+     */
+    internal fun sortKeyPoolForRound1(keyPool: List<ApiKeyConfig>): List<ApiKeyConfig> {
+        return keyPool.sortedWith(
+            compareBy<ApiKeyConfig> { config ->
+                val model = config.modelName.lowercase()
+                when {
+                    // Priority 0: Ultra-lightweight Gemini Flash-Lite
+                    model.contains("flash-lite") -> 0
+                    // Priority 1: 8B Instant models or Groq 8B
+                    model.contains("8b-instant") || (config.provider == AiProviderType.GROQ && (model.contains("8b") || model.contains("instant"))) -> 1
+                    // Priority 2: Mistral Small
+                    model.contains("mistral-small") -> 2
+                    // Priority 3: Other 1B - 8B parameter models
+                    model.contains("8b") || model.contains("7b") || model.contains("3b") || model.contains("1b") -> 3
+                    // Priority 4: Gemini Flash models (not Pro)
+                    model.contains("flash") && !model.contains("pro") -> 4
+                    // Priority 5: Groq LPU models
+                    config.provider == AiProviderType.GROQ -> 5
+                    // Priority 6: Other small/mini/haiku models
+                    model.contains("small") || model.contains("mini") || model.contains("haiku") -> 6
+                    // Priority 20: Heavy Reasoning models (DeepSeek R1, OpenAI o1/o3) - placed at the tail
+                    model.contains("r1") || model.contains("reasoner") || model.contains("o1") || model.contains("o3") -> 20
+                    // Priority 21: Pro / Ultra heavy models
+                    model.contains("pro") || model.contains("ultra") || model.contains("nemotron") -> 21
+                    // Priority 10: Default standard models
+                    else -> 10
+                }
+            }
+        )
     }
 
     private fun buildRouterPrompt(userPrompt: String, packagedContext: PackagedContext): String {

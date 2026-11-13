@@ -60,6 +60,7 @@ data class CoalesceResult(
 object MessageCoalescer {
 
     const val COALESCE_WINDOW_MS = 180_000L // 3 minutes window (180,000 ms)
+    const val MAX_TURN_DURATION_MS = 15 * 60 * 1000L // 15 minutes window (900,000 ms)
 
     private val SENDER_PAREN_GROUP_REGEX = Regex("""^(.+?)\s*\((.+?)\)$""")
     private val GROUP_ARROW_SENDER_REGEX = Regex("""^(.+?)\s*>\s*(.+)$""")
@@ -220,11 +221,13 @@ object MessageCoalescer {
                     } else {
                         val sameSpeaker = activeTurnSpeaker.equals(speaker, ignoreCase = true)
                         val silenceGap = notif.timestamp - activeTurnLastTime
+                        val turnDuration = notif.timestamp - activeTurnStartTime
 
                         // Coalescing condition:
                         // 1. Same speaker
                         // 2. Silence gap <= COALESCE_WINDOW_MS (180,000 ms = 3 minutes)
-                        if (sameSpeaker && silenceGap in 0..COALESCE_WINDOW_MS) {
+                        // 3. Turn duration <= MAX_TURN_DURATION_MS (900,000 ms = 15 minutes)
+                        if (sameSpeaker && silenceGap in 0..COALESCE_WINDOW_MS && turnDuration <= MAX_TURN_DURATION_MS) {
                             activeTurnMessages.add(msgItem)
                             activeTurnLastTime = notif.timestamp
                         } else {
