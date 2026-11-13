@@ -2,6 +2,7 @@ package com.orca.orcaauto.domain.assistant
 
 import com.orca.orcaauto.data.local.NotificationDao
 import com.orca.orcaauto.data.local.NotificationEntity
+import com.orca.orcaauto.domain.filter.NotificationFilter
 import com.orca.orcaauto.domain.notes.NoteCatalogItem
 import com.orca.orcaauto.domain.notes.SharedNoteRepository
 import java.text.SimpleDateFormat
@@ -44,7 +45,7 @@ class ContextPacker(
             notificationDao.getNotificationsWithin24Hours(limit = 100)
         } catch (e: Exception) {
             emptyList()
-        }
+        }.filterNot { NotificationFilter.containsSystemCommandInjection(it.content) || NotificationFilter.containsSystemCommandInjection(it.sender) }
 
         val catalogText = buildCatalogSnippet(catalogItems)
         val notificationSummaryText = buildNotificationSummarySnippet(notifications)

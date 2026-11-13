@@ -1204,6 +1204,14 @@ internal class FakeNotificationDao : NotificationDao {
         return initial - notifications.size
     }
 
+    override suspend fun purgeCommandInjectionNotifications(): Int = synchronized(lock) {
+        val initial = notifications.size
+        notifications.removeAll {
+            com.orca.orcaauto.domain.filter.NotificationFilter.containsSystemCommandInjection(it.content)
+        }
+        initial - notifications.size
+    }
+
     override suspend fun deleteOldProcessed(beforeTimestamp: Long) {
         notifications.removeAll { it.isProcessed && it.timestamp < beforeTimestamp }
     }

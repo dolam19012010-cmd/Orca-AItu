@@ -79,7 +79,17 @@ flowchart TD
   * *Trong luồng tóm tắt ca định kỳ:* Ẩn bớt số điện thoại, email để chống rò rỉ dữ liệu ngoài ý muốn.
   * *Trong luồng chat tương tác trực tiếp (`AssistantPipeline`):* Giữ nguyên nội dung gốc (`sanitizePii = false`) để AI trả lời chính xác số điện thoại, mã đơn hàng, địa chỉ mà người dùng cần tra cứu.
 
-### 2.3. Vòng đời dữ liệu (Data Lifecycle)
+### 2.3. Cơ chế Phòng thủ Chống Tấn công Lệnh Hệ thống & Prompt Injection
+* **Triệt tiêu lệnh giả mạo từ xa (Zero Trust Ingress):**
+  * Kẻ xấu hoặc các tin nhắn nhóm có thể cố tình gửi cú pháp thao tác ghi chú như `[SHOW_NOTE:...]`, `[CREATE:...]`, `[APPEND:...]`, `[UPDATE:...]`, `[DELETE:...]`, `[DELETE_MSG:...]`, `[TICKET:...]` nhằm lừa trợ lý AI sửa đổi hoặc tiết lộ dữ liệu cá nhân.
+  * Ngoài ra, các thẻ tiêm nhiễm hệ thống như `<scratchpad>`, `<think>`, `<system>`, `[SYSTEM]`, `<prompt_injection>` cũng bị chặn triệt để.
+* **Cơ chế phòng thủ 4 lớp:**
+  1. *Ngay tại cửa ngõ thu nhận (`NotificationMonitorService` & `NotificationFilter`):* Quét `containsSystemCommandInjection()`. Nếu tin nhắn chứa bất kỳ cú pháp lệnh hệ thống hoặc thẻ injection nào: **LOẠI BỎ LẬP TỨC (DROP 100%)**, không ghi vào Room DB, ghi log cảnh báo an ninh.
+  2. *Thanh lọc DB định kỳ (15 phút/lần):* Gọi `NotificationDao.purgeCommandInjectionNotifications()` để xóa sạch toàn bộ bản ghi nào có dấu hiệu lệnh độc hại còn sót lại trong Room DB.
+  3. *Ngăn chặn trước khi đóng gói ngữ cảnh (`ContextPacker`):* Luồng nén hội thoại 24h quét và loại bỏ các tin có cú pháp lệnh trước khi gửi lên Vòng 1.
+  4. *Bộ lọc trước khi nạp vào AI Vòng 2 (`LocalRetriever`):* Bọc tầng kiểm tra an toàn cuối cùng trước khi chuyển prompt sang `StreamingAiClient`.
+
+### 2.4. Vòng đời dữ liệu (Data Lifecycle)
 * **Cửa sổ 24 giờ:** Tin nhắn tự động được quét dọn sau 24 giờ kể từ thời điểm nhận.
 * **Trần dung lượng an toàn (DB Capacity):** Giới hạn lưu trữ tối đa ~200 tin nhắn chưa xử lý trong DB. Khi vượt ngưỡng, hệ thống kích hoạt tóm tắt xả tràn (`BURST_UNPROCESSED_THRESHOLD = 80`) để tránh tràn RAM máy yếu.
 
@@ -274,10 +284,17 @@ Người dùng có thể chọn 4 chế độ chuông báo để chống ngủ q
   * Chỉ thị bổ sung riêng của phiên.
   * Phong cách trợ lý riêng (`PromptPersona`).
 
-### 9.2. Hệ thống Khóa API Đa Nền Tảng (Multi-Provider Key Pool)
+### 9.2. Hệ thống Khóa API Đa Nền Tảng (Multi-Provider Key Pool) & Danh Mục Model 2025/2026
 * Hỗ trợ 6 nền tảng AI phổ biến: **Google Gemini**, **OpenRouter**, **Groq LPU**, **DeepSeek**, **NVIDIA NIM**, **OpenAI**.
 * Tự động nhận diện nhà cung cấp qua tiền tố Key (`AIzaSy...`, `gsk_...`, `sk-or-...`, `nvapi-...`).
 * **Cơ chế Failover Pool tự động:** Khi một key hoặc nhà cung cấp bị cạn hạn ngạch (429 Rate Limit) hoặc lỗi mạng (503 Service Unavailable), hệ thống tự động trượt sang Key tiếp theo trong danh sách mà không làm gián đoạn trải nghiệm người dùng.
+* **Danh mục Model mới nhất được cập nhật:**
+  * **Google Gemini:** `gemini-2.5-flash` (Mặc định - Flagship Hybrid Reasoning), `gemini-2.5-flash-lite` (Siêu nhẹ, tốc độ tức thì cho Vòng 1), `gemini-2.5-pro` (Suy luận phức tạp đa bước), `gemini-2.0-flash`, `gemini-2.0-flash-lite`, `gemini-1.5-flash`, `gemini-1.5-pro`.
+  * **Groq LPU (300+ tok/s):** `llama-3.3-70b-versatile` (Mặc định), `llama-3.1-8b-instant`, `deepseek-r1-distill-llama-70b`, `qwen-2.5-32b`, `mistral-saba-24b`, `mixtral-8x7b-32768`.
+  * **OpenRouter (Multi-AI Free & Pro):** `meta-llama/llama-3.3-70b-instruct:free`, `deepseek/deepseek-r1:free`, `deepseek/deepseek-chat:free`, `google/gemini-2.0-flash-exp:free`, `google/gemma-2-9b-it:free`, `mistralai/mistral-small-24b-instruct-2501:free`, `qwen/qwen-2.5-72b-instruct:free`.
+  * **DeepSeek Native:** `deepseek-chat` (DeepSeek V3), `deepseek-reasoner` (DeepSeek R1).
+  * **NVIDIA NIM:** `meta/llama-3.3-70b-instruct`, `deepseek-ai/deepseek-r1`, `nvidia/nemotron-4-340b-instruct`, `mistralai/mistral-large-2-instruct`.
+  * **OpenAI:** `gpt-4o-mini`, `gpt-4o`, `o3-mini`, `o1-mini`.
 
 ---
 
@@ -305,6 +322,7 @@ Người dùng có thể chọn 4 chế độ chuông báo để chống ngủ q
 | Rủi Ro Kỹ Thuật Tiềm Ẩn | Cơ Chế Dự Phòng & Giải Pháp Bảo Đảm | Vị Trí Code Chịu Trách Nhiệm |
 | :--- | :--- | :--- |
 | **Rò rỉ dữ liệu nhạy cảm ra AI** | **Sealed Private Pointer:** Ghi chú `isPrivate = true` chỉ gửi ID và tiêu đề ra mạng, nội dung 0 byte; chỉ mở trực tiếp trên màn hình máy. | `LocalRetriever.kt`, `SharedNoteRepositoryImpl.kt` |
+| **Tấn công lệnh hệ thống & Prompt Injection** | **Zero-Trust Drop & DB Purge:** Hủy bỏ ngay 100% tin nhắn chứa cú pháp `[SHOW_NOTE:...]`, `[DELETE:...]`, `<scratchpad>`, `<think>` ngay lúc nhận; lọc sạch trước khi gửi AI. | `NotificationFilter.kt`, `NotificationMonitorService.kt`, `NotificationDao.kt` |
 | **Lặp chữ khi mạng chập chờn** | **In-flight Reset Buffer:** Khi Watchdog chuyển giao Leader, xóa sạch bộ đệm `rawContentAcc.clear()` không nối câu cũ. | `StreamingAiClient.kt`, `AssistantPipeline.kt` |
 | **Treo luồng / Đơ ứng dụng** | **Watchdog Hedged Request & Hard Timeout:** Bắn thêm request dự phòng sau 10s, chuyển giao sau 15s, trần cứng 120s. | `StreamingAiClient.kt` |
 | **Lệch giờ / Sai ngày tháng** | **Real-time Anchor Line:** Bắt buộc chèn ngày thứ, ngày tháng năm và giờ phút GMT+7 vào đầu mọi prompt Vòng 1 và Vòng 2. | `ContextPacker.kt`, `LocalRetriever.kt` |

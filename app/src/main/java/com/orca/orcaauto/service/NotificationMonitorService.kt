@@ -54,6 +54,13 @@ class NotificationMonitorService : NotificationListenerService() {
         if (content.isBlank()) return
 
         val appName = preferences.getTargetAppName(packageName)
+
+        // Phòng thủ an toàn: Loại bỏ ngay lập tức nếu tin nhắn chứa cú pháp lệnh hệ thống hoặc injection
+        if (NotificationFilter.containsSystemCommandInjection(content) || NotificationFilter.containsSystemCommandInjection(title)) {
+            Log.w(TAG, "⛔ [PHÒNG THỦ LỆNH] Phát hiện và loại bỏ ngay tin nhắn chứa cú pháp lệnh hệ thống hoặc injection: [$appName] $title: ${content.take(40)}")
+            return
+        }
+
         val timestamp = sbn.postTime.takeIf { it > 0 } ?: System.currentTimeMillis()
 
         // 1. In-memory rapid deduplication (8-second sliding window)
@@ -105,9 +112,10 @@ class NotificationMonitorService : NotificationListenerService() {
                 // Periodic maintenance (throttled to once every 15 mins to save battery and flash I/O)
                 if (now - lastMaintenanceTime >= MAINTENANCE_INTERVAL_MS) {
                     lastMaintenanceTime = now
-                    // 1. Maintain 24-hour rolling retention window: purge older notifications
+                    // 1. Maintain 24-hour rolling retention window: purge older notifications & injection attempts
                     val cutoff24h = now - (24 * 60 * 60 * 1000L)
                     database.notificationDao().deleteOldNotifications(cutoff24h)
+                    database.notificationDao().purgeCommandInjectionNotifications()
 
                     // 2. Enforce FIFO Sliding Window (Cap 150 messages, protecting unprocessed items)
                     database.notificationDao().enforceMaxCapacity(maxCapacity = 150)

@@ -2,6 +2,7 @@ package com.orca.orcaauto.domain.assistant
 
 import com.orca.orcaauto.data.local.NotificationDao
 import com.orca.orcaauto.data.local.NotificationEntity
+import com.orca.orcaauto.domain.filter.NotificationFilter
 import com.orca.orcaauto.domain.notes.RetrievedNote
 import com.orca.orcaauto.domain.notes.SharedNoteRepository
 import com.orca.orcaauto.domain.prompt.PromptPersona
@@ -106,6 +107,7 @@ class LocalRetriever(
         } catch (e: Exception) {
             emptyList()
         }.filter { it.id !in excludedNotificationIds }
+         .filterNot { NotificationFilter.containsSystemCommandInjection(it.content) || NotificationFilter.containsSystemCommandInjection(it.sender) }
 
         if (senderFilters.isEmpty()) {
             return all24h.takeLast(20) // Default to latest 20 messages if no specific sender filter

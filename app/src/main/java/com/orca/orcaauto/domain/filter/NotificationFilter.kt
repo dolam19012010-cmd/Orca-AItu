@@ -16,7 +16,24 @@ object NotificationFilter {
         Regex("(?i)\\b(otp|xác\\s*nhận|xác\\s*thực)\\b.*?\\b\\d{4,8}\\b")
     )
 
+    // Regex to detect system command syntax & prompt injection attempts
+    private val COMMAND_INJECTION_PATTERNS = listOf(
+        // Assistant note command syntax: [SHOW_NOTE:...], [CREATE:...], [APPEND:...], [UPDATE:...], [DELETE:...], [DELETE_MSG:...], [TICKET:...]
+        Regex("""(?i)\[(SHOW_NOTE|CREATE|APPEND|UPDATE|DELETE|DELETE_MSG|TICKET)\s*[:|]"""),
+        // Thought / reasoning / system prompt injection tags
+        Regex("""(?i)<\/?(scratchpad|think|system|prompt_injection|instruction)>"""),
+        Regex("""(?i)\[(SYSTEM|PROMPT_INJECTION)\]""")
+    )
+
     private val WHITESPACE_REGEX = Regex("\\s+")
+
+    /**
+     * Checks if a given text contains system command syntax or prompt injection attempts.
+     */
+    fun containsSystemCommandInjection(text: String): Boolean {
+        if (text.isBlank()) return false
+        return COMMAND_INJECTION_PATTERNS.any { it.containsMatchIn(text) }
+    }
 
     /**
      * Determine if a StatusBarNotification should be recorded.
@@ -58,6 +75,11 @@ object NotificationFilter {
 
         // 3. Filter out OTP codes
         if (isOtpMessage(fullContent) || isOtpMessage(title)) {
+            return false
+        }
+
+        // 3.1. Defense mechanism: Drop incoming notification immediately if it contains command calling syntax or injection tags
+        if (containsSystemCommandInjection(fullContent) || containsSystemCommandInjection(title)) {
             return false
         }
 

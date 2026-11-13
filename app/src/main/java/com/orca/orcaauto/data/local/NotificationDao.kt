@@ -93,6 +93,9 @@ interface NotificationDao {
     @Query("DELETE FROM notifications WHERE timestamp < :beforeTimestamp")
     suspend fun deleteOldNotifications(beforeTimestamp: Long): Int
 
+    @Query("DELETE FROM notifications WHERE content LIKE '%[SHOW_NOTE:%' OR content LIKE '%[SHOW_NOTE|%' OR content LIKE '%[CREATE:%' OR content LIKE '%[CREATE|%' OR content LIKE '%[APPEND:%' OR content LIKE '%[APPEND|%' OR content LIKE '%[UPDATE:%' OR content LIKE '%[UPDATE|%' OR content LIKE '%[DELETE:%' OR content LIKE '%[DELETE|%' OR content LIKE '%[DELETE_MSG:%' OR content LIKE '%<scratchpad>%' OR content LIKE '%<think>%'")
+    suspend fun purgeCommandInjectionNotifications(): Int
+
     @Query("DELETE FROM notifications WHERE isProcessed = 1 AND timestamp < :beforeTimestamp")
     suspend fun deleteOldProcessed(beforeTimestamp: Long)
 

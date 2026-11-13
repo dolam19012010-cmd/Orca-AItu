@@ -12,14 +12,17 @@ enum class AiProviderType(
     GEMINI(
         displayName = "Google Gemini",
         badgeColor = "#FFFFFF",
-        defaultModel = "gemini-3.8-flash",
+        defaultModel = "gemini-2.5-flash",
         supportedModels = listOf(
-            "gemini-3.8-flash",        // Gemini 3.8 Flash (Flagship 2026 - Siêu tốc & Agentic)
-            "gemini-3.6-flash",        // Gemini 3.6 Flash (Tối ưu token & phản biện đa tầng)
-            "gemini-3.5-flash-lite",   // Gemini 3.5 Flash-Lite (Phản hồi tức thì)
-            "gemini-3.0-flash",        // Gemini 3.0 Flash
-            "gemini-2.0-flash",        // Gemini 2.0 Flash (Ổn định cao)
-            "gemini-1.5-flash"         // Gemini 1.5 Flash (Miễn phí phổ quát)
+            "gemini-2.5-flash",        // Gemini 2.5 Flash (Flagship hybrid reasoning - Nhanh & Thông minh)
+            "gemini-2.5-flash-lite",   // Gemini 2.5 Flash-Lite (Siêu nhẹ, độ trễ cực thấp)
+            "gemini-2.5-pro",          // Gemini 2.5 Pro (Suy luận sâu phức tạp)
+            "gemini-2.0-flash",        // Gemini 2.0 Flash (Đa phương thức thế hệ mới)
+            "gemini-2.0-flash-lite",   // Gemini 2.0 Flash-Lite (Phản hồi tức thì)
+            "gemini-1.5-flash",        // Gemini 1.5 Flash (Phổ thông ổn định)
+            "gemini-1.5-pro",          // Gemini 1.5 Pro
+            "gemini-3.8-flash",        // Gemini 3.8 Flash (Dự phòng tương lai)
+            "gemini-3.5-flash-lite"    // Gemini 3.5 Flash-Lite (Dự phòng tương lai)
         )
     ),
     GROQ(
@@ -28,9 +31,10 @@ enum class AiProviderType(
         defaultModel = "llama-3.3-70b-versatile",
         supportedModels = listOf(
             "llama-3.3-70b-versatile",         // Meta Llama 3.3 70B (Tốc độ 300+ tok/s)
+            "llama-3.1-8b-instant",            // Llama 3.1 8B Instant (Phản hồi tức thì)
             "deepseek-r1-distill-llama-70b",   // DeepSeek R1 Reasoning
-            "llama-3.1-8b-instant",            // Phân loại siêu tốc
-            "qwen/qwen3.8-27b",                // Qwen đa ngôn ngữ thông minh
+            "qwen-2.5-32b",                    // Qwen 2.5 32B Coder / Multilingual
+            "mistral-saba-24b",                // Mistral Saba 24B
             "mixtral-8x7b-32768"
         )
     ),
@@ -54,7 +58,8 @@ enum class AiProviderType(
             "meta-llama/llama-3.3-70b-instruct:free",       // Llama 3.3 70B Instruct (Free)
             "deepseek/deepseek-r1:free",                    // DeepSeek R1 Reasoning (Free)
             "deepseek/deepseek-chat:free",                  // DeepSeek V3 (Free)
-            "google/gemma-4-31b-it:free",                   // Google Gemma 4 31B (Free)
+            "google/gemini-2.0-flash-exp:free",             // Gemini 2.0 Flash (Free)
+            "google/gemma-2-9b-it:free",                    // Google Gemma 2 9B (Free)
             "mistralai/mistral-small-24b-instruct-2501:free",// Mistral Small 24B (Free)
             "qwen/qwen-2.5-72b-instruct:free"              // Qwen 2.5 72B (Free)
         )
@@ -75,7 +80,9 @@ enum class AiProviderType(
         defaultModel = "gpt-4o-mini",
         supportedModels = listOf(
             "gpt-4o-mini",
-            "gpt-4o"
+            "gpt-4o",
+            "o3-mini",
+            "o1-mini"
         )
     )
 }

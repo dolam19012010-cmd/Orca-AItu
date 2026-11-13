@@ -11,7 +11,7 @@ class ApiKeyConfigTest {
         val raw = "AIzaSyAbc1234567890TestKey1234"
         val config = ApiKeyConfig.fromRawKey(raw)
         assertEquals(AiProviderType.GEMINI, config.provider)
-        assertEquals("gemini-3.8-flash", config.modelName)
+        assertEquals("gemini-2.5-flash", config.modelName)
         assertTrue(config.endpointUrl.contains("generativelanguage.googleapis.com"))
         assertEquals("AIza...1234", config.maskedKey)
     }
@@ -21,7 +21,7 @@ class ApiKeyConfigTest {
         val raw = "AQ.Ab8SampleGeminiAuthKey1234567890"
         val config = ApiKeyConfig.fromRawKey(raw)
         assertEquals(AiProviderType.GEMINI, config.provider)
-        assertEquals("gemini-3.8-flash", config.modelName)
+        assertEquals("gemini-2.5-flash", config.modelName)
         assertTrue(config.endpointUrl.contains("generativelanguage.googleapis.com"))
     }
 
