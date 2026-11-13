@@ -7,6 +7,7 @@ import com.orca.orcaauto.data.local.NotificationDao
 import com.orca.orcaauto.data.local.SharedNoteEntity
 import com.orca.orcaauto.data.preferences.AssistantThinkingLevel
 import com.orca.orcaauto.data.preferences.UserPreferences
+import com.orca.orcaauto.domain.prompt.PromptPersona
 import com.orca.orcaauto.data.remote.ApiKeyConfig
 import com.orca.orcaauto.data.remote.StreamUiEvent
 import com.orca.orcaauto.data.remote.StreamingAiClient
@@ -46,7 +47,8 @@ class AssistantPipeline(
     private val localRetriever: LocalRetriever,
     private val notificationDao: NotificationDao? = null,
     private val keyPoolProvider: () -> List<ApiKeyConfig>,
-    private val thinkingLevelProvider: (() -> AssistantThinkingLevel)? = null
+    private val thinkingLevelProvider: (() -> AssistantThinkingLevel)? = null,
+    private val personaProvider: (() -> PromptPersona)? = null
 ) {
 
     private val activeNotificationDao: NotificationDao?
@@ -81,7 +83,8 @@ class AssistantPipeline(
                 localRetriever = retriever,
                 notificationDao = notifDao,
                 keyPoolProvider = { userPrefs.getKeyPool() },
-                thinkingLevelProvider = { userPrefs.getAssistantThinkingLevel() }
+                thinkingLevelProvider = { userPrefs.getAssistantThinkingLevel() },
+                personaProvider = { userPrefs.getPromptPersona() }
             )
         }
 
@@ -171,10 +174,20 @@ class AssistantPipeline(
                     stepDescription = "Đang mở dữ liệu trên máy..."
                 )
             )
+            val currentPersona = personaProvider?.invoke()
+                ?: context?.let {
+                    try {
+                        UserPreferences.getInstance(it).getPromptPersona()
+                    } catch (_: Throwable) {
+                        PromptPersona.GENTLE_ASSISTANT
+                    }
+                } ?: PromptPersona.GENTLE_ASSISTANT
+
             val retrievedContext = localRetriever.retrieve(
                 userPrompt = userPrompt,
                 decision = routerDecision,
-                excludedNotificationIds = realIdsToDelete.toSet()
+                excludedNotificationIds = realIdsToDelete.toSet(),
+                persona = currentPersona
             )
 
             // =========================================================================

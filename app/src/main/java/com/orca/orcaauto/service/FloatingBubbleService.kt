@@ -1443,6 +1443,7 @@ class FloatingBubbleService : Service() {
 
         var currentAdviceTv: TextView? = null
         var currentSec1Box: LinearLayout? = null
+        var currentTasksContainer: LinearLayout? = null
         var currentNotesContainer: LinearLayout? = null
 
         if (effectiveAdvice.isNotBlank()) {
@@ -1485,6 +1486,11 @@ class FloatingBubbleService : Service() {
             }
             sec1Box.addView(adviceTv)
 
+            val tasksContainer = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+            }
+            sec1Box.addView(tasksContainer)
+
             val notesContainer = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
             }
@@ -1493,6 +1499,7 @@ class FloatingBubbleService : Service() {
             contentLayout.addView(sec1Box)
             currentAdviceTv = adviceTv
             currentSec1Box = sec1Box
+            currentTasksContainer = tasksContainer
             currentNotesContainer = notesContainer
         }
 
@@ -1632,9 +1639,10 @@ class FloatingBubbleService : Service() {
                 contentLayout.findViewWithTag<View>("EMPTY_BOX_TAG")?.let { contentLayout.removeView(it) }
 
                 var targetAdviceTv = currentAdviceTv
+                var targetTasksContainer = currentTasksContainer
                 var targetNotesContainer = currentNotesContainer
 
-                if (targetAdviceTv == null || targetNotesContainer == null) {
+                if (targetAdviceTv == null || targetTasksContainer == null || targetNotesContainer == null) {
                     val newSec1Box = LinearLayout(this@FloatingBubbleService).apply {
                         orientation = LinearLayout.VERTICAL
                         background = GradientDrawable().apply {
@@ -1654,6 +1662,11 @@ class FloatingBubbleService : Service() {
                     }
                     newSec1Box.addView(newAdviceTv)
 
+                    val newTasksContainer = LinearLayout(this@FloatingBubbleService).apply {
+                        orientation = LinearLayout.VERTICAL
+                    }
+                    newSec1Box.addView(newTasksContainer)
+
                     val newNotesContainer = LinearLayout(this@FloatingBubbleService).apply {
                         orientation = LinearLayout.VERTICAL
                     }
@@ -1662,11 +1675,14 @@ class FloatingBubbleService : Service() {
                     contentLayout.addView(newSec1Box, 0)
                     currentSec1Box = newSec1Box
                     currentAdviceTv = newAdviceTv
+                    currentTasksContainer = newTasksContainer
                     currentNotesContainer = newNotesContainer
                     targetAdviceTv = newAdviceTv
+                    targetTasksContainer = newTasksContainer
                     targetNotesContainer = newNotesContainer
                 }
 
+                targetTasksContainer.removeAllViews()
                 targetNotesContainer.removeAllViews()
                 targetAdviceTv.text = "Đang tìm thông tin..."
 
@@ -1682,25 +1698,41 @@ class FloatingBubbleService : Service() {
                                 }
                                 AssistantStep.STAGE_4_STREAMING_ANSWER -> {
                                     targetAdviceTv.text = uiState.streamedContentClean + " ▌"
-                                    scrollView.post {
-                                        scrollView.fullScroll(View.FOCUS_DOWN)
-                                    }
                                 }
                                 AssistantStep.STAGE_5_EXECUTING_ACTIONS -> {
                                     targetAdviceTv.text = uiState.streamedContentClean
                                 }
                                 AssistantStep.COMPLETED -> {
-                                    targetAdviceTv.text = uiState.streamedContentClean
                                     latestSummaryText = uiState.streamedContentClean
                                     uiState.activeUsedKey?.let { key ->
                                         latestModelInfo = "${key.provider.displayName} • ${key.modelName}"
                                         modelTv.text = latestModelInfo
                                     }
+
+                                    // Gộp Lời chỉ dẫn + Bảng Nhiệm vụ tương tác + Thẻ ghi chú khi chat
+                                    val parsed = SummaryParser.parse(uiState.streamedContentClean)
+                                    val cleanAdvice = SummaryParser.cleanAdviceText(parsed.conciseAdvice)
+                                    val allTasks = parsed.tasksToDo + parsed.tasksPlanned + parsed.tasksDone
+
+                                    if (allTasks.isNotEmpty()) {
+                                        targetAdviceTv.text = if (cleanAdvice.isNotBlank()) cleanAdvice else parsed.conciseAdvice.ifBlank { uiState.streamedContentClean }
+                                        targetTasksContainer.removeAllViews()
+                                        val speakableParsed = SystemAlarmHelper.filterOutCancelled(parsed, alarmDbMap)
+                                        speakableParsed.tasksToDo.forEach { task ->
+                                            targetTasksContainer.addView(renderTaskRow(task, isPlanned = false, cardLayout = cardLayout))
+                                        }
+                                        speakableParsed.tasksPlanned.forEach { task ->
+                                            targetTasksContainer.addView(renderTaskRow(task, isPlanned = true, cardLayout = cardLayout))
+                                        }
+                                        speakableParsed.tasksDone.forEach { task ->
+                                            targetTasksContainer.addView(renderTaskRow(task, isPlanned = false, cardLayout = cardLayout))
+                                        }
+                                    } else {
+                                        targetAdviceTv.text = uiState.streamedContentClean
+                                    }
+
                                     if (uiState.shownNoteCards.isNotEmpty()) {
                                         renderLocalNoteCardsInBubble(targetNotesContainer, uiState.shownNoteCards)
-                                    }
-                                    scrollView.post {
-                                        scrollView.fullScroll(View.FOCUS_DOWN)
                                     }
                                 }
                                 AssistantStep.ERROR -> {
@@ -3123,7 +3155,7 @@ class FloatingBubbleService : Service() {
 
                 if (isAlarmEnabled) {
                     if (existingAlarm != null) {
-                        SystemAlarmHelper.cancelSmartAlarms(this@FloatingBubbleService, cleanTitle, alarmId)
+                        SystemAlarmHelper.disarmAlarmHardwareOnly(this@FloatingBubbleService, cleanTitle, existingAlarm.alarmId)
                     }
                     val res = SystemAlarmHelper.scheduleSmartAlarms(
                         context = this@FloatingBubbleService,

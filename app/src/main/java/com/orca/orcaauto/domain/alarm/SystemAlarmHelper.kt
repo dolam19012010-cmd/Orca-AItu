@@ -128,8 +128,9 @@ object SystemAlarmHelper {
         val matches = alarmMap.values.filter { isTitleMatching(it.taskTitle, taskTitle) }
         if (matches.isEmpty()) return null
 
-        // 1. Ưu tiên hàng đầu: Báo thức đang ACTIVE (đang hẹn giờ chạy)
-        val active = matches.firstOrNull { it.status == SmartAlarmStatus.ACTIVE && it.targetTimeMillis >= now - 3600_000L }
+        // 1. Ưu tiên hàng đầu: Báo thức đang ACTIVE (đang hẹn giờ chạy, lấy bản ghi mới nhất)
+        val active = matches.filter { it.status == SmartAlarmStatus.ACTIVE && it.targetTimeMillis >= now - 3600_000L }
+            .maxByOrNull { it.updatedAt }
         if (active != null) return active
 
         // 2. Xét các bản ghi trạng thái (CANCELLED, COMPLETED, PROPOSED) trong vòng 48h (2 ngày)
@@ -509,7 +510,13 @@ object SystemAlarmHelper {
             scope.launch {
                 try {
                     val dao = AppDatabase.getDatabase(context).smartAlarmDao()
-                    dao.updateStatusByTitle(cleanTitle, SmartAlarmStatus.ACTIVE)
+                    // Dọn dẹp triệt để các bản ghi cũ trùng tiêu đề nhưng khác alarmId để không bị xung đột trạng thái
+                    val oldAlarms = dao.getAllAlarms().filter { isTitleMatching(it.taskTitle, cleanTitle) && it.alarmId != alarmId }
+                    for (old in oldAlarms) {
+                        cancelAlarmManagerIntents(context, old.alarmId)
+                        cancelSinglePendingIntent(context, (old.alarmId.hashCode() and 0x7FFFFFFF))
+                        dao.deleteAlarmById(old.alarmId)
+                    }
                     dao.insertOrUpdate(entity)
                     autoCleanupAlarms(context)
                 } catch (e: Exception) {

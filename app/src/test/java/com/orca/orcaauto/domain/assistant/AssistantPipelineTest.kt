@@ -11,6 +11,7 @@ import com.orca.orcaauto.domain.notes.NoteCatalogItem
 import com.orca.orcaauto.domain.notes.RetrievedNote
 import com.orca.orcaauto.domain.notes.SharedNoteRepository
 import com.orca.orcaauto.domain.notes.SharedNoteRepositoryImpl
+import com.orca.orcaauto.domain.prompt.PromptPersona
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.Flow
@@ -824,6 +825,42 @@ class AssistantPipelineTest {
 
         // Round 2 prompt must contain fidelity warning
         assertTrue("Prompt Vòng 2 phải nhắc nhở AI bám sát thông tin ghi chú", retrieved.assembledRound2Prompt.contains("ưu tiên và bám sát tuyệt đối nội dung này để trả lời trung thực"))
+    }
+
+    @Test
+    fun stage3_localRetriever_respectsPromptPersona_withoutForcedSectionHeadings() = runTest {
+        val decision = Round1Decision(neededNoteIds = emptyList(), senderFilter = emptyList(), reasoning = "Test personas")
+
+        // Test with Critical Advisor
+        val criticalRetrieved = localRetriever.retrieve(
+            userPrompt = "Kế hoạch tuần này thế nào?",
+            decision = decision,
+            persona = PromptPersona.CRITICAL_ADVISOR
+        )
+        val critSys = criticalRetrieved.systemInstruction
+        assertTrue("Hệ thống phải mang vai trò Cố Vấn Chiến Lược", critSys.contains(PromptPersona.CRITICAL_ADVISOR.systemRole))
+        assertTrue("Hệ thống phải có chỉ dẫn phong cách của Cố Vấn", critSys.contains("Thẳng thắn, sắc bén"))
+        assertTrue("Cấm chia tiêu đề cứng gượng gạo", critSys.contains("TUYỆT ĐỐI KHÔNG tự động chia tiêu đề cứng"))
+
+        // Test with Executive Secretary
+        val execRetrieved = localRetriever.retrieve(
+            userPrompt = "Lịch trình ngày mai?",
+            decision = decision,
+            persona = PromptPersona.EXECUTIVE_SECRETARY
+        )
+        val execSys = execRetrieved.systemInstruction
+        assertTrue("Hệ thống phải mang vai trò Thư Ký", execSys.contains(PromptPersona.EXECUTIVE_SECRETARY.systemRole))
+        assertTrue("Hệ thống phải có chỉ dẫn Thư Ký", execSys.contains("Trung tính, điềm đạm"))
+
+        // Test with Minimalist
+        val minRetrieved = localRetriever.retrieve(
+            userPrompt = "Việc cần làm hôm nay",
+            decision = decision,
+            persona = PromptPersona.MINIMALIST
+        )
+        val minSys = minRetrieved.systemInstruction
+        assertTrue("Hệ thống phải mang vai trò Tối Giản", minSys.contains(PromptPersona.MINIMALIST.systemRole))
+        assertTrue("Hệ thống phải có chỉ dẫn Tối Giản", minSys.contains("0% văn vẻ hay dẫn dắt"))
     }
 
     // =========================================================================

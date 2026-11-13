@@ -98,6 +98,8 @@ import androidx.compose.ui.unit.sp
 import com.orca.orcaauto.data.local.SharedNoteEntity
 import com.orca.orcaauto.data.preferences.AssistantThinkingLevel
 import com.orca.orcaauto.data.preferences.UserPreferences
+import com.orca.orcaauto.domain.filter.SummaryParser
+import com.orca.orcaauto.domain.filter.TaskItem
 import com.orca.orcaauto.domain.assistant.AssistantPipeline
 import com.orca.orcaauto.domain.assistant.AssistantStep
 import com.orca.orcaauto.domain.assistant.AssistantUiState
@@ -107,6 +109,7 @@ import com.orca.orcaauto.ui.theme.AccentCyan
 import com.orca.orcaauto.ui.theme.AccentEmerald
 import com.orca.orcaauto.ui.theme.AccentRose
 import com.orca.orcaauto.ui.theme.BackgroundDark
+import com.orca.orcaauto.ui.theme.CardBorder
 import com.orca.orcaauto.ui.theme.GlassBorderHighlight
 import com.orca.orcaauto.ui.theme.GlassBorderSubtle
 import com.orca.orcaauto.ui.theme.GlassSurfaceCard
@@ -177,15 +180,10 @@ fun AssistantChatSheet(
         }
     }
 
-    // Auto-scroll to bottom whenever the latest message text or thought updates
-    LaunchedEffect(messages.size, messages.lastOrNull()?.text, messages.lastOrNull()?.thought) {
+    // Only scroll to bottom when a new message is added, never jitter during streaming
+    LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
-            val isStillStreaming = messages.lastOrNull()?.isStreaming == true
-            if (isStillStreaming) {
-                listState.scrollToItem(messages.size - 1)
-            } else {
-                listState.animateScrollToItem(messages.size - 1)
-            }
+            listState.animateScrollToItem(messages.size - 1)
         }
     }
 
@@ -572,6 +570,35 @@ private fun AssistantChatBubble(
                 ExecutedActionsSummary(actions = state.executedActions)
             }
 
+            // Render parsed tasks if present in AI message
+            val parsedTasks = remember(message.text, isStillStreaming) {
+                if (!message.isUser && !isStillStreaming && message.text.isNotBlank()) {
+                    SummaryParser.parse(message.text)
+                } else null
+            }
+
+            if (parsedTasks != null && (parsedTasks.tasksToDo.isNotEmpty() || parsedTasks.tasksPlanned.isNotEmpty() || parsedTasks.tasksDone.isNotEmpty())) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = "Nhiệm vụ & Kế hoạch trích xuất",
+                    color = AccentCyan,
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    parsedTasks.tasksToDo.forEach { task ->
+                        ChatTaskCard(task = task, badgeColor = AccentRose)
+                    }
+                    parsedTasks.tasksPlanned.forEach { task ->
+                        ChatTaskCard(task = task, badgeColor = Color(0xFFF59E0B))
+                    }
+                    parsedTasks.tasksDone.forEach { task ->
+                        ChatTaskCard(task = task, badgeColor = AccentEmerald)
+                    }
+                }
+            }
+
             // Render Local Note Cards from SHOW_NOTE (Retrieved directly from Room DB)
             if (state != null && state.shownNoteCards.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(12.dp))
@@ -596,6 +623,52 @@ private fun AssistantChatBubble(
                     errorMessage = state?.errorMessage ?: "Đã xảy ra lỗi không xác định",
                     onRetry = onRetry
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChatTaskCard(task: TaskItem, badgeColor: Color) {
+    Card(
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = SurfaceVariantDark.copy(alpha = 0.5f)),
+        border = BorderStroke(1.dp, CardBorder),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 8.dp)
+        ) {
+            Text(
+                text = task.title,
+                color = TextPrimaryDark,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 12.5.sp
+            )
+            if (task.deadline.isNotBlank() || task.source.isNotBlank()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (task.deadline.isNotBlank()) {
+                        Text(
+                            text = "⏰ ${task.deadline}",
+                            color = badgeColor,
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                    if (task.source.isNotBlank()) {
+                        Text(
+                            text = "💬 ${task.source}",
+                            color = TextSecondaryDark,
+                            fontSize = 10.5.sp
+                        )
+                    }
+                }
             }
         }
     }

@@ -4,6 +4,7 @@ import com.orca.orcaauto.data.local.NotificationDao
 import com.orca.orcaauto.data.local.NotificationEntity
 import com.orca.orcaauto.domain.notes.RetrievedNote
 import com.orca.orcaauto.domain.notes.SharedNoteRepository
+import com.orca.orcaauto.domain.prompt.PromptPersona
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -36,7 +37,8 @@ class LocalRetriever(
     suspend fun retrieve(
         userPrompt: String,
         decision: Round1Decision,
-        excludedNotificationIds: Set<Long> = emptySet()
+        excludedNotificationIds: Set<Long> = emptySet(),
+        persona: PromptPersona = PromptPersona.GENTLE_ASSISTANT
     ): RetrievedContext {
         // 1. Retrieve notes from Room DB
         val retrievedNotes = try {
@@ -55,7 +57,7 @@ class LocalRetriever(
         val notificationsSnippet = buildNotificationsSnippet(relevantNotifications)
 
         // 5. Build system instructions and Round 2 prompt
-        val systemInstruction = buildSystemInstruction()
+        val systemInstruction = buildSystemInstruction(persona)
         val assembledPrompt = buildRound2Prompt(userPrompt, notesSnippet, notificationsSnippet)
 
         return RetrievedContext(
@@ -134,10 +136,15 @@ class LocalRetriever(
         return MessageCoalescer.formatForPrompt(coalesced, withTicketIds = false)
     }
 
-    private fun buildSystemInstruction(): String {
+    private fun buildSystemInstruction(persona: PromptPersona = PromptPersona.GENTLE_ASSISTANT): String {
         return """
-        Bạn là Trợ lý AI thông minh tích hợp trên thiết bị của người dùng (OrcaAuto).
+        ${persona.systemRole}
         Nhiệm vụ của bạn là trả lời câu hỏi của người dùng một cách chính xác, tự nhiên, lịch sự bằng tiếng Việt.
+        
+        PHONG CÁCH VÀ THÁI ĐỘ:
+        ${persona.promptInstructions}
+        - Hãy trả lời một cách tự nhiên, mạch lạc, trực tiếp vào trọng tâm câu hỏi của người dùng.
+        - TUYỆT ĐỐI KHÔNG tự động chia tiêu đề cứng như 'Lời nhắn nhẹ nhàng' hay 'Lưu ý tinh tế' trừ khi người dùng yêu cầu tóm tắt phiên làm việc.
         
         QUY TẮC BẢO MẬT & CHỐNG ẢO GIÁC (ANTI-HALLUCINATION) KHI TRẢ LỜI VỀ GHI CHÚ:
         1. Khi trong mục 'THÔNG TIN GHI CHÚ TRÍCH XUẤT CỤC BỘ' có ghi chú liên quan đến câu hỏi, bạn BẮT BUỘC phải trả lời dựa trên chính xác nội dung ghi chú được trích xuất đó. Tuyệt đối KHÔNG tự sáng tác, suy diễn hay đưa ra kiến thức chung ngoài đời làm sai lệch hoặc mâu thuẫn với nội dung ghi chú của người dùng.

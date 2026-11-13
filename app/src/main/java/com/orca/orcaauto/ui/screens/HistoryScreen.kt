@@ -1555,7 +1555,7 @@ fun TaskAlarmConfigDialog(
                     // 2. Handle alarm scheduling or cancellation
                     if (isAlarmEnabled) {
                         if (currentAlarmState != null && !currentAlarmId.isNullOrBlank()) {
-                            SystemAlarmHelper.cancelSmartAlarms(context, task.title, currentAlarmId)
+                            SystemAlarmHelper.disarmAlarmHardwareOnly(context, task.title, currentAlarmId)
                         }
                         val result = SystemAlarmHelper.scheduleSmartAlarms(
                             context = context,
