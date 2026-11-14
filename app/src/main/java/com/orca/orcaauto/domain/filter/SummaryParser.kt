@@ -177,15 +177,15 @@ object SummaryParser {
                     currentSection = 1
                     continue
                 }
-                lower.contains("nhiệm vụ phải làm") || (lower.contains("to-do") && !isBullet) -> {
+                lower.contains("nhiệm vụ phải làm") || lower.contains("việc cần làm") || (lower.contains("to-do") && !isBullet) -> {
                     currentSection = 2
                     continue
                 }
-                lower.contains("nhiệm vụ đã làm") || (lower.contains("done") && !isBullet) -> {
+                lower.contains("nhiệm vụ đã làm") || lower.contains("việc đã làm") || (lower.contains("done") && !isBullet) -> {
                     currentSection = 3
                     continue
                 }
-                lower.contains("kế hoạch dự kiến") || (lower.contains("planned") && !isBullet) -> {
+                lower.contains("kế hoạch dự kiến") || lower.contains("việc dự kiến") || (lower.contains("planned") && !isBullet) -> {
                     currentSection = 4
                     continue
                 }

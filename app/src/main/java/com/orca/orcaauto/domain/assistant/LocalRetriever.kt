@@ -2,6 +2,9 @@ package com.orca.orcaauto.domain.assistant
 
 import com.orca.orcaauto.data.local.NotificationDao
 import com.orca.orcaauto.data.local.NotificationEntity
+import com.orca.orcaauto.data.local.SharedNoteEntity
+import com.orca.orcaauto.data.local.SmartAlarmDao
+import com.orca.orcaauto.data.local.SmartAlarmEntity
 import com.orca.orcaauto.domain.filter.NotificationFilter
 import com.orca.orcaauto.domain.notes.RetrievedNote
 import com.orca.orcaauto.domain.notes.SharedNoteRepository
@@ -13,7 +16,8 @@ import java.util.Locale
 /**
  * Stage 3: LocalRetriever
  *
- * Retrieves local notes and relevant notifications based on Round 1 routing decisions.
+ * Retrieves local notes, active alarms/tasks, previous session summary, and relevant notifications
+ * based on Round 1 routing decisions and unified session engine.
  *
  * STRICT SECURITY INVARIANT (SEALED POINTER):
  * If a note has isPrivate = true, it is represented as a [RetrievedNote.SealedPrivatePointer].
@@ -22,7 +26,8 @@ import java.util.Locale
  */
 class LocalRetriever(
     private val noteRepository: SharedNoteRepository,
-    val notificationDao: NotificationDao
+    val notificationDao: NotificationDao,
+    val smartAlarmDao: SmartAlarmDao? = null
 ) {
 
     private val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
@@ -39,7 +44,11 @@ class LocalRetriever(
         userPrompt: String,
         decision: Round1Decision,
         excludedNotificationIds: Set<Long> = emptySet(),
-        persona: PromptPersona = PromptPersona.GENTLE_ASSISTANT
+        persona: PromptPersona = PromptPersona.GENTLE_ASSISTANT,
+        activeAlarms: List<SmartAlarmEntity> = emptyList(),
+        previousSummary: String? = null,
+        sessionInfo: String? = null,
+        notesCatalog: List<SharedNoteEntity> = emptyList()
     ): RetrievedContext {
         // 1. Retrieve notes from Room DB
         val retrievedNotes = try {
@@ -51,15 +60,37 @@ class LocalRetriever(
         // 2. Retrieve relevant notifications if sender filters were determined
         val relevantNotifications = retrieveRelevantNotifications(decision.senderFilter, excludedNotificationIds)
 
-        // 3. Assemble notes snippet (strictly enforcing Sealed Pointer)
+        // 3. Resolve active smart alarms
+        val resolvedAlarms = if (activeAlarms.isNotEmpty()) {
+            activeAlarms
+        } else {
+            try {
+                smartAlarmDao?.getActiveAlarms() ?: emptyList()
+            } catch (e: Exception) {
+                emptyList()
+            }
+        }
+
+        // 4. Resolve notes catalog (preserving 0-byte private protection)
+        val catalogSnippet = buildCatalogSnippet(notesCatalog)
+
+        // 5. Assemble notes snippet (strictly enforcing Sealed Pointer)
         val notesSnippet = buildNotesSnippet(retrievedNotes)
 
-        // 4. Assemble notifications snippet
+        // 6. Assemble notifications snippet
         val notificationsSnippet = buildNotificationsSnippet(relevantNotifications)
 
-        // 5. Build system instructions and Round 2 prompt
+        // 7. Build system instructions and Round 2 prompt
         val systemInstruction = buildSystemInstruction(persona)
-        val assembledPrompt = buildRound2Prompt(userPrompt, notesSnippet, notificationsSnippet)
+        val assembledPrompt = buildRound2Prompt(
+            userPrompt = userPrompt,
+            notesSnippet = notesSnippet,
+            notificationsSnippet = notificationsSnippet,
+            activeAlarms = resolvedAlarms,
+            previousSummary = previousSummary,
+            sessionInfo = sessionInfo,
+            catalogSnippet = catalogSnippet
+        )
 
         return RetrievedContext(
             retrievedNotes = retrievedNotes,
@@ -67,6 +98,37 @@ class LocalRetriever(
             assembledRound2Prompt = assembledPrompt,
             systemInstruction = systemInstruction
         )
+    }
+
+    private suspend fun buildCatalogSnippet(notesCatalog: List<SharedNoteEntity>): String {
+        return if (notesCatalog.isNotEmpty()) {
+            notesCatalog.joinToString("\n") { note ->
+                val pinTag = if (note.isPinned) "[📌 ĐÃ GHIM] " else ""
+                if (note.isPrivate) {
+                    "- [ID: ${note.id}] $pinTag\"${note.title}\" [🔒 RIÊNG TƯ - CHỈ POINTER CỤC BỘ] | (Bảo mật cục bộ - 0 byte nội dung)"
+                } else {
+                    "- [ID: ${note.id}] $pinTag\"${note.title}\" [Công khai]"
+                }
+            }
+        } else {
+            try {
+                val repoCatalog = noteRepository.getCatalogForAi()
+                if (repoCatalog.isEmpty()) {
+                    "(Kho ghi chú hiện tại đang trống)"
+                } else {
+                    repoCatalog.joinToString("\n") { item ->
+                        val pinTag = if (item.isPinned) "[📌 ĐÃ GHIM] " else ""
+                        if (item.isPrivate) {
+                            "- [ID: ${item.id}] $pinTag\"${item.title}\" [🔒 RIÊNG TƯ - CHỈ POINTER CỤC BỘ] | (Bảo mật cục bộ - 0 byte nội dung)"
+                        } else {
+                            "- [ID: ${item.id}] $pinTag\"${item.title}\" [Công khai]"
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                "(Kho ghi chú hiện tại đang trống)"
+            }
+        }
     }
 
     private fun buildNotesSnippet(notes: List<RetrievedNote>): String {
@@ -148,6 +210,18 @@ class LocalRetriever(
         - Hãy trả lời một cách tự nhiên, mạch lạc, trực tiếp vào trọng tâm câu hỏi của người dùng.
         - TUYỆT ĐỐI KHÔNG tự động chia tiêu đề cứng như 'Lời nhắn nhẹ nhàng' hay 'Lưu ý tinh tế' trừ khi người dùng yêu cầu tóm tắt phiên làm việc.
         
+        QUY TẮC BẮT BUỘC PHÂN BIỆT RÕ RÀNG GIỮA NHIỆM VỤ / BÁO THỨC (TASKS / SMART ALARMS) VÀ GHI CHÚ (NOTES):
+        1. Phân định bản chất và nguồn dữ liệu:
+           - Nhiệm vụ / Báo thức (Bảng Nhiệm Vụ Ca / TaskBoard / Smart Alarms): Là các công việc, sự kiện, ca trực, lịch hẹn có mốc thời gian cụ thể (ví dụ: 'tập huấn PCCC', 'họp giao ban 15h', 'uống thuốc 20h', v.v.). Chúng xuất hiện trong mục 'DANH SÁCH BÁO THỨC & NHIỆM VỤ ĐANG HOẠT ĐỘNG (TASKBOARD / SMART ALARMS)'.
+           - Ghi chú (Kho Ghi Chú / Smart Notes): Là các văn bản, tài liệu, danh sách lưu trữ dài hạn trong kho ghi chú cá nhân (có ID dạng số như #1, #2...). Chúng xuất hiện trong mục 'MỤC LỤC KHO GHI CHÚ (SMART NOTES CATALOG)' hoặc 'THÔNG TIN GHI CHÚ TRÍCH XUẤT CỤC BỘ'.
+        2. Quy tắc hành vi khi người dùng yêu cầu thao tác với Nhiệm vụ / Báo thức:
+           - Khi người dùng hỏi thăm, xem, sửa lại thời gian, đổi giờ, dời lịch, hủy bỏ, hoàn thành một công việc/báo thức (ví dụ: 'sửa lại thời gian cho nhiệm vụ PCCC', 'đổi lịch PCCC sang ngày mai', 'xóa việc PCCC', 'hủy lịch PCCC', 'hủy báo thức', 'dời lịch hẹn')...:
+             + AI BẮT BUỘC phải nhận diện đây là một NHIỆM VỤ / BÁO THỨC trong Bảng Nhiệm Vụ ca (TaskBoard / Smart Alarms).
+             + TUYỆT ĐỐI KHÔNG ĐƯỢC nhầm lẫn hoặc đối xử như một Ghi chú (Note). TUYỆT ĐỐI KHÔNG tìm kiếm trong Kho Ghi Chú.
+             + TUYỆT ĐỐI KHÔNG ĐƯỢC đòi hỏi Note ID (ID ghi chú), không yêu cầu người dùng cung cấp ID ghi chú, và không bao giờ báo lỗi 'không tìm thấy ghi chú' khi người dùng đang đề cập đến một nhiệm vụ/lịch hẹn.
+             + AI cập nhật lại thời gian trong danh sách việc hoặc hướng dẫn người dùng các thao tác nhanh trên thẻ nhiệm vụ: "nhấn giữ thẻ để chỉnh sửa thời gian/chuông báo, vuốt phải hoàn thành, vuốt trái hủy".
+             + Hãy trả lời xác nhận rõ ràng về nhiệm vụ/báo thức đó (tên công việc, mốc giờ mới nếu dời/đổi giờ, hoặc xác nhận hủy/xóa lịch) một cách tự nhiên, thân thiện và chính xác.
+        
         QUY TẮC BẢO MẬT & CHỐNG ẢO GIÁC (ANTI-HALLUCINATION) KHI TRẢ LỜI VỀ GHI CHÚ:
         1. Khi trong mục 'THÔNG TIN GHI CHÚ TRÍCH XUẤT CỤC BỘ' có ghi chú liên quan đến câu hỏi, bạn BẮT BUỘC phải trả lời dựa trên chính xác nội dung ghi chú được trích xuất đó. Tuyệt đối KHÔNG tự sáng tác, suy diễn hay đưa ra kiến thức chung ngoài đời làm sai lệch hoặc mâu thuẫn với nội dung ghi chú của người dùng.
         2. Nếu người dùng hỏi về ghi chú của mình nhưng không có ghi chú nào khớp trong dữ liệu trích xuất hoặc nội dung ghi chú trống, hãy thông báo rõ ràng là không tìm thấy ghi chú phù hợp trên thiết bị của người dùng, tuyệt đối KHÔNG được tự bịa ra nội dung thay thế.
@@ -188,18 +262,56 @@ class LocalRetriever(
     private fun buildRound2Prompt(
         userPrompt: String,
         notesSnippet: String,
-        notificationsSnippet: String
+        notificationsSnippet: String,
+        activeAlarms: List<SmartAlarmEntity> = emptyList(),
+        previousSummary: String? = null,
+        sessionInfo: String? = null,
+        catalogSnippet: String = ""
     ): String {
         return buildString {
             appendLine(getRealTimeAnchorLine())
             appendLine()
+
+            if (!sessionInfo.isNullOrBlank()) {
+                appendLine("=== THÔNG TIN PHIÊN LÀM VIỆC HIỆN TẠI ===")
+                appendLine(sessionInfo.trim())
+                appendLine()
+            }
+
+            if (!previousSummary.isNullOrBlank()) {
+                appendLine("=== BỐI CẢNH TÓM TẮT PHIÊN TRƯỚC (PREVIOUS SESSION SUMMARY) ===")
+                appendLine(previousSummary.trim())
+                appendLine("LƯU Ý: Đây là tóm tắt phiên làm việc gần nhất để bạn nắm được bối cảnh liên tục của người dùng.")
+                appendLine()
+            }
+
+            appendLine("=== DANH SÁCH BÁO THỨC & NHIỆM VỤ ĐANG HOẠT ĐỘNG (TASKBOARD / SMART ALARMS) ===")
+            if (activeAlarms.isEmpty()) {
+                appendLine("(Hiện không có báo thức hay nhiệm vụ nào đang chạy)")
+            } else {
+                activeAlarms.forEach { alarm ->
+                    appendLine("• [Mã: ${alarm.alarmId}] \"${alarm.taskTitle}\" | Hạn: ${alarm.targetDateLabel} (Trạng thái: ${alarm.status})")
+                }
+            }
+            appendLine("LƯU Ý ĐẶC BIỆT: Đây là các NHIỆM VỤ / BÁO THỨC trên bảng công việc (TaskBoard). Khi người dùng hỏi, yêu cầu sửa, đổi giờ, dời lịch hoặc hủy các đầu việc này, hãy đối chiếu trực tiếp danh sách trên. TUYỆT ĐỐI KHÔNG coi đây là Ghi chú (Notes) và KHÔNG ĐƯỢC đòi Note ID!")
+            appendLine()
+
+            if (catalogSnippet.isNotBlank()) {
+                appendLine("=== MỤC LỤC KHO GHI CHÚ (SMART NOTES CATALOG) ===")
+                appendLine(catalogSnippet.trim())
+                appendLine("LƯU Ý: Đây là mục lục tiêu đề các ghi chú trong máy người dùng (nội dung riêng tư được bảo mật 0-byte).")
+                appendLine()
+            }
+
             appendLine("=== THÔNG TIN GHI CHÚ TRÍCH XUẤT CỤC BỘ ===")
             appendLine(notesSnippet)
             appendLine("LƯU Ý: Nếu thông tin trên có ghi chú liên quan đến câu hỏi, hãy ưu tiên và bám sát tuyệt đối nội dung này để trả lời trung thực, không tự bịa đặt kiến thức ngoài lề.")
             appendLine()
+
             appendLine("=== TIN NHẮN VÀ THÔNG BÁO 24H LIÊN QUAN ===")
             appendLine(notificationsSnippet)
             appendLine()
+
             appendLine("=== YÊU CẦU CỦA NGƯỜI DÙNG ===")
             appendLine(userPrompt.trim())
         }

@@ -354,6 +354,39 @@ class StreamingAiClientTest {
         assertNull(reqGroq.header("HTTP-Referer"))
     }
 
+    @Test
+    fun buildOpenAiCompatibleRequest_mergesSystemInstructionIntoUserPrompt() {
+        val client = StreamingAiClient()
+        val openRouterKey = ApiKeyConfig(
+            provider = AiProviderType.OPENROUTER,
+            rawKey = "sk-or-test1234",
+            modelName = "nvidia/nemotron-4-340b-instruct",
+            endpointUrl = "https://openrouter.ai/api/v1/chat/completions",
+            isEnabled = true
+        )
+
+        val customSystemInstruction = "Bạn là trợ lý điều phối ca trực chuyên nghiệp của OrcaAuto."
+        val userPrompt = "Tóm tắt các nhiệm vụ cần thực hiện hôm nay"
+
+        val request = invokeBuildOpenAiCompatibleRequest(
+            client = client,
+            config = openRouterKey,
+            prompt = userPrompt,
+            systemInstruction = customSystemInstruction
+        )
+
+        val json = extractRequestBodyJson(request)
+        val messages = json.getAsJsonArray("messages")
+
+        // Must have exactly 1 message (user role) with system instruction merged at the beginning
+        assertEquals("Phải có duy nhất 1 tin nhắn user với system instruction được gộp", 1, messages.size())
+        val msgObj = messages[0].asJsonObject
+        assertEquals("user", msgObj.get("role").asString)
+        val content = msgObj.get("content").asString
+        assertTrue("Nội dung tin nhắn phải bắt đầu bằng system instruction", content.startsWith(customSystemInstruction))
+        assertTrue("Nội dung tin nhắn phải chứa user prompt", content.contains(userPrompt))
+    }
+
     // =========================================================================
     // REFLECTION HELPERS
     // =========================================================================

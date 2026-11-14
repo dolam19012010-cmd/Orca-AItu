@@ -3,6 +3,10 @@ package com.orca.orcaauto.domain.assistant
 import com.orca.orcaauto.data.local.NotificationDao
 import com.orca.orcaauto.data.local.NotificationEntity
 import com.orca.orcaauto.data.local.SharedNoteEntity
+import com.orca.orcaauto.data.local.SmartAlarmEntity
+import com.orca.orcaauto.data.local.SmartAlarmStatus
+import com.orca.orcaauto.data.local.SummaryHistoryEntity
+import com.orca.orcaauto.data.preferences.SummarySessionConfig
 import com.orca.orcaauto.data.remote.ApiKeyConfig
 import com.orca.orcaauto.data.remote.AiProviderType
 import com.orca.orcaauto.data.remote.StreamingAiClient
@@ -394,6 +398,79 @@ class AssistantPipelineTest {
 
         // 3. Check instructions forbid UPDATE/DELETE on private notes
         assertTrue(retrieved.systemInstruction.contains("CẤM dùng trên ghi chú riêng tư"))
+    }
+
+    @Test
+    fun stage3_localRetriever_injectsActiveAlarmsAndDisambiguatesTasksFromNotes() = runTest {
+        val testAlarms = listOf(
+            SmartAlarmEntity(
+                alarmId = "ALM_PCCC_001",
+                taskTitle = "Tập huấn PCCC tòa nhà",
+                targetTimeMillis = System.currentTimeMillis() + 3600000,
+                targetDateLabel = "15:00 Hôm nay",
+                status = SmartAlarmStatus.ACTIVE
+            ),
+            SmartAlarmEntity(
+                alarmId = "ALM_MEET_002",
+                taskTitle = "Họp giao ban dự án",
+                targetTimeMillis = System.currentTimeMillis() + 7200000,
+                targetDateLabel = "17:00 Hôm nay",
+                status = SmartAlarmStatus.ACTIVE
+            )
+        )
+
+        val previousSummary = "Ca sáng đã xử lý xong sự cố mạng tầng 3."
+        val sessionInfo = "Tên phiên: Ca chiều IT (⚡) | Chỉ thị riêng: Ưu tiên hỗ trợ PCCC"
+
+        val decision = Round1Decision(
+            neededNoteIds = emptyList(),
+            senderFilter = emptyList(),
+            reasoning = "Hỏi về lịch PCCC"
+        )
+
+        val retrieved = localRetriever.retrieve(
+            userPrompt = "Đổi lịch tập huấn PCCC sang ngày mai giúp tôi",
+            decision = decision,
+            activeAlarms = testAlarms,
+            previousSummary = previousSummary,
+            sessionInfo = sessionInfo
+        )
+
+        // 1. Verify session info and previous summary injected into Round 2 prompt
+        assertTrue(retrieved.assembledRound2Prompt.contains("=== THÔNG TIN PHIÊN LÀM VIỆC HIỆN TẠI ==="))
+        assertTrue(retrieved.assembledRound2Prompt.contains("Ca chiều IT"))
+        assertTrue(retrieved.assembledRound2Prompt.contains("=== BỐI CẢNH TÓM TẮT PHIÊN TRƯỚC (PREVIOUS SESSION SUMMARY) ==="))
+        assertTrue(retrieved.assembledRound2Prompt.contains("Ca sáng đã xử lý xong sự cố mạng tầng 3."))
+
+        // 2. Verify active alarms injected into Round 2 prompt
+        assertTrue(retrieved.assembledRound2Prompt.contains("=== DANH SÁCH BÁO THỨC & NHIỆM VỤ ĐANG HOẠT ĐỘNG (TASKBOARD / SMART ALARMS) ==="))
+        assertTrue(retrieved.assembledRound2Prompt.contains("Tập huấn PCCC tòa nhà"))
+        assertTrue(retrieved.assembledRound2Prompt.contains("ALM_PCCC_001"))
+        assertTrue(retrieved.assembledRound2Prompt.contains("15:00 Hôm nay"))
+        assertTrue(retrieved.assembledRound2Prompt.contains("Họp giao ban dự án"))
+
+        // 3. Verify prompt instructions enforce Task vs Note disambiguation
+        assertTrue(retrieved.systemInstruction.contains("QUY TẮC BẮT BUỘC PHÂN BIỆT RÕ RÀNG GIỮA NHIỆM VỤ / BÁO THỨC"))
+        assertTrue(retrieved.systemInstruction.contains("TaskBoard"))
+        assertTrue(retrieved.systemInstruction.contains("TUYỆT ĐỐI KHÔNG ĐƯỢC đòi hỏi Note ID"))
+        assertTrue(retrieved.systemInstruction.contains("tập huấn PCCC"))
+    }
+
+    @Test
+    fun stage3_localRetriever_emptyAlarms_showsFallbackNotice() = runTest {
+        val decision = Round1Decision(
+            neededNoteIds = emptyList(),
+            senderFilter = emptyList(),
+            reasoning = "Không cần ghi chú"
+        )
+
+        val retrieved = localRetriever.retrieve(
+            userPrompt = "Tôi có lịch gì hôm nay không?",
+            decision = decision,
+            activeAlarms = emptyList()
+        )
+
+        assertTrue(retrieved.assembledRound2Prompt.contains("(Hiện không có báo thức hay nhiệm vụ nào đang chạy)"))
     }
 
     // =========================================================================
@@ -1124,6 +1201,151 @@ class AssistantPipelineTest {
         )
         method.isAccessible = true
         return method.invoke(router, rawResponse, userPrompt, packagedContext, validCatalogIds) as Round1Decision
+    }
+
+    // =========================================================================
+    // 8. MILESTONE M1: UNIFIED ACTIVE SESSION ENGINE & CONTEXT PROPAGATION
+    // =========================================================================
+
+    @Test
+    fun pipeline_withSessionIdAndSmartAlarms_propagatesToRound2Prompt() = runBlocking {
+        val fakeAlarmDao = FakeSmartAlarmDao()
+        val fakeSumDao = FakeSummaryDao()
+
+        fakeAlarmDao.insertOrUpdate(
+            SmartAlarmEntity(
+                alarmId = "ALM_NIGHT_01",
+                taskTitle = "Tuần tra tầng hầm và khóa van gas",
+                targetTimeMillis = System.currentTimeMillis() + 3600000L,
+                targetDateLabel = "22:00 Hôm nay",
+                status = SmartAlarmStatus.ACTIVE
+            )
+        )
+
+        fakeSumDao.insert(
+            SummaryHistoryEntity(
+                sessionId = "session_night_shift",
+                sessionName = "Ca Đêm",
+                targetTimeSlot = "18:00",
+                messageCount = 7,
+                summaryContent = "Ca trước: Bàn giao toàn bộ chìa khóa kho cho anh Tuấn lúc 18:00"
+            )
+        )
+
+        var capturedRound2Prompt = ""
+        val okHttpClient = OkHttpClient.Builder()
+            .addInterceptor(Interceptor { chain ->
+                val request = chain.request()
+                val buffer = Buffer()
+                request.body?.writeTo(buffer)
+                capturedRound2Prompt = buffer.readUtf8()
+
+                val sseBody = "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Đã kiểm tra ca trực đêm.\"}]}}]}\ndata: [DONE]\n"
+                val body = sseBody.toResponseBody("text/event-stream".toMediaType())
+                Response.Builder()
+                    .request(request)
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(200)
+                    .message("OK")
+                    .body(body)
+                    .build()
+            })
+            .build()
+
+        val streamingClient = StreamingAiClient(httpClient = okHttpClient)
+        val pipeline = AssistantPipeline(
+            noteRepository = noteRepository,
+            streamingAiClient = streamingClient,
+            contextPacker = contextPacker,
+            round1Router = round1Router,
+            localRetriever = localRetriever,
+            notificationDao = fakeNotificationDao,
+            summaryDao = fakeSumDao,
+            smartAlarmDao = fakeAlarmDao,
+            keyPoolProvider = { listOf(testApiKey) }
+        )
+
+        val emitted = pipeline.askStreaming("Kiểm tra công việc ca này", sessionId = "session_night_shift").toList()
+
+        // 1. Pipeline succeeds
+        val finalState = emitted.last()
+        assertEquals(AssistantStep.COMPLETED, finalState.step)
+        assertNull(finalState.errorMessage)
+
+        // 2. Verify propagation of active alarms
+        assertTrue("Round 2 prompt phải chứa mã báo thức ALM_NIGHT_01", capturedRound2Prompt.contains("ALM_NIGHT_01"))
+        assertTrue("Round 2 prompt phải chứa tên công việc tuần tra tầng hầm", capturedRound2Prompt.contains("Tuần tra tầng hầm và khóa van gas"))
+
+        // 3. Verify propagation of previous summary for the target session
+        assertTrue("Round 2 prompt phải chứa nội dung tóm tắt ca trước", capturedRound2Prompt.contains("Bàn giao toàn bộ chìa khóa kho"))
+
+        // 4. Verify propagation of target session identifier
+        assertTrue("Round 2 prompt phải chứa sessionId phiên đêm", capturedRound2Prompt.contains("session_night_shift"))
+    }
+
+    @Test
+    fun pipeline_defaultSessionId_fallsBackToMainSession_andQueriesCorrectSummary() = runBlocking {
+        val fakeAlarmDao = FakeSmartAlarmDao()
+        val fakeSumDao = FakeSummaryDao()
+
+        fakeSumDao.insert(
+            SummaryHistoryEntity(
+                sessionId = "session_main_default",
+                sessionName = "Phiên chính",
+                targetTimeSlot = "12:00",
+                messageCount = 10,
+                summaryContent = "TÓM TẮT PHIÊN CHÍNH: Đã giải quyết 5 yêu cầu bảo trì"
+            )
+        )
+        fakeSumDao.insert(
+            SummaryHistoryEntity(
+                sessionId = "session_special_vip",
+                sessionName = "Phiên VIP",
+                targetTimeSlot = "14:00",
+                messageCount = 2,
+                summaryContent = "TÓM TẮT PHIÊN VIP: Khách hàng đặc biệt"
+            )
+        )
+
+        var capturedRound2Prompt = ""
+        val okHttpClient = OkHttpClient.Builder()
+            .addInterceptor(Interceptor { chain ->
+                val request = chain.request()
+                val buffer = Buffer()
+                request.body?.writeTo(buffer)
+                capturedRound2Prompt = buffer.readUtf8()
+
+                val sseBody = "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Phản hồi ca chính.\"}]}}]}\ndata: [DONE]\n"
+                val body = sseBody.toResponseBody("text/event-stream".toMediaType())
+                Response.Builder()
+                    .request(request)
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(200)
+                    .message("OK")
+                    .body(body)
+                    .build()
+            })
+            .build()
+
+        val streamingClient = StreamingAiClient(httpClient = okHttpClient)
+        val pipeline = AssistantPipeline(
+            noteRepository = noteRepository,
+            streamingAiClient = streamingClient,
+            contextPacker = contextPacker,
+            round1Router = round1Router,
+            localRetriever = localRetriever,
+            notificationDao = fakeNotificationDao,
+            summaryDao = fakeSumDao,
+            smartAlarmDao = fakeAlarmDao,
+            keyPoolProvider = { listOf(testApiKey) }
+        )
+
+        // Pass sessionId = null -> should fallback to main session
+        val emitted = pipeline.askStreaming("Tình hình hiện tại", sessionId = null as String?).toList()
+
+        assertEquals(AssistantStep.COMPLETED, emitted.last().step)
+        assertTrue("Phải nạp tóm tắt của phiên chính", capturedRound2Prompt.contains("TÓM TẮT PHIÊN CHÍNH"))
+        assertFalse("Tuyệt đối KHÔNG được nạp nhầm tóm tắt của phiên VIP khác", capturedRound2Prompt.contains("TÓM TẮT PHIÊN VIP"))
     }
 }
 

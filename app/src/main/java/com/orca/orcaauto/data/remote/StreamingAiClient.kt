@@ -504,16 +504,16 @@ class StreamingAiClient(
             addProperty("temperature", 0.3)
 
             val messagesArray = JsonArray().apply {
-                val sysPrompt = systemInstruction.ifBlank { "Bạn là một Trợ lý Điều hành AI Chuyên nghiệp." }
-                val sysMsg = JsonObject().apply {
-                    addProperty("role", "system")
-                    addProperty("content", sysPrompt)
+                val sysPrompt = systemInstruction.trim().ifBlank { "Bạn là một Trợ lý Điều hành AI Chuyên nghiệp." }
+                val mergedUserContent = if (sysPrompt.isNotBlank()) {
+                    "$sysPrompt\n\n$prompt"
+                } else {
+                    prompt
                 }
-                add(sysMsg)
 
                 val userMsg = JsonObject().apply {
                     addProperty("role", "user")
-                    addProperty("content", prompt)
+                    addProperty("content", mergedUserContent)
                 }
                 add(userMsg)
             }

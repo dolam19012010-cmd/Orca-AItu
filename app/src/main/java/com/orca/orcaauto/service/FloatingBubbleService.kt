@@ -102,6 +102,9 @@ class FloatingBubbleService : Service() {
     private var isExpanded = false
     private var latestSummaryText: String = ""
     private var latestModelInfo: String = ""
+    private var activeChatAnswer: String? = null
+    private var currentTasksBoardLayout: LinearLayout? = null
+    private var currentCardLayoutRef: View? = null
     private val dismissedTaskTitles = mutableSetOf<String>()
     private var alarmDbMap = mapOf<String, SmartAlarmEntity>()
     private var currentAnimator: ValueAnimator? = null
@@ -206,7 +209,17 @@ class FloatingBubbleService : Service() {
                     .getAllAlarmsFlow()
                     .collect { alarms ->
                         alarmDbMap = alarms.associateBy { it.alarmId }
-                        if (isExpanded) updateBubbleContent()
+                        if (isExpanded) {
+                            if (!isCallingAi) {
+                                updateBubbleContent()
+                            } else {
+                                currentTasksBoardLayout?.let { board ->
+                                    currentCardLayoutRef?.let { card ->
+                                        populateTaskBoard(board, card)
+                                    }
+                                }
+                            }
+                        }
                     }
             } catch (_: Exception) {}
         }
@@ -222,6 +235,7 @@ class FloatingBubbleService : Service() {
                             val isNewSummary = lastKnownSummaryId != null && lastKnownSummaryId != latest.id
                             lastKnownSummaryId = latest.id
                             latestSummaryText = latest.summaryContent
+                            activeChatAnswer = null
                             if (latest.modelInfo.isNotBlank()) {
                                 latestModelInfo = latest.modelInfo
                             }
@@ -1129,6 +1143,9 @@ class FloatingBubbleService : Service() {
     private fun collapseExpandedCard(root: FrameLayout) {
         activeStreamingJob?.cancel()
         activeStreamingJob = null
+        activeChatAnswer = null
+        currentTasksBoardLayout = null
+        currentCardLayoutRef = null
         try {
             com.orca.orcaauto.domain.voice.VoiceBriefingManager.getInstance(this).stop()
         } catch (_: Exception) {}
@@ -1156,6 +1173,84 @@ class FloatingBubbleService : Service() {
                 transitionToBubbleState(BubbleState.STATE_1_ACTIVE)
             }
             .start()
+    }
+
+    private fun populateTaskBoard(container: LinearLayout, cardLayout: View) {
+        container.removeAllViews()
+
+        val parsed = SummaryParser.parse(latestSummaryText)
+        val speakableParsed = SystemAlarmHelper.filterOutCancelled(parsed, alarmDbMap)
+        val existingParsedTasks = speakableParsed.tasksToDo + speakableParsed.tasksPlanned + speakableParsed.tasksDone
+
+        val dbTasksToDo = mutableListOf<TaskItem>()
+        val dbTasksDone = mutableListOf<TaskItem>()
+
+        for (alarm in alarmDbMap.values) {
+            if (alarm.status == SmartAlarmStatus.CANCELLED || alarm.status == SmartAlarmStatus.EXPIRED) {
+                continue
+            }
+            val alreadyPresent = existingParsedTasks.any { task ->
+                SystemAlarmHelper.isTitleMatching(task.title, alarm.taskTitle)
+            }
+            if (!alreadyPresent) {
+                if (alarm.status == SmartAlarmStatus.COMPLETED) {
+                    dbTasksDone.add(
+                        TaskItem(
+                            title = alarm.taskTitle,
+                            deadline = alarm.targetDateLabel,
+                            status = TaskStatus.DONE
+                        )
+                    )
+                } else {
+                    dbTasksToDo.add(
+                        TaskItem(
+                            title = alarm.taskTitle,
+                            deadline = alarm.targetDateLabel,
+                            status = TaskStatus.TODO
+                        )
+                    )
+                }
+            }
+        }
+
+        val allTasksToDo = speakableParsed.tasksToDo + dbTasksToDo
+        val allTasksPlanned = speakableParsed.tasksPlanned
+        val allTasksDone = speakableParsed.tasksDone + dbTasksDone
+        val allTasks = allTasksToDo + allTasksPlanned + allTasksDone
+
+        if (allTasks.isEmpty()) {
+            val emptyBox = LinearLayout(this).apply {
+                tag = "EMPTY_BOX_TAG"
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                setPadding(0, dpToPx(36), 0, dpToPx(36))
+            }
+            val emptyIcon = TextView(this).apply {
+                text = "✨"
+                textSize = 28f
+                gravity = Gravity.CENTER
+            }
+            emptyBox.addView(emptyIcon)
+            val emptyTv = TextView(this).apply {
+                text = "Không có nhiệm vụ tồn đọng. Mọi thứ đã hoàn tất!"
+                setTextColor(Color.parseColor("#94A3B8"))
+                textSize = 12f
+                gravity = Gravity.CENTER
+                setPadding(0, dpToPx(6), 0, 0)
+            }
+            emptyBox.addView(emptyTv)
+            container.addView(emptyBox)
+        } else {
+            allTasksToDo.forEach { task ->
+                container.addView(renderTaskRow(task, isPlanned = false, cardLayout = cardLayout))
+            }
+            allTasksPlanned.forEach { task ->
+                container.addView(renderTaskRow(task, isPlanned = true, cardLayout = cardLayout))
+            }
+            allTasksDone.forEach { task ->
+                container.addView(renderTaskRow(task, isPlanned = false, cardLayout = cardLayout))
+            }
+        }
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -1249,6 +1344,7 @@ class FloatingBubbleService : Service() {
                 }
             }
         }
+        currentCardLayoutRef = cardLayout
 
         // Outside-tap detector: tapping empty space above/below collapses back to floating bubble
         root.setOnTouchListener { _, event ->
@@ -1377,9 +1473,11 @@ class FloatingBubbleService : Service() {
                             if (sessionSummary != null) {
                                 latestSummaryText = sessionSummary.summaryContent
                                 latestModelInfo = sessionSummary.modelInfo
+                                activeChatAnswer = null
                             } else {
-                                latestSummaryText = "Ch\u01B0a c\u00F3 b\u00E1o c\u00E1o cho '${session.name}'.\n\nNh\u1EA5n n\u00FAt 'G\u1EEDi' b\u00EAn d\u01B0\u1EDBi \u0111\u1EC3 t\u00F3m t\u1EAFt c\u00E1c tin nh\u1EAFn thu\u1ED9c phi\u00EAn n\u00E0y."
+                                latestSummaryText = "Chưa có báo cáo cho '${session.name}'.\n\nNhấn nút 'Gửi' bên dưới để tóm tắt các tin nhắn thuộc phiên này."
                                 latestModelInfo = "${session.iconEmoji} ${session.name}"
+                                activeChatAnswer = null
                             }
                             withContext(Dispatchers.Main) {
                                 updateBubbleContent()
@@ -1434,16 +1532,15 @@ class FloatingBubbleService : Service() {
         // Section 1: Clean Advice Box or Direct Message View
         val cleanAdvice = SummaryParser.cleanAdviceText(parsed.conciseAdvice)
         val speakableParsed = SystemAlarmHelper.filterOutCancelled(parsed, alarmDbMap)
-        val allTasks = parsed.tasksToDo + parsed.tasksPlanned + parsed.tasksDone
         val effectiveAdvice = when {
+            !activeChatAnswer.isNullOrBlank() -> activeChatAnswer!!
             cleanAdvice.isNotBlank() -> cleanAdvice
-            allTasks.isEmpty() && latestSummaryText.isNotBlank() -> latestSummaryText
+            parsed.totalTaskCount == 0 && latestSummaryText.isNotBlank() -> latestSummaryText
             else -> ""
         }
 
         var currentAdviceTv: TextView? = null
         var currentSec1Box: LinearLayout? = null
-        var currentTasksContainer: LinearLayout? = null
         var currentNotesContainer: LinearLayout? = null
 
         if (effectiveAdvice.isNotBlank()) {
@@ -1486,11 +1583,6 @@ class FloatingBubbleService : Service() {
             }
             sec1Box.addView(adviceTv)
 
-            val tasksContainer = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-            }
-            sec1Box.addView(tasksContainer)
-
             val notesContainer = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
             }
@@ -1499,74 +1591,18 @@ class FloatingBubbleService : Service() {
             contentLayout.addView(sec1Box)
             currentAdviceTv = adviceTv
             currentSec1Box = sec1Box
-            currentTasksContainer = tasksContainer
             currentNotesContainer = notesContainer
         }
 
-        // Render all tasks directly with state-driven styling (Active / Done / Cancelled)
-        if (allTasks.isEmpty()) {
-            if (effectiveAdvice.isBlank()) {
-                val emptyBox = LinearLayout(this).apply {
-                    tag = "EMPTY_BOX_TAG"
-                    orientation = LinearLayout.VERTICAL
-                    gravity = Gravity.CENTER
-                    setPadding(0, dpToPx(36), 0, dpToPx(36))
-                }
-                val emptyIcon = TextView(this).apply {
-                    text = "✨"
-                    textSize = 28f
-                    gravity = Gravity.CENTER
-                }
-                emptyBox.addView(emptyIcon)
-                val emptyTv = TextView(this).apply {
-                    text = "Không có nhiệm vụ tồn đọng. Mọi thứ đã hoàn tất!"
-                    setTextColor(Color.parseColor("#94A3B8"))
-                    textSize = 12f
-                    gravity = Gravity.CENTER
-                    setPadding(0, dpToPx(6), 0, 0)
-                }
-                emptyBox.addView(emptyTv)
-                contentLayout.addView(emptyBox)
-            }
-        } else {
-            // Lọc bỏ hoàn toàn các việc đã bị HỦY để không hiện chiếm chỗ trên bóng chat nổi
-            val visibleToDo = speakableParsed.tasksToDo
-            val visiblePlanned = speakableParsed.tasksPlanned
-            val visibleDone = speakableParsed.tasksDone
-
-            if (visibleToDo.isEmpty() && visiblePlanned.isEmpty() && visibleDone.isEmpty()) {
-                val allDoneBox = LinearLayout(this).apply {
-                    orientation = LinearLayout.VERTICAL
-                    gravity = Gravity.CENTER
-                    setPadding(0, dpToPx(36), 0, dpToPx(36))
-                }
-                val allDoneIcon = TextView(this).apply {
-                    text = "✨"
-                    textSize = 32f
-                    gravity = Gravity.CENTER
-                }
-                allDoneBox.addView(allDoneIcon)
-                val allDoneTv = TextView(this).apply {
-                    text = "Không có nhiệm vụ tồn đọng. Mọi thứ đã hoàn tất!"
-                    setTextColor(Color.parseColor("#94A3B8"))
-                    textSize = 12f
-                    gravity = Gravity.CENTER
-                    setPadding(0, dpToPx(6), 0, 0)
-                }
-                allDoneBox.addView(allDoneTv)
-                contentLayout.addView(allDoneBox)
-            } else {
-                visibleToDo.forEach { task ->
-                    contentLayout.addView(renderTaskRow(task, isPlanned = false, cardLayout = cardLayout))
-                }
-                visiblePlanned.forEach { task ->
-                    contentLayout.addView(renderTaskRow(task, isPlanned = true, cardLayout = cardLayout))
-                }
-                visibleDone.forEach { task ->
-                    contentLayout.addView(renderTaskRow(task, isPlanned = false, cardLayout = cardLayout))
-                }
-            }
+        // Section 2: TaskBoard (Preserved & Loaded from Room DB smart_alarms)
+        val tasksBoardLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
+        contentLayout.addView(tasksBoardLayout)
+        currentTasksBoardLayout = tasksBoardLayout
+
+        populateTaskBoard(tasksBoardLayout, cardLayout)
 
         scrollView.addView(contentLayout)
         cardLayout.addView(scrollView)
@@ -1636,13 +1672,13 @@ class FloatingBubbleService : Service() {
                 }
 
                 // Remove emptyBox if present
-                contentLayout.findViewWithTag<View>("EMPTY_BOX_TAG")?.let { contentLayout.removeView(it) }
+                currentTasksBoardLayout?.findViewWithTag<View>("EMPTY_BOX_TAG")?.let { currentTasksBoardLayout?.removeView(it) }
 
                 var targetAdviceTv = currentAdviceTv
-                var targetTasksContainer = currentTasksContainer
                 var targetNotesContainer = currentNotesContainer
+                var targetSec1Box = currentSec1Box
 
-                if (targetAdviceTv == null || targetTasksContainer == null || targetNotesContainer == null) {
+                if (targetAdviceTv == null || targetNotesContainer == null || targetSec1Box == null) {
                     val newSec1Box = LinearLayout(this@FloatingBubbleService).apply {
                         orientation = LinearLayout.VERTICAL
                         background = GradientDrawable().apply {
@@ -1662,11 +1698,6 @@ class FloatingBubbleService : Service() {
                     }
                     newSec1Box.addView(newAdviceTv)
 
-                    val newTasksContainer = LinearLayout(this@FloatingBubbleService).apply {
-                        orientation = LinearLayout.VERTICAL
-                    }
-                    newSec1Box.addView(newTasksContainer)
-
                     val newNotesContainer = LinearLayout(this@FloatingBubbleService).apply {
                         orientation = LinearLayout.VERTICAL
                     }
@@ -1675,14 +1706,14 @@ class FloatingBubbleService : Service() {
                     contentLayout.addView(newSec1Box, 0)
                     currentSec1Box = newSec1Box
                     currentAdviceTv = newAdviceTv
-                    currentTasksContainer = newTasksContainer
                     currentNotesContainer = newNotesContainer
                     targetAdviceTv = newAdviceTv
-                    targetTasksContainer = newTasksContainer
                     targetNotesContainer = newNotesContainer
+                    targetSec1Box = newSec1Box
+                } else {
+                    targetSec1Box.visibility = View.VISIBLE
                 }
 
-                targetTasksContainer.removeAllViews()
                 targetNotesContainer.removeAllViews()
                 targetAdviceTv.text = "Đang tìm thông tin..."
 
@@ -1697,42 +1728,36 @@ class FloatingBubbleService : Service() {
                                     targetAdviceTv.text = uiState.stepDescription
                                 }
                                 AssistantStep.STAGE_4_STREAMING_ANSWER -> {
-                                    targetAdviceTv.text = uiState.streamedContentClean + " ▌"
+                                    if (uiState.streamedContentClean.isBlank()) {
+                                        targetAdviceTv.text = "⏳ Đang kết nối máy chủ AI..."
+                                    } else {
+                                        targetAdviceTv.text = uiState.streamedContentClean + " ▌"
+                                    }
                                 }
                                 AssistantStep.STAGE_5_EXECUTING_ACTIONS -> {
-                                    targetAdviceTv.text = uiState.streamedContentClean
+                                    targetAdviceTv.text = uiState.streamedContentClean.ifBlank { "Đang thực thi tác vụ..." }
                                 }
                                 AssistantStep.COMPLETED -> {
-                                    latestSummaryText = uiState.streamedContentClean
+                                    // Chat answers do NOT overwrite latestSummaryText!
+                                    activeChatAnswer = uiState.streamedContentClean
                                     uiState.activeUsedKey?.let { key ->
                                         latestModelInfo = "${key.provider.displayName} • ${key.modelName}"
                                         modelTv.text = latestModelInfo
                                     }
 
-                                    // Gộp Lời chỉ dẫn + Bảng Nhiệm vụ tương tác + Thẻ ghi chú khi chat
+                                    // Gộp Lời chỉ dẫn + Thẻ ghi chú khi chat
                                     val parsed = SummaryParser.parse(uiState.streamedContentClean)
                                     val cleanAdvice = SummaryParser.cleanAdviceText(parsed.conciseAdvice)
-                                    val allTasks = parsed.tasksToDo + parsed.tasksPlanned + parsed.tasksDone
+                                    targetAdviceTv.text = if (cleanAdvice.isNotBlank()) cleanAdvice else parsed.conciseAdvice.ifBlank { uiState.streamedContentClean }
 
-                                    if (allTasks.isNotEmpty()) {
-                                        targetAdviceTv.text = if (cleanAdvice.isNotBlank()) cleanAdvice else parsed.conciseAdvice.ifBlank { uiState.streamedContentClean }
-                                        targetTasksContainer.removeAllViews()
-                                        val speakableParsed = SystemAlarmHelper.filterOutCancelled(parsed, alarmDbMap)
-                                        speakableParsed.tasksToDo.forEach { task ->
-                                            targetTasksContainer.addView(renderTaskRow(task, isPlanned = false, cardLayout = cardLayout))
-                                        }
-                                        speakableParsed.tasksPlanned.forEach { task ->
-                                            targetTasksContainer.addView(renderTaskRow(task, isPlanned = true, cardLayout = cardLayout))
-                                        }
-                                        speakableParsed.tasksDone.forEach { task ->
-                                            targetTasksContainer.addView(renderTaskRow(task, isPlanned = false, cardLayout = cardLayout))
-                                        }
-                                    } else {
-                                        targetAdviceTv.text = uiState.streamedContentClean
-                                    }
-
+                                    targetNotesContainer.removeAllViews()
                                     if (uiState.shownNoteCards.isNotEmpty()) {
                                         renderLocalNoteCardsInBubble(targetNotesContainer, uiState.shownNoteCards)
+                                    }
+
+                                    // TaskBoard is always preserved and refreshed from Room DB smart_alarms
+                                    currentTasksBoardLayout?.let { board ->
+                                        populateTaskBoard(board, cardLayout)
                                     }
                                 }
                                 AssistantStep.ERROR -> {
@@ -1760,6 +1785,9 @@ class FloatingBubbleService : Service() {
                         queryEt.isEnabled = true
                         queryEt.hint = "Nhập lệnh hoặc câu hỏi..."
                         activeStreamingJob = null
+                        currentTasksBoardLayout?.let { board ->
+                            populateTaskBoard(board, cardLayout)
+                        }
                     }
                 }
             }

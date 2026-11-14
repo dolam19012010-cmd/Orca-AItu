@@ -5,6 +5,7 @@ import android.util.Log
 import com.orca.orcaauto.data.local.AppDatabase
 import com.orca.orcaauto.data.local.NotificationDao
 import com.orca.orcaauto.data.local.SharedNoteEntity
+import com.orca.orcaauto.data.local.SmartAlarmDao
 import com.orca.orcaauto.data.local.SummaryDao
 import com.orca.orcaauto.data.local.SummaryHistoryEntity
 import com.orca.orcaauto.data.preferences.AssistantThinkingLevel
@@ -53,13 +54,33 @@ class AssistantPipeline(
     private val localRetriever: LocalRetriever,
     private val notificationDao: NotificationDao? = null,
     private val summaryDao: SummaryDao? = null,
+    private val smartAlarmDao: SmartAlarmDao? = null,
     private val keyPoolProvider: () -> List<ApiKeyConfig>,
     private val thinkingLevelProvider: (() -> AssistantThinkingLevel)? = null,
-    private val personaProvider: (() -> PromptPersona)? = null
+    private val personaProvider: (() -> PromptPersona)? = null,
+    private val sessionProvider: (() -> String)? = null
 ) {
 
     private val activeNotificationDao: NotificationDao?
         get() = notificationDao ?: localRetriever.notificationDao
+
+    private val activeSmartAlarmDao: SmartAlarmDao?
+        get() = smartAlarmDao ?: localRetriever.smartAlarmDao ?: (context?.let {
+            try {
+                AppDatabase.getDatabase(it).smartAlarmDao()
+            } catch (e: Throwable) {
+                null
+            }
+        })
+
+    private val activeSummaryDao: SummaryDao?
+        get() = summaryDao ?: (context?.let {
+            try {
+                AppDatabase.getDatabase(it).summaryDao()
+            } catch (e: Throwable) {
+                null
+            }
+        })
 
     companion object {
         private const val TAG = "AssistantPipeline"
@@ -72,6 +93,7 @@ class AssistantPipeline(
             val noteRepo = SharedNoteRepositoryImpl(db.sharedNoteDao())
             val notifDao = db.notificationDao()
             val summaryDao = db.summaryDao()
+            val smartAlarmDao = db.smartAlarmDao()
             val userPrefs = UserPreferences.getInstance(context)
 
             val universalClient = UniversalAiClient()
@@ -79,7 +101,7 @@ class AssistantPipeline(
 
             val packer = ContextPacker(noteRepo, notifDao)
             val router = Round1Router(universalClient)
-            val retriever = LocalRetriever(noteRepo, notifDao)
+            val retriever = LocalRetriever(noteRepo, notifDao, smartAlarmDao)
 
             return AssistantPipeline(
                 context = context,
@@ -91,26 +113,38 @@ class AssistantPipeline(
                 localRetriever = retriever,
                 notificationDao = notifDao,
                 summaryDao = summaryDao,
+                smartAlarmDao = smartAlarmDao,
                 keyPoolProvider = { userPrefs.getKeyPool() },
                 thinkingLevelProvider = { userPrefs.getAssistantThinkingLevel() },
-                personaProvider = { userPrefs.getPromptPersona() }
+                personaProvider = { userPrefs.getPromptPersona() },
+                sessionProvider = { userPrefs.getSelectedSessionId() }
             )
         }
 
         /**
          * Static helper matching PROJECT.md interface contract:
-         * AssistantPipeline.askStreaming(userPrompt: String, context: Context): Flow<AssistantUiState>
+         * AssistantPipeline.askStreaming(userPrompt: String, context: Context, sessionId: String? = null): Flow<AssistantUiState>
          */
-        fun askStreaming(userPrompt: String, context: Context): Flow<AssistantUiState> {
-            return create(context).askStreaming(userPrompt)
+        fun askStreaming(userPrompt: String, context: Context, sessionId: String? = null): Flow<AssistantUiState> {
+            return create(context).askStreaming(userPrompt, sessionId)
+        }
+
+        fun askStreaming(userPrompt: String, context: Context, sessionId: Long?): Flow<AssistantUiState> {
+            return create(context).askStreaming(userPrompt, sessionId?.toString())
         }
     }
+
+    /**
+     * Long-based overload for backward/numeric compatibility.
+     */
+    fun askStreaming(userPrompt: String, sessionId: Long?): Flow<AssistantUiState> =
+        askStreaming(userPrompt, sessionId?.toString())
 
     /**
      * Executes the 5-stage pipeline as an asynchronous Flow.
      * Guarantees clean cancellation when the user dismisses the chat sheet.
      */
-    fun askStreaming(userPrompt: String): Flow<AssistantUiState> = flow {
+    fun askStreaming(userPrompt: String, sessionId: String? = null): Flow<AssistantUiState> = flow {
         if (userPrompt.isBlank()) {
             emit(
                 AssistantUiState(
@@ -183,20 +217,55 @@ class AssistantPipeline(
                     stepDescription = "Đang mở dữ liệu trên máy..."
                 )
             )
+
+            val userPrefs = context?.let {
+                try {
+                    UserPreferences.getInstance(it)
+                } catch (e: Throwable) {
+                    null
+                }
+            }
+            val targetSessionId = sessionId
+                ?: sessionProvider?.invoke()
+                ?: userPrefs?.getSelectedSessionId()
+                ?: SummarySessionConfig.MAIN_SESSION_ID
+
+            val sessions = userPrefs?.sessionsFlow?.value ?: emptyList()
+            val currentSession = sessions.find { it.id == targetSessionId }
+            val sessionName = currentSession?.name
+                ?: if (targetSessionId == SummarySessionConfig.MAIN_SESSION_ID) "Phiên chính" else targetSessionId
+            val sessionInfoStr = currentSession?.let {
+                "Tên phiên: ${it.name} (${it.iconEmoji})" + if (it.customInstruction.isNotBlank()) " | Chỉ thị riêng: ${it.customInstruction}" else ""
+            } ?: "Tên phiên: $sessionName"
+
             val currentPersona = personaProvider?.invoke()
-                ?: context?.let {
-                    try {
-                        UserPreferences.getInstance(it).getPromptPersona()
-                    } catch (_: Throwable) {
-                        PromptPersona.GENTLE_ASSISTANT
-                    }
-                } ?: PromptPersona.GENTLE_ASSISTANT
+                ?: currentSession?.promptPersonaId?.takeIf { it.isNotBlank() }?.let { PromptPersona.fromId(it) }
+                ?: userPrefs?.getPromptPersona()
+                ?: PromptPersona.GENTLE_ASSISTANT
+
+            val activeAlarms = try {
+                activeSmartAlarmDao?.getActiveAlarms() ?: emptyList()
+            } catch (e: Exception) {
+                Log.w(TAG, "Không thể lấy danh sách active alarms: ${e.message}")
+                emptyList()
+            }
+
+            val previousSummary = try {
+                activeSummaryDao?.getLatestSummaryForSession(targetSessionId)?.summaryContent
+                    ?: if (targetSessionId == SummarySessionConfig.MAIN_SESSION_ID) activeSummaryDao?.getLatestSummary()?.summaryContent else null
+            } catch (e: Exception) {
+                Log.w(TAG, "Không thể lấy tóm tắt phiên trước: ${e.message}")
+                null
+            }
 
             val retrievedContext = localRetriever.retrieve(
                 userPrompt = userPrompt,
                 decision = routerDecision,
                 excludedNotificationIds = realIdsToDelete.toSet(),
-                persona = currentPersona
+                persona = currentPersona,
+                activeAlarms = activeAlarms,
+                previousSummary = previousSummary,
+                sessionInfo = sessionInfoStr
             )
 
             // =========================================================================
@@ -217,7 +286,7 @@ class AssistantPipeline(
                 ?: context?.let {
                     try {
                         UserPreferences.getInstance(it).getAssistantThinkingLevel()
-                    } catch (_: Throwable) {
+                    } catch (e: Throwable) {
                         AssistantThinkingLevel.BALANCED
                     }
                 }
@@ -413,15 +482,9 @@ class AssistantPipeline(
             )
 
             // Tự động lưu lịch sử phiên tương tác vào Tóm Tắt Ca để người dùng xem lại được trong Trí Nhớ AI
-            val activeSummaryDao = summaryDao ?: context?.let { AppDatabase.getDatabase(it).summaryDao() }
-            if (activeSummaryDao != null && finalCleanContent.isNotBlank()) {
+            val currentSummaryDao = activeSummaryDao
+            if (currentSummaryDao != null && finalCleanContent.isNotBlank()) {
                 try {
-                    val userPrefs = context?.let { UserPreferences.getInstance(it) }
-                    val currentSessionId = userPrefs?.getSelectedSessionId() ?: SummarySessionConfig.MAIN_SESSION_ID
-                    val sessions = userPrefs?.sessionsFlow?.value ?: emptyList()
-                    val currentSession = sessions.find { it.id == currentSessionId }
-                    val sessionName = currentSession?.name ?: "Phiên chính"
-
                     val timeSlot = SimpleDateFormat("HH:mm - dd/MM", Locale.getDefault()).format(Date()) + " [$sessionName]"
                     val modelInfo = activeUsedKey?.let { "${it.provider.displayName} • ${it.modelName}" }.orEmpty()
 
@@ -440,10 +503,10 @@ class AssistantPipeline(
                         summaryContent = summaryContentToSave,
                         status = "SUCCESS",
                         modelInfo = modelInfo,
-                        sessionId = currentSessionId,
+                        sessionId = targetSessionId,
                         sessionName = sessionName
                     )
-                    activeSummaryDao.insert(summaryRecord)
+                    currentSummaryDao.insert(summaryRecord)
                     Log.i(TAG, "Đã lưu lịch sử phiên chat vào Tóm tắt ca (id: ${summaryRecord.id}, session: $sessionName)")
                 } catch (e: Exception) {
                     Log.w(TAG, "Không thể lưu lịch sử chat vào summaryDao: ${e.message}")

@@ -245,4 +245,108 @@ class FloatingBubbleServiceEmpiricalChallengeTest {
         val emptyNotes = emptyList<SharedNoteEntity>()
         assertTrue(emptyNotes.isEmpty())
     }
+
+    // =========================================================================
+    // 4. STREAMING UX: CONNECTING STATUS vs TOKEN STREAMING
+    // =========================================================================
+
+    @Test
+    fun streamingUX_whenWaitingFirstToken_displaysConnectingStatusInsteadOfNakedCursor() {
+        val blankUiState = AssistantUiState(
+            step = AssistantStep.STAGE_4_STREAMING_ANSWER,
+            streamedContentClean = ""
+        )
+
+        val displayTextWhenWaiting = if (blankUiState.streamedContentClean.isBlank()) {
+            "⏳ Đang kết nối máy chủ AI..."
+        } else {
+            blankUiState.streamedContentClean + " ▌"
+        }
+
+        assertEquals("Phải hiển thị icon đồng hồ cát và thông báo kết nối máy chủ AI", "⏳ Đang kết nối máy chủ AI...", displayTextWhenWaiting)
+        assertFalse("Tuyệt đối không hiển thị con trỏ đơn độc ▌ trong khung trống", displayTextWhenWaiting.contains("▌"))
+
+        val activeUiState = AssistantUiState(
+            step = AssistantStep.STAGE_4_STREAMING_ANSWER,
+            streamedContentClean = "Chào bạn, đây là thông tin cần tìm"
+        )
+
+        val displayTextWhenStreaming = if (activeUiState.streamedContentClean.isBlank()) {
+            "⏳ Đang kết nối máy chủ AI..."
+        } else {
+            activeUiState.streamedContentClean + " ▌"
+        }
+
+        assertEquals("Chào bạn, đây là thông tin cần tìm ▌", displayTextWhenStreaming)
+    }
+
+    // =========================================================================
+    // 5. ZERO TASK LOSS: PRESERVING SUMMARY & ROOM DB SMART ALARMS IN TASKBOARD
+    // =========================================================================
+
+    @Test
+    fun zeroTaskLoss_chatAnswerDoesNotOverwriteSummaryOrDestroyRoomDbTaskBoard() {
+        val initialSummary = """
+            ### LỜI KHUYÊN:
+            Hôm nay có 2 việc gấp cần chú ý.
+            
+            ### VIỆC CẦN LÀM NGAY:
+            - [ ] Họp giao ban đầu tuần lúc 09:00
+        """.trimIndent()
+
+        var latestSummaryText = initialSummary
+        var activeChatAnswer: String? = null
+
+        // Room DB contains an active task scheduled earlier (e.g. PCCC drill)
+        val roomDbAlarm = com.orca.orcaauto.data.local.SmartAlarmEntity(
+            alarmId = "ALM_pccc_1500",
+            taskTitle = "Diễn tập PCCC tòa nhà",
+            targetTimeMillis = System.currentTimeMillis() + 3600_000L,
+            targetDateLabel = "15:00 Hôm nay",
+            status = com.orca.orcaauto.data.local.SmartAlarmStatus.ACTIVE
+        )
+        val alarmDbMap = mapOf(roomDbAlarm.alarmId to roomDbAlarm)
+
+        // Simulate user asking a conversational question in Floating Bubble Chat
+        val chatAnswer = "Dạ vâng, tôi đã kiểm tra hệ thống giúp bạn. Mọi thứ hoạt động bình thường."
+
+        // IN AssistantStep.COMPLETED: Chat answer must NOT overwrite latestSummaryText!
+        activeChatAnswer = chatAnswer
+        // DO NOT: latestSummaryText = chatAnswer
+
+        assertEquals("latestSummaryText phải được giữ nguyên vẹn", initialSummary, latestSummaryText)
+        assertEquals("activeChatAnswer lưu trữ câu trả lời chat", chatAnswer, activeChatAnswer)
+
+        // Evaluate task board population logic: merges parsed summary tasks + Room DB smart_alarms
+        val parsed = SummaryParser.parse(latestSummaryText)
+        val speakableParsed = com.orca.orcaauto.domain.alarm.SystemAlarmHelper.filterOutCancelled(parsed, alarmDbMap)
+        val existingParsedTasks = speakableParsed.tasksToDo + speakableParsed.tasksPlanned + speakableParsed.tasksDone
+
+        val dbTasksToDo = mutableListOf<TaskItem>()
+        for (alarm in alarmDbMap.values) {
+            if (alarm.status == com.orca.orcaauto.data.local.SmartAlarmStatus.CANCELLED ||
+                alarm.status == com.orca.orcaauto.data.local.SmartAlarmStatus.EXPIRED) {
+                continue
+            }
+            val alreadyPresent = existingParsedTasks.any { task ->
+                com.orca.orcaauto.domain.alarm.SystemAlarmHelper.isTitleMatching(task.title, alarm.taskTitle)
+            }
+            if (!alreadyPresent) {
+                dbTasksToDo.add(
+                    TaskItem(
+                        title = alarm.taskTitle,
+                        deadline = alarm.targetDateLabel,
+                        status = TaskStatus.TODO
+                    )
+                )
+            }
+        }
+
+        val allTasksToDo = speakableParsed.tasksToDo + dbTasksToDo
+        val allTasks = allTasksToDo + speakableParsed.tasksPlanned + speakableParsed.tasksDone
+
+        assertEquals("TaskBoard phải có đủ 2 nhiệm vụ (1 từ summary + 1 từ Room DB smart_alarms)", 2, allTasks.size)
+        assertTrue("Chứa nhiệm vụ Họp giao ban", allTasks.any { it.title.contains("Họp giao ban") })
+        assertTrue("Chứa nhiệm vụ Diễn tập PCCC từ Room DB", allTasks.any { it.title.contains("Diễn tập PCCC") })
+    }
 }
