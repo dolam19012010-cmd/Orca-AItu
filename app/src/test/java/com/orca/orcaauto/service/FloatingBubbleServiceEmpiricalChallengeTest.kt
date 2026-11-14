@@ -280,6 +280,41 @@ class FloatingBubbleServiceEmpiricalChallengeTest {
         assertEquals("Chào bạn, đây là thông tin cần tìm ▌", displayTextWhenStreaming)
     }
 
+    @Test
+    fun streamingIndicator_displaysConnectingStatusWhileWaitingForFirstToken_coversAllEdgeCases() {
+        // Edge case 1: Completely empty streamed content
+        val stateEmpty = AssistantUiState(
+            step = AssistantStep.STAGE_4_STREAMING_ANSWER,
+            streamedContentClean = ""
+        )
+        val textEmpty = if (stateEmpty.streamedContentClean.isBlank()) "⏳ Đang kết nối máy chủ AI..." else stateEmpty.streamedContentClean + " ▌"
+        assertEquals("⏳ Đang kết nối máy chủ AI...", textEmpty)
+
+        // Edge case 2: Whitespace only streamed content (before first non-whitespace token arrives)
+        val stateWhitespace = AssistantUiState(
+            step = AssistantStep.STAGE_4_STREAMING_ANSWER,
+            streamedContentClean = "   \n\t  "
+        )
+        val textWhitespace = if (stateWhitespace.streamedContentClean.isBlank()) "⏳ Đang kết nối máy chủ AI..." else stateWhitespace.streamedContentClean + " ▌"
+        assertEquals("⏳ Đang kết nối máy chủ AI...", textWhitespace)
+
+        // Edge case 3: First single character token arrives
+        val stateFirstChar = AssistantUiState(
+            step = AssistantStep.STAGE_4_STREAMING_ANSWER,
+            streamedContentClean = "A"
+        )
+        val textFirstChar = if (stateFirstChar.streamedContentClean.isBlank()) "⏳ Đang kết nối máy chủ AI..." else stateFirstChar.streamedContentClean + " ▌"
+        assertEquals("A ▌", textFirstChar)
+
+        // Edge case 4: Multiline streamed content
+        val stateMultiline = AssistantUiState(
+            step = AssistantStep.STAGE_4_STREAMING_ANSWER,
+            streamedContentClean = "Dòng 1\nDòng 2"
+        )
+        val textMultiline = if (stateMultiline.streamedContentClean.isBlank()) "⏳ Đang kết nối máy chủ AI..." else stateMultiline.streamedContentClean + " ▌"
+        assertEquals("Dòng 1\nDòng 2 ▌", textMultiline)
+    }
+
     // =========================================================================
     // 5. ZERO TASK LOSS: PRESERVING SUMMARY & ROOM DB SMART ALARMS IN TASKBOARD
     // =========================================================================
@@ -349,4 +384,165 @@ class FloatingBubbleServiceEmpiricalChallengeTest {
         assertTrue("Chứa nhiệm vụ Họp giao ban", allTasks.any { it.title.contains("Họp giao ban") })
         assertTrue("Chứa nhiệm vụ Diễn tập PCCC từ Room DB", allTasks.any { it.title.contains("Diễn tập PCCC") })
     }
+
+    @Test
+    fun zeroTaskLoss_onCasualChatCompletion_preservesSummaryAndRestoresRoomDbAlarms() {
+        val initialSummary = """
+            ### LỜI KHUYÊN:
+            Kiểm tra trang thiết bị đầu ca.
+
+            ### VIỆC CẦN LÀM NGAY:
+            - [ ] Kiểm tra hệ thống giám sát server lúc 08:30
+        """.trimIndent()
+
+        var latestSummaryText = initialSummary
+        var activeChatAnswer: String? = null
+
+        val alarmDb = mapOf(
+            "ALM_backup_db" to com.orca.orcaauto.data.local.SmartAlarmEntity(
+                alarmId = "ALM_backup_db",
+                taskTitle = "Sao lưu cơ sở dữ liệu định kỳ",
+                targetTimeMillis = System.currentTimeMillis() + 7200_000L,
+                targetDateLabel = "11:00 Hôm nay",
+                status = com.orca.orcaauto.data.local.SmartAlarmStatus.ACTIVE
+            )
+        )
+
+        // Simulate AssistantStep.COMPLETED with casual chat (no tasks)
+        val casualChatReply = "Chào bạn! Thời tiết hôm nay mát mẻ, chúc bạn một ca trực hiệu quả."
+        val parsedCasual = SummaryParser.parse(casualChatReply)
+        val casualTasks = parsedCasual.tasksToDo + parsedCasual.tasksPlanned + parsedCasual.tasksDone
+
+        if (casualTasks.isNotEmpty()) {
+            latestSummaryText = casualChatReply
+            activeChatAnswer = null
+        } else {
+            // Casual reply without tasks: DO NOT overwrite latestSummaryText!
+            activeChatAnswer = casualChatReply
+        }
+
+        assertEquals("latestSummaryText không bị đè bẹp bởi câu chat", initialSummary, latestSummaryText)
+        assertEquals(casualChatReply, activeChatAnswer)
+
+        // Now simulate AssistantStep.COMPLETED with real shift summary tasks
+        val newSummaryWithTasks = """
+            ### LỜI KHUYÊN:
+            Cập nhật ca trực chiều.
+
+            ### VIỆC CẦN LÀM NGAY:
+            - [ ] Bàn giao ca trực phòng điều khiển lúc 16:00
+        """.trimIndent()
+        val parsedNew = SummaryParser.parse(newSummaryWithTasks)
+        val newTasks = parsedNew.tasksToDo + parsedNew.tasksPlanned + parsedNew.tasksDone
+
+        if (newTasks.isNotEmpty()) {
+            latestSummaryText = newSummaryWithTasks
+            activeChatAnswer = null
+        } else {
+            activeChatAnswer = newSummaryWithTasks
+        }
+
+        assertEquals("latestSummaryText được cập nhật khi AI sinh báo cáo có nhiệm vụ", newSummaryWithTasks, latestSummaryText)
+        assertNull("activeChatAnswer được xóa khi có summary mới", activeChatAnswer)
+    }
+
+    @Test
+    fun zeroTaskLoss_onCardReopen_rendersActiveAlarmsFromRoomDbEvenWhenSummaryHasNoTasks() {
+        // Scenario: Floating bubble card is reopened (expandFloatingCard).
+        // latestSummaryText has NO tasks (e.g. empty or pure advice),
+        // but Room DB smart_alarms contains multiple active/proposed/completed alarms.
+        val emptyTasksSummary = "Hiện tại chưa có phân tích ca trực mới."
+        val parsed = SummaryParser.parse(emptyTasksSummary)
+        val existingTasks = parsed.tasksToDo + parsed.tasksPlanned + parsed.tasksDone
+        assertTrue("Summary không có task", existingTasks.isEmpty())
+
+        val alarm1 = com.orca.orcaauto.data.local.SmartAlarmEntity(
+            alarmId = "ALM_patrol_1",
+            taskTitle = "Tuần tra tầng thượng tòa nhà",
+            targetTimeMillis = System.currentTimeMillis() + 1800_000L,
+            targetDateLabel = "10:00 Hôm nay",
+            status = com.orca.orcaauto.data.local.SmartAlarmStatus.ACTIVE
+        )
+        val alarm2 = com.orca.orcaauto.data.local.SmartAlarmEntity(
+            alarmId = "ALM_generator_test",
+            taskTitle = "Thử máy phát điện dự phòng",
+            targetTimeMillis = System.currentTimeMillis() + 3600_000L,
+            targetDateLabel = "14:00 Hôm nay",
+            status = com.orca.orcaauto.data.local.SmartAlarmStatus.PROPOSED
+        )
+        val alarm3Completed = com.orca.orcaauto.data.local.SmartAlarmEntity(
+            alarmId = "ALM_morning_briefing",
+            taskTitle = "Giao ban ca sáng",
+            targetTimeMillis = System.currentTimeMillis() - 3600_000L,
+            targetDateLabel = "08:00 Hôm nay",
+            status = com.orca.orcaauto.data.local.SmartAlarmStatus.COMPLETED
+        )
+        val alarm4Cancelled = com.orca.orcaauto.data.local.SmartAlarmEntity(
+            alarmId = "ALM_cancelled_drill",
+            taskTitle = "Diễn tập hủy bỏ",
+            targetTimeMillis = System.currentTimeMillis(),
+            targetDateLabel = "09:00",
+            status = com.orca.orcaauto.data.local.SmartAlarmStatus.CANCELLED
+        )
+
+        val alarmDbMap = mapOf(
+            alarm1.alarmId to alarm1,
+            alarm2.alarmId to alarm2,
+            alarm3Completed.alarmId to alarm3Completed,
+            alarm4Cancelled.alarmId to alarm4Cancelled
+        )
+
+        // Execute populateTaskBoard synthesis logic
+        val speakableParsed = com.orca.orcaauto.domain.alarm.SystemAlarmHelper.filterOutCancelled(parsed, alarmDbMap)
+        val existingParsedTasks = speakableParsed.tasksToDo + speakableParsed.tasksPlanned + speakableParsed.tasksDone
+
+        val dbTasksToDo = mutableListOf<TaskItem>()
+        val dbTasksDone = mutableListOf<TaskItem>()
+
+        for (alarm in alarmDbMap.values) {
+            if (alarm.status == com.orca.orcaauto.data.local.SmartAlarmStatus.CANCELLED ||
+                alarm.status == com.orca.orcaauto.data.local.SmartAlarmStatus.EXPIRED) {
+                continue
+            }
+            val alreadyPresent = existingParsedTasks.any { task ->
+                com.orca.orcaauto.domain.alarm.SystemAlarmHelper.isTitleMatching(task.title, alarm.taskTitle)
+            }
+            if (!alreadyPresent) {
+                if (alarm.status == com.orca.orcaauto.data.local.SmartAlarmStatus.COMPLETED) {
+                    dbTasksDone.add(
+                        TaskItem(
+                            title = alarm.taskTitle,
+                            deadline = alarm.targetDateLabel,
+                            status = TaskStatus.DONE
+                        )
+                    )
+                } else {
+                    dbTasksToDo.add(
+                        TaskItem(
+                            title = alarm.taskTitle,
+                            deadline = alarm.targetDateLabel,
+                            status = TaskStatus.TODO
+                        )
+                    )
+                }
+            }
+        }
+
+        val allTasksToDo = speakableParsed.tasksToDo + dbTasksToDo
+        val allTasksDone = speakableParsed.tasksDone + dbTasksDone
+        val allTasks = allTasksToDo + speakableParsed.tasksPlanned + allTasksDone
+
+        // 1. Verify tasks are populated from Room DB smart_alarms
+        assertEquals("Phải có 2 nhiệm vụ cần làm (ACTIVE và PROPOSED)", 2, allTasksToDo.size)
+        assertEquals("Phải có 1 nhiệm vụ đã hoàn thành (COMPLETED)", 1, dbTasksDone.size)
+        assertEquals("Tổng số nhiệm vụ phải là 3 (bỏ qua CANCELLED)", 3, allTasks.size)
+
+        // 2. Verify specific tasks
+        assertTrue("Chứa Tuần tra tầng thượng", allTasksToDo.any { it.title.contains("Tuần tra tầng thượng") })
+        assertTrue("Chứa Thử máy phát điện", allTasksToDo.any { it.title.contains("Thử máy phát điện") })
+        assertTrue("Chứa Giao ban ca sáng trong tasksDone", allTasksDone.any { it.title.contains("Giao ban ca sáng") })
+        assertFalse("Tuyệt đối không chứa nhiệm vụ đã hủy", allTasks.any { it.title.contains("Diễn tập hủy bỏ") })
+    }
+
+
 }

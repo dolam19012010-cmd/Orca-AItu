@@ -387,6 +387,99 @@ class StreamingAiClientTest {
         assertTrue("Nội dung tin nhắn phải chứa user prompt", content.contains(userPrompt))
     }
 
+    @Test
+    fun buildOpenAiCompatibleRequest_withBlankSystemInstruction_prependsDefaultInstructionIntoUserPrompt() {
+        val client = StreamingAiClient()
+        val deepseekKey = ApiKeyConfig(
+            provider = AiProviderType.DEEPSEEK,
+            rawKey = "sk-deepseek-test1234",
+            modelName = "deepseek-chat",
+            endpointUrl = "https://api.deepseek.com/chat/completions",
+            isEnabled = true
+        )
+
+        val userPrompt = "Kiểm tra danh sách phòng trực ca đêm"
+
+        val request = invokeBuildOpenAiCompatibleRequest(
+            client = client,
+            config = deepseekKey,
+            prompt = userPrompt,
+            systemInstruction = "   " // Blank/whitespace system instruction
+        )
+
+        val json = extractRequestBodyJson(request)
+        val messages = json.getAsJsonArray("messages")
+
+        assertEquals(1, messages.size())
+        val msgObj = messages[0].asJsonObject
+        assertEquals("user", msgObj.get("role").asString)
+        val content = msgObj.get("content").asString
+
+        val defaultPrompt = "Bạn là một Trợ lý Điều hành AI Chuyên nghiệp."
+        assertTrue("Khi system instruction trống, phải dùng fallback mặc định", content.startsWith(defaultPrompt))
+        assertTrue("Nội dung tin nhắn phải chứa user prompt", content.contains(userPrompt))
+    }
+
+    @Test
+    fun buildOpenAiCompatibleRequest_forAllCompatibleProviders_neverOutputsSystemRoleMessage() {
+        val client = StreamingAiClient()
+        val compatibleProviders = listOf(
+            AiProviderType.OPENROUTER to "https://openrouter.ai/api/v1/chat/completions",
+            AiProviderType.GROQ to "https://api.groq.com/openai/v1/chat/completions",
+            AiProviderType.DEEPSEEK to "https://api.deepseek.com/chat/completions",
+            AiProviderType.NVIDIA to "https://integrate.api.nvidia.com/v1/chat/completions"
+        )
+
+        val sysPrompt = "Chỉ thị điều phối vận hành hệ thống"
+        val userPrompt = "Lập báo cáo ca trực"
+
+        for ((provider, url) in compatibleProviders) {
+            val keyConfig = ApiKeyConfig(
+                provider = provider,
+                rawKey = "test-key-for-${provider.name}",
+                modelName = provider.defaultModel,
+                endpointUrl = url,
+                isEnabled = true
+            )
+
+            val request = invokeBuildOpenAiCompatibleRequest(
+                client = client,
+                config = keyConfig,
+                prompt = userPrompt,
+                systemInstruction = sysPrompt
+            )
+
+            val json = extractRequestBodyJson(request)
+            val messages = json.getAsJsonArray("messages")
+
+            assertEquals(
+                "Provider ${provider.displayName} phải có duy nhất 1 message (user role)",
+                1,
+                messages.size()
+            )
+
+            for (i in 0 until messages.size()) {
+                val role = messages[i].asJsonObject.get("role").asString
+                assertFalse(
+                    "Provider ${provider.displayName} tuyệt đối không gửi riêng message có role=system",
+                    role.equals("system", ignoreCase = true)
+                )
+            }
+
+            val userMsg = messages[0].asJsonObject
+            assertEquals("user", userMsg.get("role").asString)
+            val content = userMsg.get("content").asString
+            assertTrue(
+                "Nội dung user message cho ${provider.displayName} phải bắt đầu bằng system prompt",
+                content.startsWith(sysPrompt)
+            )
+            assertTrue(
+                "Nội dung user message cho ${provider.displayName} phải chứa user prompt",
+                content.contains(userPrompt)
+            )
+        }
+    }
+
     // =========================================================================
     // REFLECTION HELPERS
     // =========================================================================

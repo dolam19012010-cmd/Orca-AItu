@@ -505,10 +505,10 @@ class StreamingAiClient(
 
             val messagesArray = JsonArray().apply {
                 val sysPrompt = systemInstruction.trim().ifBlank { "Bạn là một Trợ lý Điều hành AI Chuyên nghiệp." }
-                val mergedUserContent = if (sysPrompt.isNotBlank()) {
-                    "$sysPrompt\n\n$prompt"
-                } else {
-                    prompt
+                val mergedUserContent = when {
+                    sysPrompt.isNotBlank() && prompt.isNotBlank() -> "$sysPrompt\n\n$prompt"
+                    sysPrompt.isNotBlank() -> sysPrompt
+                    else -> prompt
                 }
 
                 val userMsg = JsonObject().apply {

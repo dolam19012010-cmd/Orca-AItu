@@ -215,7 +215,7 @@ class FloatingBubbleService : Service() {
                             } else {
                                 currentTasksBoardLayout?.let { board ->
                                     currentCardLayoutRef?.let { card ->
-                                        populateTaskBoard(board, card)
+                                        populateTaskBoard(board, card, hasAdvice = true)
                                     }
                                 }
                             }
@@ -234,12 +234,18 @@ class FloatingBubbleService : Service() {
                         if (latest != null && latest.summaryContent.isNotBlank()) {
                             val isNewSummary = lastKnownSummaryId != null && lastKnownSummaryId != latest.id
                             lastKnownSummaryId = latest.id
-                            latestSummaryText = latest.summaryContent
-                            activeChatAnswer = null
+
+                            val parsedLatest = SummaryParser.parse(latest.summaryContent)
+                            val hasTasks = (parsedLatest.tasksToDo + parsedLatest.tasksPlanned + parsedLatest.tasksDone).isNotEmpty()
+
+                            if (hasTasks || latestSummaryText.isBlank()) {
+                                latestSummaryText = latest.summaryContent
+                                activeChatAnswer = null
+                            }
                             if (latest.modelInfo.isNotBlank()) {
                                 latestModelInfo = latest.modelInfo
                             }
-                            if (isNewSummary) {
+                            if (isNewSummary && hasTasks) {
                                 UserPreferences.getInstance(this@FloatingBubbleService).setHasUnreadSummary(true)
                                 withContext(Dispatchers.Main) {
                                     if (bubbleRootView != null && !isExpanded) {
@@ -1175,7 +1181,7 @@ class FloatingBubbleService : Service() {
             .start()
     }
 
-    private fun populateTaskBoard(container: LinearLayout, cardLayout: View) {
+    private fun populateTaskBoard(container: LinearLayout, cardLayout: View, hasAdvice: Boolean = false) {
         container.removeAllViews()
 
         val parsed = SummaryParser.parse(latestSummaryText)
@@ -1219,27 +1225,29 @@ class FloatingBubbleService : Service() {
         val allTasks = allTasksToDo + allTasksPlanned + allTasksDone
 
         if (allTasks.isEmpty()) {
-            val emptyBox = LinearLayout(this).apply {
-                tag = "EMPTY_BOX_TAG"
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER
-                setPadding(0, dpToPx(36), 0, dpToPx(36))
+            if (!hasAdvice) {
+                val emptyBox = LinearLayout(this).apply {
+                    tag = "EMPTY_BOX_TAG"
+                    orientation = LinearLayout.VERTICAL
+                    gravity = Gravity.CENTER
+                    setPadding(0, dpToPx(36), 0, dpToPx(36))
+                }
+                val emptyIcon = TextView(this).apply {
+                    text = "✨"
+                    textSize = 28f
+                    gravity = Gravity.CENTER
+                }
+                emptyBox.addView(emptyIcon)
+                val emptyTv = TextView(this).apply {
+                    text = "Không có nhiệm vụ tồn đọng. Mọi thứ đã hoàn tất!"
+                    setTextColor(Color.parseColor("#94A3B8"))
+                    textSize = 12f
+                    gravity = Gravity.CENTER
+                    setPadding(0, dpToPx(6), 0, 0)
+                }
+                emptyBox.addView(emptyTv)
+                container.addView(emptyBox)
             }
-            val emptyIcon = TextView(this).apply {
-                text = "✨"
-                textSize = 28f
-                gravity = Gravity.CENTER
-            }
-            emptyBox.addView(emptyIcon)
-            val emptyTv = TextView(this).apply {
-                text = "Không có nhiệm vụ tồn đọng. Mọi thứ đã hoàn tất!"
-                setTextColor(Color.parseColor("#94A3B8"))
-                textSize = 12f
-                gravity = Gravity.CENTER
-                setPadding(0, dpToPx(6), 0, 0)
-            }
-            emptyBox.addView(emptyTv)
-            container.addView(emptyBox)
         } else {
             allTasksToDo.forEach { task ->
                 container.addView(renderTaskRow(task, isPlanned = false, cardLayout = cardLayout))
@@ -1602,7 +1610,28 @@ class FloatingBubbleService : Service() {
         contentLayout.addView(tasksBoardLayout)
         currentTasksBoardLayout = tasksBoardLayout
 
-        populateTaskBoard(tasksBoardLayout, cardLayout)
+        populateTaskBoard(tasksBoardLayout, cardLayout, hasAdvice = effectiveAdvice.isNotBlank())
+
+        // Ensure active tasks from Room DB smart_alarms are rendered even if initial flow was delayed
+        if (alarmDbMap.isEmpty()) {
+            serviceScope.launch(Dispatchers.IO) {
+                try {
+                    val alarms = AppDatabase.getDatabase(this@FloatingBubbleService)
+                        .smartAlarmDao()
+                        .getAllAlarms()
+                    if (alarms.isNotEmpty()) {
+                        alarmDbMap = alarms.associateBy { it.alarmId }
+                        withContext(Dispatchers.Main) {
+                            currentTasksBoardLayout?.let { board ->
+                                currentCardLayoutRef?.let { card ->
+                                    populateTaskBoard(board, card, hasAdvice = effectiveAdvice.isNotBlank())
+                                }
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+        }
 
         scrollView.addView(contentLayout)
         cardLayout.addView(scrollView)
@@ -1738,15 +1767,23 @@ class FloatingBubbleService : Service() {
                                     targetAdviceTv.text = uiState.streamedContentClean.ifBlank { "Đang thực thi tác vụ..." }
                                 }
                                 AssistantStep.COMPLETED -> {
-                                    // Chat answers do NOT overwrite latestSummaryText!
-                                    activeChatAnswer = uiState.streamedContentClean
+                                    val parsed = SummaryParser.parse(uiState.streamedContentClean)
+                                    val allTasks = parsed.tasksToDo + parsed.tasksPlanned + parsed.tasksDone
+
+                                    if (allTasks.isNotEmpty()) {
+                                        latestSummaryText = uiState.streamedContentClean
+                                        activeChatAnswer = null
+                                    } else {
+                                        // Chat answers without tasks do NOT overwrite latestSummaryText!
+                                        activeChatAnswer = uiState.streamedContentClean
+                                    }
+
                                     uiState.activeUsedKey?.let { key ->
                                         latestModelInfo = "${key.provider.displayName} • ${key.modelName}"
                                         modelTv.text = latestModelInfo
                                     }
 
                                     // Gộp Lời chỉ dẫn + Thẻ ghi chú khi chat
-                                    val parsed = SummaryParser.parse(uiState.streamedContentClean)
                                     val cleanAdvice = SummaryParser.cleanAdviceText(parsed.conciseAdvice)
                                     targetAdviceTv.text = if (cleanAdvice.isNotBlank()) cleanAdvice else parsed.conciseAdvice.ifBlank { uiState.streamedContentClean }
 
@@ -1757,7 +1794,7 @@ class FloatingBubbleService : Service() {
 
                                     // TaskBoard is always preserved and refreshed from Room DB smart_alarms
                                     currentTasksBoardLayout?.let { board ->
-                                        populateTaskBoard(board, cardLayout)
+                                        populateTaskBoard(board, cardLayout, hasAdvice = true)
                                     }
                                 }
                                 AssistantStep.ERROR -> {
@@ -1786,7 +1823,7 @@ class FloatingBubbleService : Service() {
                         queryEt.hint = "Nhập lệnh hoặc câu hỏi..."
                         activeStreamingJob = null
                         currentTasksBoardLayout?.let { board ->
-                            populateTaskBoard(board, cardLayout)
+                            populateTaskBoard(board, cardLayout, hasAdvice = true)
                         }
                     }
                 }

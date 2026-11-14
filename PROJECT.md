@@ -20,7 +20,7 @@ OrcaAuto is an Android automation and smart assistant app. The assistant stack c
 ## Milestones
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| 1 | M1: Backend Engine & Prompt Disambiguation | `LocalRetriever.kt`, `AssistantPipeline.kt`, `LocalRetrieverTest.kt` | Survey | PLANNED |
+| 1 | M1: Backend Engine & Prompt Disambiguation | `LocalRetriever.kt`, `AssistantPipeline.kt`, `LocalRetrieverTest.kt` | Survey | DONE |
 | 2 | M2: UI Preservation & Streaming Enhancements | `FloatingBubbleService.kt`, `StreamingAiClient.kt`, `FloatingBubbleServiceEmpiricalChallengeTest.kt`, `StreamingAiClientTest.kt` | M1 | PLANNED |
 | 3 | M3: Full Verification, APK Build & Git Push | Full `testDebugUnitTest` (100% pass), `assembleDebug` (`app-debug.apk`), git commit & push | M1, M2 | PLANNED |
 
