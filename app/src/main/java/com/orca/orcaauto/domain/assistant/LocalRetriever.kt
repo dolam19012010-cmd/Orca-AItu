@@ -212,10 +212,10 @@ class LocalRetriever(
         
         QUY TẮC BẮT BUỘC PHÂN BIỆT RÕ RÀNG GIỮA NHIỆM VỤ / BÁO THỨC (TASKS / SMART ALARMS) VÀ GHI CHÚ (NOTES):
         1. Phân định bản chất và nguồn dữ liệu:
-           - Nhiệm vụ / Báo thức (Bảng Nhiệm Vụ Ca / TaskBoard / Smart Alarms): Là các công việc, sự kiện, ca trực, lịch hẹn có mốc thời gian cụ thể (ví dụ: 'tập huấn PCCC', 'họp giao ban 15h', 'uống thuốc 20h', v.v.). Chúng xuất hiện trong mục 'DANH SÁCH BÁO THỨC & NHIỆM VỤ ĐANG HOẠT ĐỘNG (TASKBOARD / SMART ALARMS)'.
+           - Nhiệm vụ / Báo thức (Bảng Nhiệm Vụ Ca / TaskBoard / Smart Alarms): Là các công việc, sự kiện, ca trực, lịch hẹn có mốc thời gian cụ thể (ví dụ: 'họp giao ban 15h', 'giao hàng', 'ca trực', 'uống thuốc 20h', v.v.). Chúng xuất hiện trong mục 'DANH SÁCH BÁO THỨC & NHIỆM VỤ ĐANG HOẠT ĐỘNG (TASKBOARD / SMART ALARMS)'.
            - Ghi chú (Kho Ghi Chú / Smart Notes): Là các văn bản, tài liệu, danh sách lưu trữ dài hạn trong kho ghi chú cá nhân (có ID dạng số như #1, #2...). Chúng xuất hiện trong mục 'MỤC LỤC KHO GHI CHÚ (SMART NOTES CATALOG)' hoặc 'THÔNG TIN GHI CHÚ TRÍCH XUẤT CỤC BỘ'.
         2. Quy tắc hành vi khi người dùng yêu cầu thao tác với Nhiệm vụ / Báo thức:
-           - Khi người dùng hỏi thăm, xem, sửa lại thời gian, đổi giờ, dời lịch, hủy bỏ, hoàn thành một công việc/báo thức (ví dụ: 'sửa lại thời gian cho nhiệm vụ PCCC', 'đổi lịch PCCC sang ngày mai', 'xóa việc PCCC', 'hủy lịch PCCC', 'hủy báo thức', 'dời lịch hẹn')...:
+           - Khi người dùng hỏi thăm, xem, sửa lại thời gian, đổi giờ, dời lịch, hủy bỏ, hoàn thành một công việc/báo thức (ví dụ: 'sửa lại thời gian họp giao ban', 'đổi lịch giao hàng sang ngày mai', 'xóa ca trực', 'hủy lịch uống thuốc 20h', 'hủy báo thức', 'dời lịch hẹn')...:
              + AI BẮT BUỘC phải nhận diện đây là một NHIỆM VỤ / BÁO THỨC trong Bảng Nhiệm Vụ ca (TaskBoard / Smart Alarms).
              + TUYỆT ĐỐI KHÔNG ĐƯỢC nhầm lẫn hoặc đối xử như một Ghi chú (Note). TUYỆT ĐỐI KHÔNG tìm kiếm trong Kho Ghi Chú.
              + TUYỆT ĐỐI KHÔNG ĐƯỢC đòi hỏi Note ID (ID ghi chú), không yêu cầu người dùng cung cấp ID ghi chú, và không bao giờ báo lỗi 'không tìm thấy ghi chú' khi người dùng đang đề cập đến một nhiệm vụ/lịch hẹn.

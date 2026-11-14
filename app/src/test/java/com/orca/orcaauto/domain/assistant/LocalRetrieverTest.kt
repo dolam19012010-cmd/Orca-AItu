@@ -61,8 +61,8 @@ class LocalRetrieverTest {
     fun retrieve_withActiveAlarms_injectsTaskBoardSectionIntoPrompt() = runTest {
         val alarms = listOf(
             SmartAlarmEntity(
-                alarmId = "ALM_PCCC",
-                taskTitle = "Tập huấn PCCC định kỳ",
+                alarmId = "ALM_DELIVERY",
+                taskTitle = "Giao hàng cho khách",
                 targetTimeMillis = System.currentTimeMillis() + 3600000L,
                 targetDateLabel = "15:00 Hôm nay",
                 status = SmartAlarmStatus.ACTIVE
@@ -85,7 +85,7 @@ class LocalRetrieverTest {
 
         val prompt = context.assembledRound2Prompt
         assertTrue(prompt.contains("=== DANH SÁCH BÁO THỨC & NHIỆM VỤ ĐANG HOẠT ĐỘNG (TASKBOARD / SMART ALARMS) ==="))
-        assertTrue(prompt.contains("[Mã: ALM_PCCC] \"Tập huấn PCCC định kỳ\" | Hạn: 15:00 Hôm nay"))
+        assertTrue(prompt.contains("[Mã: ALM_DELIVERY] \"Giao hàng cho khách\" | Hạn: 15:00 Hôm nay"))
         assertTrue(prompt.contains("[Mã: ALM_MEETING] \"Họp giao ban ban quản lý\" | Hạn: 09:00 Ngày mai"))
         assertTrue(prompt.contains("TUYỆT ĐỐI KHÔNG coi đây là Ghi chú (Notes) và KHÔNG ĐƯỢC đòi Note ID!"))
     }
@@ -214,7 +214,7 @@ class LocalRetrieverTest {
     fun systemInstruction_taskVsNoteDisambiguation_andQuickActionsPresent() = runTest {
         val decision = Round1Decision(neededNoteIds = emptyList(), senderFilter = emptyList(), reasoning = "Disambiguation test")
         val context = localRetriever.retrieve(
-            userPrompt = "Sửa lại thời gian cho nhiệm vụ PCCC sang ngày mai",
+            userPrompt = "Sửa lại thời gian họp giao ban sang ngày mai",
             decision = decision
         )
 
@@ -223,6 +223,8 @@ class LocalRetrieverTest {
         assertTrue("Phải cấm đòi Note ID đối với nhiệm vụ/báo thức", sys.contains("TUYỆT ĐỐI KHÔNG ĐƯỢC đòi hỏi Note ID") || sys.contains("không yêu cầu người dùng cung cấp ID ghi chú"))
         assertTrue("Phải cấm nhầm lẫn nhiệm vụ với ghi chú", sys.contains("TUYỆT ĐỐI KHÔNG ĐƯỢC nhầm lẫn") || sys.contains("TUYỆT ĐỐI KHÔNG tìm kiếm trong Kho Ghi Chú"))
         assertTrue("Phải có câu hướng dẫn thao tác nhanh cho người dùng", sys.contains("nhấn giữ thẻ để chỉnh sửa thời gian/chuông báo, vuốt phải hoàn thành, vuốt trái hủy"))
+        assertFalse("Prompt systemInstruction không được chứa từ khóa hardcode PCCC trong ví dụ minh họa", sys.contains("PCCC"))
+        assertTrue("Phải chứa các ví dụ công việc tổng quát", sys.contains("họp giao ban 15h") && sys.contains("uống thuốc 20h") && sys.contains("giao hàng"))
     }
 
     @Test

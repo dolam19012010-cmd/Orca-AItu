@@ -453,7 +453,8 @@ class AssistantPipelineTest {
         assertTrue(retrieved.systemInstruction.contains("QUY TẮC BẮT BUỘC PHÂN BIỆT RÕ RÀNG GIỮA NHIỆM VỤ / BÁO THỨC"))
         assertTrue(retrieved.systemInstruction.contains("TaskBoard"))
         assertTrue(retrieved.systemInstruction.contains("TUYỆT ĐỐI KHÔNG ĐƯỢC đòi hỏi Note ID"))
-        assertTrue(retrieved.systemInstruction.contains("tập huấn PCCC"))
+        assertTrue(retrieved.systemInstruction.contains("họp giao ban 15h") || retrieved.systemInstruction.contains("giao hàng"))
+        assertFalse(retrieved.systemInstruction.contains("PCCC"))
     }
 
     @Test
