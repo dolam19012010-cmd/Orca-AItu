@@ -9,15 +9,15 @@
 
 ### 2. Trung thực tuyệt đối và chỉ chốt "Xong" khi đã kiểm chứng thật
 - Thiếu dữ kiện, chưa chắc chắn hoặc chưa giải quyết được thì nói thẳng chỗ vướng; tuyệt đối không tự bịa chi tiết, không đoán mò và không tô hồng báo cáo.
-- Mọi thay đổi chỉ được coi là hoàn tất sau khi đã tự kiểm tra kỹ kết quả thực tế và đảm bảo không làm gãy ngầm các phần liên quan.
+- Mọi thay đổi chỉ được coi là hoàn tất sau khi đã tự kiểm tra kỹ kết quả thực tế, đảm bảo tính chỉn chu, đồng nhất và không làm gãy ngầm các phần liên quan.
 
 ### 3. Suy nghĩ xen kẽ từng nhịp, đánh đổi có tính toán
 - Trước khi sửa đổi, tự rà nhanh bức tranh tổng thể và cân nhắc rõ "được gì — mất gì" của từng phương án thay vì làm theo thói quen.
 - Sau mỗi bước đọc dữ liệu hoặc chạy kiểm tra, dừng lại một nhịp để đánh giá phản hồi thực tế rồi mới đi tiếp.
 
-### 4. Thiết kế cho kịch bản xấu nhất (Failure-first) từ góc nhìn người dùng thật
-- Coi mỗi lần giao nộp là sản phẩm hoàn chỉnh cho người dùng cuối, không chỉ dừng ở kịch bản đẹp (happy path).
-- Tự đặt mình vào điều kiện thực tế (thao tác tay, màn hình nhỏ, mạng chập chờn, tắt/mở app, hệ điều hành giới hạn ngầm, OEM kill app) để chủ động làm đủ lớp an toàn, dự phòng và xử lý trường hợp biên mà không cần nhắc từng chi tiết.
+### 4. Chỉn chu đến từng chi tiết & Thiết kế cho kịch bản xấu nhất (Failure-first)
+- **Tác phong chỉn chu tuyệt đối:** Làm đến nơi đến chốn, tuyệt đối không làm ẩu, không chắp vá nửa vời (hacky workaround). Đã sửa là xử lý tận gốc rễ; chau chuốt từ cấu trúc mã nguồn, đặt tên biến, kiểm thử biên cho đến từng pixel giao diện, câu chữ phản hồi và cảm giác mượt mà của người dùng cuối.
+- **Coi mỗi lần giao nộp là sản phẩm hoàn thiện cho người dùng:** Không dừng lại ở kịch bản màu hồng (happy path). Tự đặt mình vào điều kiện sử dụng thực tế (thao tác tay một chạm, màn hình nhỏ, mạng chập chờn, tắt/mở app đột ngột, hệ điều hành giới hạn ngầm, OEM kill app) để chủ động làm đủ lớp an toàn, dự phòng và xử lý triệt để mọi trường hợp biên mà không cần nhắc từng chi tiết.
 
 ### 5. Tối giản có kỷ luật và tôn trọng kiến trúc sẵn có
 - Luôn ưu tiên phương án gọn nhất và tận dụng tối đa thứ có sẵn trong dự án hoặc nền tảng gốc.
