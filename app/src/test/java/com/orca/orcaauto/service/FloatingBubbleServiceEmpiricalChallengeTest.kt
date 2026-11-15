@@ -971,100 +971,19 @@ class FloatingBubbleServiceEmpiricalChallengeTest {
     }
 
     @Test
-    fun legacyChatRecords_whenPurged_removesHoiPrefixedRecordsFromSummaryHistory() {
-        val summaries = listOf(
-            com.orca.orcaauto.data.local.SummaryHistoryEntity(
-                id = 1,
-                timestamp = 1000L,
-                targetTimeSlot = "09:24 - 15/11",
-                messageCount = 36,
-                summaryContent = "=== PHẦN 1: LỜI KHUYÊN ===\nLàm bài tập\n=== PHẦN 2: BẢNG NHIỆM VỤ ===\n### 🔴 NHIỆM VỤ PHẢI LÀM (TO-DO)\n- Bài 1 | Nguồn: A | Hạn: 10h",
-                status = "SUCCESS",
-                modelInfo = "Gemini",
-                sessionId = "session_main_default",
-                sessionName = "Phiên chính"
-            ),
-            com.orca.orcaauto.data.local.SummaryHistoryEntity(
-                id = 2,
-                timestamp = 2000L,
-                targetTimeSlot = "11:31 - 15/11",
-                messageCount = 35,
-                summaryContent = "Hỏi: à t k thuộc đội văn nghệ nhé\n\nÀ vậy thì bạn không cần tham gia nhé",
-                status = "SUCCESS",
-                modelInfo = "Gemini",
-                sessionId = "session_main_default",
-                sessionName = "Phiên chính"
-            )
-        )
-
-        // Filter out legacy "Hỏi:" chat records using robust isLegacyChatRecord
-        val legacyRecords = summaries.filter { SummaryParser.isLegacyChatRecord(it.summaryContent) }
-        val cleanSummaries = summaries.filterNot { SummaryParser.isLegacyChatRecord(it.summaryContent) }
-
-        assertEquals("Phải phát hiện 1 bản ghi chat cũ dạng Hỏi:", 1, legacyRecords.size)
-        assertEquals("Bản ghi bị lọc là id 2", 2L, legacyRecords.first().id)
-        assertEquals("Danh sách sạch chỉ còn 1 bản ghi chuẩn", 1, cleanSummaries.size)
-        assertEquals("Bản ghi chuẩn giữ lại là id 1", 1L, cleanSummaries.first().id)
-    }
-
-    @Test
-    fun isLegacyChatRecord_detectsVariationsWithWhitespaceAndCase_preservesRealSummaries() {
-        // Chat records with leading whitespace, newlines, case differences
-        assertTrue(SummaryParser.isLegacyChatRecord("Hỏi: à t k thuộc đội văn nghệ nhé\n\nÀ vậy thì bạn không cần tham gia nhé"))
-        assertTrue(SummaryParser.isLegacyChatRecord("  \n  hỏi: bài tập hôm nay là gì?\n\nBài tập là làm toán."))
-        assertTrue(SummaryParser.isLegacyChatRecord("\r\n\tHoi: mai có học không?\n\nMai nghỉ học nhé."))
-        assertTrue(SummaryParser.isLegacyChatRecord("HỎI: có cần nộp bài không?\n\nCó nhé."))
-
-        // Real summary with Section 1 mentioning "Hỏi:" but having Section 2 TaskBoard -> MUST NOT BE FLAGGED
-        val realSummaryWithHoiMention = """
-            === PHẦN 1: LỜI KHUYÊN ===
-            Hỏi: bạn đã hỏi cô giáo về đề cương chưa? Cần hỏi sớm nhé.
-            === PHẦN 2: BẢNG NHIỆM VỤ ===
-            ### 🔴 NHIỆM VỤ PHẢI LÀM (TO-DO)
-            - Ôn tập chương 1 | Nguồn: Sách | Hạn: 20:00
-        """.trimIndent()
-        assertFalse(
-            "Bản tóm tắt thật có chữ 'Hỏi:' trong lời khuyên nhưng có Bảng nhiệm vụ KHÔNG được coi là chat rác",
-            SummaryParser.isLegacyChatRecord(realSummaryWithHoiMention)
-        )
-
-        // Real summary with 0 tasks but structured sections -> MUST NOT BE FLAGGED
-        val realSummaryNoTasks = """
-            === PHẦN 1: LỜI KHUYÊN ===
-            Hôm nay không có bài tập hay thông báo mới nào cần xử lý.
-            === PHẦN 2: BẢNG NHIỆM VỤ ===
-        """.trimIndent()
-        assertFalse(
-            "Bản tóm tắt thật không có việc nhưng có cấu trúc phần 2 KHÔNG bị coi là chat rác",
-            SummaryParser.isLegacyChatRecord(realSummaryNoTasks)
-        )
-    }
-
-    @Test
-    fun bestSummarySelection_filtersLegacyChat_prioritizesTasks_andHandlesFallbacksSafely() {
-        val chatRecord1 = com.orca.orcaauto.data.local.SummaryHistoryEntity(
-            id = 3,
-            timestamp = 3000L,
-            targetTimeSlot = "11:31 - 15/11",
-            messageCount = 35,
-            summaryContent = "\n\nHỏi: à t k thuộc đội văn nghệ nhé\n\nÀ thế thì thôi nhé",
-            status = "SUCCESS",
-            modelInfo = "Gemini",
-            sessionId = "session_main_default",
-            sessionName = "Phiên chính"
-        )
-        val validSummaryNoTasks = com.orca.orcaauto.data.local.SummaryHistoryEntity(
+    fun bestSummarySelection_prioritizesRecordsWithTasks_andFallsBackToRecent() {
+        val summaryNoTasks = com.orca.orcaauto.data.local.SummaryHistoryEntity(
             id = 2,
             timestamp = 2000L,
-            targetTimeSlot = "10:00 - 15/11",
-            messageCount = 10,
+            targetTimeSlot = "11:31 - 15/11",
+            messageCount = 35,
             summaryContent = "=== PHẦN 1: LỜI KHUYÊN ===\nKhông có việc cần làm.",
             status = "SUCCESS",
             modelInfo = "Gemini",
             sessionId = "session_main_default",
             sessionName = "Phiên chính"
         )
-        val validSummaryWithTasks = com.orca.orcaauto.data.local.SummaryHistoryEntity(
+        val summaryWithTasks = com.orca.orcaauto.data.local.SummaryHistoryEntity(
             id = 1,
             timestamp = 1000L,
             targetTimeSlot = "09:24 - 15/11",
@@ -1076,45 +995,42 @@ class FloatingBubbleServiceEmpiricalChallengeTest {
             sessionName = "Phiên chính"
         )
 
-        // Case 1: All 3 records present -> MUST pick validSummaryWithTasks (id 1)
-        val recents1 = listOf(chatRecord1, validSummaryNoTasks, validSummaryWithTasks)
-        val validList1 = recents1.filterNot { SummaryParser.isLegacyChatRecord(it.summaryContent) }
-        val best1 = validList1.firstOrNull { SummaryParser.parse(it.summaryContent).totalTaskCount > 0 }
-            ?: validList1.firstOrNull()
-        assertEquals("Ưu tiên bản ghi có nhiệm vụ", 1L, best1?.id)
+        // Case 1: Both records present -> MUST pick summaryWithTasks (id 1) even if summaryNoTasks is newer (timestamp 2000 > 1000)
+        val recents1 = listOf(summaryNoTasks, summaryWithTasks).filter { it.summaryContent.isNotBlank() }
+        val best1 = recents1.firstOrNull { SummaryParser.parse(it.summaryContent).totalTaskCount > 0 }
+            ?: recents1.firstOrNull()
+        assertEquals("Ưu tiên bản ghi có nhiệm vụ để không bị mất việc", 1L, best1?.id)
 
-        // Case 2: Only chatRecord1 and validSummaryNoTasks -> MUST pick validSummaryNoTasks (id 2), NEVER chatRecord1
-        val recents2 = listOf(chatRecord1, validSummaryNoTasks)
-        val validList2 = recents2.filterNot { SummaryParser.isLegacyChatRecord(it.summaryContent) }
-        val best2 = validList2.firstOrNull { SummaryParser.parse(it.summaryContent).totalTaskCount > 0 }
-            ?: validList2.firstOrNull()
-        assertEquals("Fallback an toàn sang bản tóm tắt hợp lệ không việc", 2L, best2?.id)
+        // Case 2: Only summaryNoTasks -> Falls back to the latest valid record (id 2)
+        val recents2 = listOf(summaryNoTasks).filter { it.summaryContent.isNotBlank() }
+        val best2 = recents2.firstOrNull { SummaryParser.parse(it.summaryContent).totalTaskCount > 0 }
+            ?: recents2.firstOrNull()
+        assertEquals("Fallback an toàn sang bản tóm tắt gần nhất", 2L, best2?.id)
 
-        // Case 3: Only chat records exist -> MUST return null, NEVER pick chat record
-        val recents3 = listOf(chatRecord1)
-        val validList3 = recents3.filterNot { SummaryParser.isLegacyChatRecord(it.summaryContent) }
-        val best3 = validList3.firstOrNull { SummaryParser.parse(it.summaryContent).totalTaskCount > 0 }
-            ?: validList3.firstOrNull()
-        assertNull("Nếu chỉ có chat rác, phải trả về null để UI hiển thị placeholder an toàn", best3)
+        // Case 3: Empty list -> returns null
+        val recents3 = emptyList<com.orca.orcaauto.data.local.SummaryHistoryEntity>()
+        val best3 = recents3.firstOrNull { SummaryParser.parse(it.summaryContent).totalTaskCount > 0 }
+            ?: recents3.firstOrNull()
+        assertNull("Danh sách rỗng phải trả về null để UI hiển thị placeholder an toàn", best3)
     }
 
     @Test
-    fun latestSummaryTextAssignment_doesNotAcceptZeroTaskWhenBlank_ifChatRecord() {
-        var latestSummaryText = ""
-        val chatRecordContent = "Hỏi: à t k thuộc đội văn nghệ nhé\n\nÀ thế thì thôi nhé"
+    fun latestSummaryTextAssignment_protectsExistingTasks_fromZeroTaskOverwrite() {
+        // Initial state: TaskBoard has tasks from a previous summary
+        var latestSummaryText = "=== PHẦN 1: LỜI KHUYÊN ===\nLàm bài\n=== PHẦN 2: BẢNG NHIỆM VỤ ===\n### 🔴 NHIỆM VỤ PHẢI LÀM (TO-DO)\n- Task 1"
+        val zeroTaskContent = "=== PHẦN 1: LỜI KHUYÊN ===\nChỉ là lời nhắc thông thường."
 
-        // Simulated Flow arrival
-        val isLegacyChat = SummaryParser.isLegacyChatRecord(chatRecordContent)
-        if (!isLegacyChat) {
-            val parsed = SummaryParser.parse(chatRecordContent)
-            val hasTasks = parsed.totalTaskCount > 0
-            val currentHasTasks = latestSummaryText.isNotBlank() && SummaryParser.parse(latestSummaryText).totalTaskCount > 0
-            if (hasTasks || !currentHasTasks) {
-                latestSummaryText = chatRecordContent
-            }
+        // Simulated Flow arrival of zero-task record
+        val parsed = SummaryParser.parse(zeroTaskContent)
+        val hasTasks = parsed.totalTaskCount > 0
+        val currentHasTasks = latestSummaryText.isNotBlank() && SummaryParser.parse(latestSummaryText).totalTaskCount > 0
+
+        if (hasTasks || !currentHasTasks) {
+            latestSummaryText = zeroTaskContent
         }
 
-        assertTrue("latestSummaryText không được nhận bản ghi chat rỗng", latestSummaryText.isBlank())
+        // Must still retain the existing summary with tasks!
+        assertTrue("latestSummaryText không được bị đè bởi bản ghi 0 việc", latestSummaryText.contains("Task 1"))
     }
 
     @Test

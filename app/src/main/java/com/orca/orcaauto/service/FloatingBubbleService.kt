@@ -235,11 +235,6 @@ class FloatingBubbleService : Service() {
                     .getLatestSummaryFlow()
                     .collect { latest ->
                         if (latest != null && latest.summaryContent.isNotBlank()) {
-                            // Bỏ qua tuyệt đối các bản ghi chat đối thoại cũ
-                            if (SummaryParser.isLegacyChatRecord(latest.summaryContent)) {
-                                return@collect
-                            }
-
                             // Đảm bảo chỉ xử lý bản ghi thuộc phiên hiện tại (hoặc phiên chính)
                             val prefs = UserPreferences.getInstance(this@FloatingBubbleService)
                             val currentSessionId = prefs.getSelectedSessionId()
@@ -297,18 +292,6 @@ class FloatingBubbleService : Service() {
                 throw e
             } catch (e: Exception) {
                 Log.w(TAG, "Lỗi lắng nghe unread flow: ${e.message}")
-            }
-        }
-
-        // 4. Batch clean up legacy ad-hoc chat records mistakenly saved into summary_history
-        serviceScope.launch(Dispatchers.IO) {
-            try {
-                val db = AppDatabase.getDatabase(this@FloatingBubbleService)
-                db.summaryDao().deleteLegacyChatRecords()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.w(TAG, "Lỗi dọn dẹp bản ghi chat cũ: ${e.message}")
             }
         }
     }

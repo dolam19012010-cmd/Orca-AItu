@@ -142,26 +142,6 @@ object SummaryParser {
     }
 
     /**
-     * Identifies legacy ad-hoc conversational chat responses mistakenly stored in summary_history.
-     * Characteristics:
-     * - Starts with "Hỏi:" or "Hoi:" (case-insensitive, ignoring leading whitespace/newlines).
-     * - Lacks structured session summary sections (no "PHẦN 2" or "BẢNG NHIỆM VỤ").
-     * - Has 0 actionable tasks.
-     */
-    fun isLegacyChatRecord(content: String): Boolean {
-        if (content.isBlank()) return false
-        val trimmed = content.trimStart()
-        val startsWithHoi = trimmed.startsWith("Hỏi:", ignoreCase = true) || trimmed.startsWith("Hoi:", ignoreCase = true)
-        if (!startsWithHoi) return false
-        val hasStructuredSections = content.contains("PHẦN 2", ignoreCase = true) ||
-                content.contains("BẢNG NHIỆM VỤ", ignoreCase = true) ||
-                content.contains("NHIỆM VỤ PHẢI LÀM", ignoreCase = true)
-        if (hasStructuredSections) return false
-        val parsed = parse(content)
-        return parsed.totalTaskCount == 0
-    }
-
-    /**
      * Parses the AI response into 2 distinct executive sections:
      * Section 1: Critical Thinking, Doubts, Contradictions, and Concise Advice.
      * Section 2: Task Dispatch Board (To-Do, Done, Planned) with clear deadlines.

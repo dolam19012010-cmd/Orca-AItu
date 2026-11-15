@@ -48,22 +48,17 @@ interface SummaryDao {
     @Query("DELETE FROM summary_history WHERE sessionId = :sessionId")
     suspend fun deleteBySessionId(sessionId: String): Int
 
-    @Query("DELETE FROM summary_history WHERE TRIM(summaryContent) LIKE 'Hỏi:%' OR TRIM(summaryContent) LIKE 'hỏi:%' OR TRIM(summaryContent) LIKE 'Hoi:%' OR TRIM(summaryContent) LIKE 'hoi:%' OR summaryContent LIKE '%\nHỏi:%' OR summaryContent LIKE '%\nhỏi:%' OR summaryContent LIKE '%\nHoi:%' OR summaryContent LIKE '%\nhoi:%'")
-    suspend fun deleteLegacyChatRecords(): Int
-
-    @Query("SELECT * FROM summary_history WHERE (sessionId = :sessionId OR (:sessionId = 'session_main_default' AND (sessionId = '' OR sessionId IS NULL))) AND TRIM(summaryContent) NOT LIKE 'Hỏi:%' AND TRIM(summaryContent) NOT LIKE 'hỏi:%' AND TRIM(summaryContent) NOT LIKE 'Hoi:%' AND TRIM(summaryContent) NOT LIKE 'hoi:%' AND summaryContent NOT LIKE '%\nHỏi:%' AND summaryContent NOT LIKE '%\nhỏi:%' AND summaryContent NOT LIKE '%\nHoi:%' AND summaryContent NOT LIKE '%\nhoi:%' ORDER BY timestamp DESC LIMIT :limit")
+    @Query("SELECT * FROM summary_history WHERE sessionId = :sessionId OR (:sessionId = 'session_main_default' AND (sessionId = '' OR sessionId IS NULL)) ORDER BY timestamp DESC LIMIT :limit")
     suspend fun getRecentSummariesForSession(sessionId: String, limit: Int = 10): List<SummaryHistoryEntity>
 }
 
 /**
  * Returns the best authoritative summary record for the given session.
  * Prioritizes recent valid summaries with tasks (totalTaskCount > 0),
- * safely falling back to recent non-chat summaries without tasks,
- * and completely filtering out legacy ad-hoc chat records.
+ * safely falling back to the most recent summary if no tasks are present.
  */
 suspend fun SummaryDao.getBestSummaryForSession(sessionId: String): SummaryHistoryEntity? {
-    val recents = getRecentSummariesForSession(sessionId, limit = 10)
-    val validList = recents.filter { it.summaryContent.isNotBlank() && !com.orca.orcaauto.domain.filter.SummaryParser.isLegacyChatRecord(it.summaryContent) }
-    return validList.firstOrNull { com.orca.orcaauto.domain.filter.SummaryParser.parse(it.summaryContent).totalTaskCount > 0 }
-        ?: validList.firstOrNull()
+    val recents = getRecentSummariesForSession(sessionId, limit = 10).filter { it.summaryContent.isNotBlank() }
+    return recents.firstOrNull { com.orca.orcaauto.domain.filter.SummaryParser.parse(it.summaryContent).totalTaskCount > 0 }
+        ?: recents.firstOrNull()
 }
