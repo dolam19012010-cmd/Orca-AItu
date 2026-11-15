@@ -9,6 +9,7 @@ import com.orca.orcaauto.domain.prompt.PromptPersona
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.util.concurrent.ConcurrentHashMap
 
 class UserPreferences private constructor(context: Context) {
 
@@ -17,6 +18,28 @@ class UserPreferences private constructor(context: Context) {
         Context.MODE_PRIVATE
     )
     private val gson = Gson()
+
+    // In-memory thread-safe cache for recent senders per package (O(1) lookups, zero disk reads/Gson serialization churn)
+    private val _recentSendersCache = ConcurrentHashMap<String, List<String>>()
+
+    init {
+        loadRecentSendersCache()
+    }
+
+    private fun loadRecentSendersCache() {
+        try {
+            val json = prefs.getString(KEY_RECENT_SENDERS, null)
+            if (!json.isNullOrBlank()) {
+                val type = object : TypeToken<Map<String, List<String>>>() {}.type
+                val map: Map<String, List<String>>? = gson.fromJson(json, type)
+                map?.forEach { (pkg, list) ->
+                    _recentSendersCache[pkg] = list.take(15)
+                }
+            }
+        } catch (e: Throwable) {
+            android.util.Log.e("UserPreferences", "Lỗi khởi tạo _recentSendersCache: ${e.message}")
+        }
+    }
 
     private val _keyPoolFlow = MutableStateFlow(loadKeyPool())
     val keyPoolFlow: StateFlow<List<ApiKeyConfig>> = _keyPoolFlow.asStateFlow()
@@ -554,43 +577,40 @@ class UserPreferences private constructor(context: Context) {
     }
 
     fun getRecentSenders(packageName: String): List<String> {
-        return try {
-            val json = prefs.getString(KEY_RECENT_SENDERS, null) ?: return emptyList()
-            val type = object : TypeToken<Map<String, List<String>>>() {}.type
-            val map: Map<String, List<String>> = gson.fromJson(json, type) ?: emptyMap()
-            map[packageName] ?: emptyList()
-        } catch (_: Throwable) {
-            emptyList()
-        }
+        return _recentSendersCache[packageName] ?: emptyList()
     }
 
     fun addRecentSender(packageName: String, senderName: String) {
         val cleanName = senderName.trim().take(80)
         if (cleanName.isBlank() || cleanName.length < 2) return
-        try {
-            val currentMap = try {
-                val json = prefs.getString(KEY_RECENT_SENDERS, null)
-                if (json != null) {
-                    val type = object : TypeToken<Map<String, List<String>>>() {}.type
-                    gson.fromJson<Map<String, List<String>>>(json, type)?.toMutableMap() ?: mutableMapOf()
-                } else mutableMapOf()
-            } catch (_: Throwable) {
-                mutableMapOf()
-            }
 
-            val list = (currentMap[packageName] ?: emptyList()).toMutableList()
-            if (list.isNotEmpty() && list[0].equals(cleanName, ignoreCase = true)) {
-                return // Đã nằm sẵn ở vị trí đầu tiên, không cần ghi đĩa liên tục
+        // Fast-path: Check top item from in-memory cache without locking or disk reads
+        val currentList = _recentSendersCache[packageName]
+        if (currentList != null && currentList.isNotEmpty() && currentList[0].equals(cleanName, ignoreCase = true)) {
+            return
+        }
+
+        synchronized(_recentSendersCache) {
+            val existing = _recentSendersCache[packageName] ?: emptyList()
+            if (existing.isNotEmpty() && existing[0].equals(cleanName, ignoreCase = true)) {
+                return
             }
-            list.removeAll { it.equals(cleanName, ignoreCase = true) }
-            list.add(0, cleanName)
-            if (list.size > 15) {
-                list.subList(15, list.size).clear()
+            val mutableList = existing.toMutableList()
+            mutableList.removeAll { it.equals(cleanName, ignoreCase = true) }
+            mutableList.add(0, cleanName)
+            if (mutableList.size > 15) {
+                mutableList.subList(15, mutableList.size).clear()
             }
-            currentMap[packageName] = list
-            prefs.edit().putString(KEY_RECENT_SENDERS, gson.toJson(currentMap)).apply()
-        } catch (e: Throwable) {
-            android.util.Log.e("UserPreferences", "Lỗi addRecentSender: ${e.message}")
+            val immutableList = mutableList.toList()
+            _recentSendersCache[packageName] = immutableList
+
+            // Persist updated snapshot asynchronously to SharedPreferences
+            try {
+                val snapshot = HashMap<String, List<String>>(_recentSendersCache)
+                prefs.edit().putString(KEY_RECENT_SENDERS, gson.toJson(snapshot)).apply()
+            } catch (e: Throwable) {
+                android.util.Log.e("UserPreferences", "Lỗi addRecentSender: ${e.message}")
+            }
         }
     }
 

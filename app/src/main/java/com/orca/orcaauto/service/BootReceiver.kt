@@ -17,14 +17,21 @@ class BootReceiver : BroadcastReceiver() {
         Log.i(TAG, "BootReceiver nhận tín hiệu: $action")
 
         if (action == Intent.ACTION_BOOT_COMPLETED || action == "android.intent.action.QUICKBOOT_POWERON") {
-            try {
-                // Reschedule WorkManager tasks for scheduled hours
-                WorkScheduler.scheduleDailySummaries(context)
-                Log.i(TAG, "Đã lập lịch WorkManager thành công sau khi khởi động máy.")
+            val pendingResult = try {
+                goAsync()
+            } catch (e: Exception) {
+                Log.w(TAG, "Không thể khởi tạo goAsync(): ${e.message}")
+                null
+            }
 
-                // Reschedule only ACTIVE alarms whose target time is in the future
-                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            try {
+                CoroutineScope(Dispatchers.IO).launch {
                     try {
+                        // Reschedule WorkManager tasks for scheduled hours
+                        WorkScheduler.scheduleDailySummaries(context)
+                        Log.i(TAG, "Đã lập lịch WorkManager thành công sau khi khởi động máy.")
+
+                        // Reschedule only ACTIVE alarms whose target time is in the future
                         val dao = com.orca.orcaauto.data.local.AppDatabase.getDatabase(context).smartAlarmDao()
                         val now = System.currentTimeMillis()
                         val activeAlarms = dao.getActiveAlarms().filter { it.targetTimeMillis > now }
@@ -35,11 +42,20 @@ class BootReceiver : BroadcastReceiver() {
                         }
                         Log.i(TAG, "Đã khôi phục ${activeAlarms.size} báo thức ACTIVE sau khi khởi động máy.")
                     } catch (e: Exception) {
-                        Log.w(TAG, "Lỗi khôi phục báo thức sau boot: ${e.message}")
+                        Log.e(TAG, "Lỗi khi phục hồi tiến trình sau khi boot: ${e.message}", e)
+                    } finally {
+                        try {
+                            pendingResult?.finish()
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Lỗi khi kết thúc pendingResult: ${e.message}")
+                        }
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Lỗi khi phục hồi tiến trình sau khi boot: ${e.message}", e)
+                Log.e(TAG, "Lỗi khi dispatch coroutine trong BootReceiver: ${e.message}", e)
+                try {
+                    pendingResult?.finish()
+                } catch (_: Exception) {}
             }
         }
     }

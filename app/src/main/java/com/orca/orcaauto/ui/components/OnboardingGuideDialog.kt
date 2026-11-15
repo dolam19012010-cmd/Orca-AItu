@@ -163,7 +163,7 @@ fun OnboardingGuideDialog(
                                     "Bấm 'Create API key' ➔ Chọn 'Create key in new project'.",
                                     "Bấm 'Copy' đoạn mã bắt đầu bằng: AIzaSy...",
                                     "Mở AItu ➔ Cài đặt ➔ Dán Key vào ô ➔ Bấm 'Thêm Key'!",
-                                    "⚡ Mẹo: Google cấp miễn phí 15 lượt gọi/phút, hoàn toàn không tốn tiền. Model khuyên dùng: gemini-2.5-flash."
+                                    "⚡ Mẹo: Google cấp miễn phí 15 lượt gọi/phút, hoàn toàn không tốn tiền. Model khuyên dùng: gemini-3.8-flash hoặc gemini-3.5-flash-lite."
                                 )
                             )
 
@@ -189,7 +189,7 @@ fun OnboardingGuideDialog(
                             GuideStepCard(
                                 title = "💡 Mẹo đổi mô hình linh hoạt",
                                 steps = listOf(
-                                    "Tại danh sách Key trong Cài đặt, bạn chỉ cần nhấn giữ vào Key bất kỳ để đổi sang model khác (ví dụ: gemini-2.5-flash, deepseek-chat) mà không cần xóa đi nhập lại!"
+                                    "Tại danh sách Key trong Cài đặt, bạn chỉ cần nhấn giữ vào Key bất kỳ để đổi sang model khác (ví dụ: gemini-3.8-flash, gemini-3.5-flash-lite, deepseek-flash, llama-3.3-70b-versatile) mà không cần xóa đi nhập lại!"
                                 )
                             )
                         }

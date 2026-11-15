@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -48,6 +49,7 @@ interface NotificationDao {
     @Query("DELETE FROM notifications WHERE id IN (:ids)")
     suspend fun deleteByIds(ids: List<Long>): Int
 
+    @Transaction
     suspend fun enforceMaxCapacity(maxCapacity: Int = 200) {
         val total = getTotalNotificationCount()
         if (total > maxCapacity) {

@@ -31,10 +31,12 @@ enum class AiProviderType(
         badgeColor = "#F59E0B",
         defaultModel = "llama-3.3-70b-versatile",
         supportedModels = listOf(
-            "llama-3.3-70b-versatile",         // Meta Llama 3.3 70B (Tốc độ 300+ tok/s)
+            "llama-3.3-70b-versatile",         // Meta Llama 3.3 70B (Tốc độ 300+ tok/s, hiểu tiếng Việt xuất sắc)
             "qwen/qwen3.8-27b",                // Qwen 3.8 đa ngôn ngữ thông minh
-            "deepseek-r1-distill-llama-70b",   // DeepSeek R1 Reasoning
-            "llama-3.1-8b-instant",            // Phân loại siêu tốc ánh sáng
+            "openai/gpt-oss-120b",             // OpenAI GPT-OSS 120B (Open-weights reasoning trên LPU)
+            "openai/gpt-oss-20b",              // OpenAI GPT-OSS 20B (Siêu tốc độ phản hồi tức thì)
+            "llama-3.1-8b-instant",            // Llama 3.1 8B (500+ tok/s, phân loại siêu tốc ánh sáng)
+            "deepseek-r1-distill-llama-70b",   // DeepSeek R1 Distill (Reasoning chuyên sâu)
             "qwen-2.5-32b",                    // Qwen 2.5 32B Coder / Multilingual
             "mistral-saba-24b",                // Mistral Saba 24B
             "mixtral-8x7b-32768"
@@ -45,8 +47,10 @@ enum class AiProviderType(
         badgeColor = "#10B981",
         defaultModel = "deepseek-chat", // DeepSeek-V3 / V4.1-Flash
         supportedModels = listOf(
-            "deepseek-chat",     // DeepSeek-V3 / V4.1-Flash (Asymmetric MoE, 1M context)
-            "deepseek-reasoner"  // DeepSeek-R1 (Chain of Thought reasoning)
+            "deepseek-chat",     // DeepSeek-V3 / V4.1-Flash alias (Asymmetric MoE, 1M context)
+            "deepseek-flash",    // DeepSeek-V4.1-Flash (Siêu rẻ $0.15/1M, tốc độ cao, native tools & thinking)
+            "deepseek-v4-pro",   // DeepSeek-V4 Pro (Flagship MoE, suy luận nghiệp vụ chuyên sâu)
+            "deepseek-reasoner"  // DeepSeek-R1 / V4 Reasoning (Chain of Thought reasoning)
         )
     ),
     OPENROUTER(
@@ -55,11 +59,15 @@ enum class AiProviderType(
         defaultModel = "openrouter/free",
         supportedModels = listOf(
             "openrouter/free",                             // Tự động điều hướng model Free tốt nhất (Không bao giờ 404)
-            "nvidia/nemotron-3-ultra-550b-a55b:free",       // NVIDIA Nemotron 550B MoE (Siêu mạnh)
+            "nvidia/nemotron-3-ultra-550b-a55b:free",       // NVIDIA Nemotron 550B MoE (Siêu mạnh, 1M context)
+            "nvidia/nemotron-3.5-super-vl:free",           // NVIDIA Nemotron 3.5 Super VL (Vision/Text Free)
             "google/gemma-4-31b-it:free",                   // Google Gemma 4 31B (Free)
             "meta-llama/llama-3.3-70b-instruct:free",       // Llama 3.3 70B Instruct (Free)
             "deepseek/deepseek-r1:free",                    // DeepSeek R1 Reasoning (Free)
-            "deepseek/deepseek-chat:free",                  // DeepSeek V3 (Free)
+            "deepseek/deepseek-chat:free",                  // DeepSeek V3/V4 (Free)
+            "anthropic/claude-3.7-sonnet",                 // Claude 3.7 Sonnet (Hybrid Reasoning - Thinking budget)
+            "anthropic/claude-3.5-haiku",                  // Claude 3.5 Haiku (Siêu tốc & Tiết kiệm chi phí)
+            "openai/gpt-4o-mini",                          // GPT-4o Mini (Phổ thông qua OpenRouter)
             "google/gemini-2.0-flash-exp:free",             // Gemini 2.0 Flash (Free)
             "qwen/qwen-2.5-72b-instruct:free",             // Qwen 2.5 72B (Free)
             "mistralai/mistral-small-24b-instruct-2501:free"// Mistral Small 24B (Free)
@@ -82,10 +90,10 @@ enum class AiProviderType(
         badgeColor = "#E4E4E7",
         defaultModel = "gpt-4o-mini",
         supportedModels = listOf(
-            "gpt-4o-mini",
-            "gpt-4o",
-            "o3-mini",
-            "o1"
+            "gpt-4o-mini",      // GPT-4o Mini ($0.15/1M in, siêu tốc & kinh tế cho tóm tắt)
+            "o3-mini",          // o3-mini ($1.10/1M in, suy luận logic tốc độ cao, hỗ trợ effort low/med/high)
+            "gpt-4o",           // GPT-4o Flagship đa phương thức
+            "o1"                // o1 Flagship reasoning chuyên sâu
         )
     )
 }
@@ -143,6 +151,15 @@ data class ApiKeyConfig(
                         provider = AiProviderType.NVIDIA,
                         modelName = model,
                         endpointUrl = "https://integrate.api.nvidia.com/v1/chat/completions"
+                    )
+                }
+                trimmed.startsWith("sk-proj-") || trimmed.startsWith("sk-admin-") -> {
+                    val model = customModel ?: AiProviderType.OPENAI_COMPATIBLE.defaultModel
+                    ApiKeyConfig(
+                        rawKey = trimmed,
+                        provider = AiProviderType.OPENAI_COMPATIBLE,
+                        modelName = model,
+                        endpointUrl = "https://api.openai.com/v1/chat/completions"
                     )
                 }
                 trimmed.startsWith("sk-") -> {

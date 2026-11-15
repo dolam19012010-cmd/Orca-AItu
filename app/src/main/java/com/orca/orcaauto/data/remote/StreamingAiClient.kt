@@ -494,6 +494,7 @@ class StreamingAiClient(
                 AiProviderType.GROQ -> "https://api.groq.com/openai/v1/chat/completions"
                 AiProviderType.DEEPSEEK -> "https://api.deepseek.com/chat/completions"
                 AiProviderType.NVIDIA -> "https://integrate.api.nvidia.com/v1/chat/completions"
+                AiProviderType.OPENAI_COMPATIBLE -> "https://api.openai.com/v1/chat/completions"
                 else -> "https://openrouter.ai/api/v1/chat/completions"
             }
         }

@@ -19,6 +19,11 @@ class SummaryWorker(
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
+        if (runAttemptCount >= 2) {
+            Log.w(TAG, "SummaryWorker đã vượt quá số lần thử lại tối đa ($runAttemptCount). Dừng tác vụ để tiết kiệm pin.")
+            return Result.failure()
+        }
+
         val database = AppDatabase.getDatabase(applicationContext)
         val preferences = UserPreferences.getInstance(applicationContext)
         val keyPool = preferences.getKeyPool().filter { it.isEnabled && it.rawKey.isNotBlank() }
@@ -26,8 +31,8 @@ class SummaryWorker(
         Log.i(TAG, "SummaryWorker bắt đầu thực thi tác vụ tóm tắt...")
 
         if (keyPool.isEmpty()) {
-            Log.e(TAG, "Chưa thiết lập bất kỳ API Key nào trong Key Pool! Sẽ thử lại sau.")
-            return Result.retry()
+            Log.i(TAG, "Chưa thiết lập bất kỳ API Key nào trong Key Pool. Hoàn tất chu kỳ để tiết kiệm pin.")
+            return Result.success()
         }
 
         return try {
@@ -133,12 +138,12 @@ class SummaryWorker(
             } else if (anySessionSuccess) {
                 Result.success()
             } else {
-                Log.w(TAG, "Toàn bộ các phiên đều thất bại. Tự động thử lại sau 15 phút.")
-                Result.retry()
+                Log.w(TAG, "Toàn bộ các phiên đều thất bại. Số lần đã thử: $runAttemptCount.")
+                if (runAttemptCount >= 2) Result.failure() else Result.retry()
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Lỗi ngoại lệ trong SummaryWorker: ${e.message}. Tự động thử lại sau 15 phút.", e)
-            Result.retry()
+            Log.e(TAG, "Lỗi ngoại lệ trong SummaryWorker: ${e.message}. Số lần đã thử: $runAttemptCount.", e)
+            if (runAttemptCount >= 2) Result.failure() else Result.retry()
         }
     }
 

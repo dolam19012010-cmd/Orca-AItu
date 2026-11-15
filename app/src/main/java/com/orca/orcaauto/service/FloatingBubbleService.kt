@@ -34,6 +34,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -184,6 +185,7 @@ class FloatingBubbleService : Service() {
         }
 
         // Lắng nghe sự kiện Bật/Tắt màn hình để ngắt cảm biến triệt để (0% pin khi tắt màn hình)
+        isScreenOn = (getSystemService(Context.POWER_SERVICE) as? PowerManager)?.isInteractive ?: true
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_OFF)
             addAction(Intent.ACTION_SCREEN_ON)
@@ -445,7 +447,9 @@ class FloatingBubbleService : Service() {
 
     private fun updateShakeDetectorState() {
         val prefs = UserPreferences.getInstance(this)
-        val shouldListen = currentBubbleState == BubbleState.STATE_3_HIDDEN &&
+        isScreenOn = (getSystemService(Context.POWER_SERVICE) as? PowerManager)?.isInteractive ?: true
+        val shouldListen = !isExpanded &&
+                currentBubbleState == BubbleState.STATE_3_HIDDEN &&
                 isScreenOn &&
                 prefs.isShakeToWakeEnabled()
 
@@ -1391,6 +1395,7 @@ class FloatingBubbleService : Service() {
             } catch (e: Exception) {}
         }
         isExpanded = true
+        updateShakeDetectorState()
         // Tắt chuông báo thức nếu người dùng mở thẻ AI xem
         com.orca.orcaauto.receiver.AlarmRingtonePlayer.stop()
 
@@ -1416,9 +1421,9 @@ class FloatingBubbleService : Service() {
 
             if (wallpaperBmp != null) {
                 val scrimColor = when (wpMode) {
-                    WallpaperMode.CLEAR -> Color.parseColor("#B309090B")
-                    WallpaperMode.BLURRED -> Color.parseColor("#CC09090B")
-                    WallpaperMode.DYNAMIC -> Color.parseColor("#BF09090B")
+                    WallpaperMode.CLEAR -> Color.parseColor("#7309090B")
+                    WallpaperMode.DYNAMIC -> Color.parseColor("#8009090B")
+                    WallpaperMode.BLURRED -> Color.parseColor("#8C09090B")
                 }
                 background = FrostedWallpaperDrawable(
                     bitmap = wallpaperBmp,

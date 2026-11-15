@@ -6,8 +6,12 @@ import com.orca.orcaauto.data.preferences.AppFilterRule
 import com.orca.orcaauto.data.preferences.ChatFilterMode
 import com.orca.orcaauto.data.preferences.UserPreferences
 import java.text.Normalizer
+import java.util.concurrent.ConcurrentHashMap
 
 object NotificationFilter {
+
+    // In-memory per-package debounce cache to avoid redundant cross-component calls
+    private val _recentSendersCache = ConcurrentHashMap<String, String>()
 
     // Strict 3-tier regex to detect genuine technical OTP messages:
     // Tier 1: Explicit technical OTP / verification keywords
@@ -112,7 +116,11 @@ object NotificationFilter {
         // Record sender/group to recent list if non-empty (prioritize conversationTitle -> subText -> title)
         val candidateName = conversationTitle.ifBlank { subText }.ifBlank { title }
         if (candidateName.isNotBlank() && candidateName != "Người gửi ẩn danh") {
-            preferences.addRecentSender(packageName, candidateName)
+            val lastSender = _recentSendersCache[packageName]
+            if (!candidateName.equals(lastSender, ignoreCase = true)) {
+                _recentSendersCache[packageName] = candidateName
+                preferences.addRecentSender(packageName, candidateName)
+            }
         }
 
         return evaluateRule(rule, conversationTitle, subText, title)

@@ -246,9 +246,10 @@ class UniversalAiClient {
                 config.modelName,
                 "openrouter/free",
                 "nvidia/nemotron-3-ultra-550b-a55b:free",
-                "nvidia/llama-3.1-nemotron-70b-instruct:free",
+                "nvidia/nemotron-3.5-super-vl:free",
                 "meta-llama/llama-3.3-70b-instruct:free",
                 "deepseek/deepseek-r1:free",
+                "deepseek/deepseek-chat:free",
                 "google/gemma-4-31b-it:free",
                 "mistralai/mistral-small-24b-instruct-2501:free"
             ).distinct()
