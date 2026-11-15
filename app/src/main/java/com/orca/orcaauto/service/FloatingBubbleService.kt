@@ -1328,6 +1328,21 @@ class FloatingBubbleService : Service() {
     }
 
     @SuppressLint("ClickableViewAccessibility")
+    private fun View.addMicroPressEffect() {
+        setOnTouchListener { v, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    v.animate().scaleX(0.95f).scaleY(0.95f).setDuration(80).start()
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(100).start()
+                }
+            }
+            false
+        }
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
     private fun expandFloatingCard(root: FrameLayout, animate: Boolean = true) {
         UserPreferences.getInstance(this).setHasUnreadSummary(false)
         bubbleLifecycleHandler.removeCallbacks(toState2Runnable)
@@ -1485,6 +1500,7 @@ class FloatingBubbleService : Service() {
                 setStroke(dpToPx(1), Color.parseColor("#66FFFFFF"))
             }
             setPadding(dpToPx(10), dpToPx(5), dpToPx(10), dpToPx(5))
+            addMicroPressEffect()
             setOnClickListener {
                 val intent = Intent(this@FloatingBubbleService, MainActivity::class.java).apply {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -1539,6 +1555,7 @@ class FloatingBubbleService : Service() {
                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                     rightMargin = dpToPx(6)
                 }
+                addMicroPressEffect()
 
                 setOnClickListener {
                     val targetSessionId = session.id
@@ -1607,6 +1624,7 @@ class FloatingBubbleService : Service() {
                 setStroke(dpToPx(1), Color.parseColor("#0284C7"))
             }
             setPadding(dpToPx(10), dpToPx(4), dpToPx(10), dpToPx(4))
+            addMicroPressEffect()
             setOnClickListener {
                 val intent = Intent(this@FloatingBubbleService, MainActivity::class.java).apply {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -1960,6 +1978,7 @@ class FloatingBubbleService : Service() {
                     if (index > 0) leftMargin = dpToPx(6)
                 }
                 isClickable = true
+                addMicroPressEffect()
                 setOnClickListener {
                     if (activeThinkingLevel != level) {
                         activeThinkingLevel = level
@@ -1999,6 +2018,7 @@ class FloatingBubbleService : Service() {
                 leftMargin = dpToPx(6)
             }
             isClickable = !isCallingAi
+            addMicroPressEffect()
             setOnClickListener {
                 if (!isCallingAi) {
                     pasteFromClipboard(queryEt)
@@ -2022,6 +2042,7 @@ class FloatingBubbleService : Service() {
                 leftMargin = dpToPx(8)
             }
             isClickable = !isCallingAi
+            addMicroPressEffect()
             setOnClickListener {
                 if (!isCallingAi) {
                     val q = queryEt.text.toString().trim()
@@ -2072,6 +2093,10 @@ class FloatingBubbleService : Service() {
                     }
                     .start()
             }
+        } else if (isExpanded) {
+            // Subtle Cross-fade when refreshing or switching sessions (110ms)
+            cardLayout.alpha = 0.5f
+            cardLayout.animate().alpha(1f).setDuration(110).start()
         }
     }
 
@@ -2753,6 +2778,39 @@ class FloatingBubbleService : Service() {
                     if (isSwiping) {
                         isSwiping = false
                         val dx = event.rawX - startX
+
+                        val collapseAndRemoveRow = {
+                            val initialHeight = container.height
+                            val initialBottomMargin = (container.layoutParams as? ViewGroup.MarginLayoutParams)?.bottomMargin ?: 0
+                            val collapseAnim = ValueAnimator.ofFloat(1f, 0f).apply {
+                                duration = 140
+                                interpolator = DecelerateInterpolator()
+                                addUpdateListener { va ->
+                                    val fraction = va.animatedValue as Float
+                                    val lp = container.layoutParams as? ViewGroup.MarginLayoutParams
+                                    if (lp != null) {
+                                        lp.height = (initialHeight * fraction).toInt()
+                                        lp.bottomMargin = (initialBottomMargin * fraction).toInt()
+                                        container.layoutParams = lp
+                                    }
+                                }
+                                addListener(object : AnimatorListenerAdapter() {
+                                    override fun onAnimationEnd(animation: Animator) {
+                                        container.visibility = View.GONE
+                                        currentTasksBoardLayout?.removeView(container)
+                                        val hasVisibleChild = currentTasksBoardLayout?.let { board ->
+                                            (0 until board.childCount).any { idx -> board.getChildAt(idx).visibility == View.VISIBLE }
+                                        } ?: false
+                                        if (!hasVisibleChild) {
+                                            currentTasksBoardLayout?.visibility = View.GONE
+                                        }
+                                        isSwipeAnimating = false
+                                    }
+                                })
+                            }
+                            collapseAnim.start()
+                        }
+
                         if (dx > swipeThreshold && !isCompleted && !isCancelled) {
                             // Vuốt phải vượt 72dp -> Hoàn thành
                             isSwipeAnimating = true
@@ -2769,15 +2827,7 @@ class FloatingBubbleService : Service() {
                                 alarmDbMap = alarmDbMap + (alarmId to completedAlarm) + (generatedAlarmId to completedAlarm)
                                 Toast.makeText(this@FloatingBubbleService, "✓ Đã hoàn thành: ${cleanTitle.take(24)}...", Toast.LENGTH_SHORT).show()
 
-                                container.visibility = View.GONE
-                                currentTasksBoardLayout?.removeView(container)
-                                val hasVisibleChild = currentTasksBoardLayout?.let { board ->
-                                    (0 until board.childCount).any { idx -> board.getChildAt(idx).visibility == View.VISIBLE }
-                                } ?: false
-                                if (!hasVisibleChild) {
-                                    currentTasksBoardLayout?.visibility = View.GONE
-                                }
-                                isSwipeAnimating = false
+                                collapseAndRemoveRow()
                             }.start()
                         } else if (dx < -swipeThreshold && !isCancelled) {
                             // Vuốt trái vượt 72dp -> Hủy việc
@@ -2795,15 +2845,7 @@ class FloatingBubbleService : Service() {
                                 alarmDbMap = alarmDbMap + (alarmId to cancelledAlarm) + (generatedAlarmId to cancelledAlarm)
                                 Toast.makeText(this@FloatingBubbleService, "✕ Đã hủy: ${cleanTitle.take(24)}...", Toast.LENGTH_SHORT).show()
 
-                                container.visibility = View.GONE
-                                currentTasksBoardLayout?.removeView(container)
-                                val hasVisibleChild = currentTasksBoardLayout?.let { board ->
-                                    (0 until board.childCount).any { idx -> board.getChildAt(idx).visibility == View.VISIBLE }
-                                } ?: false
-                                if (!hasVisibleChild) {
-                                    currentTasksBoardLayout?.visibility = View.GONE
-                                }
-                                isSwipeAnimating = false
+                                collapseAndRemoveRow()
                             }.start()
                         } else {
                             v.animate().translationX(0f).setDuration(180).withEndAction {
