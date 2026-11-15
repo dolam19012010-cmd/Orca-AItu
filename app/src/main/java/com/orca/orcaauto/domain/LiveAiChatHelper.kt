@@ -9,6 +9,7 @@ import com.orca.orcaauto.data.remote.ApiKeyConfig
 import com.orca.orcaauto.domain.ai.SequentialAiQueue
 import com.orca.orcaauto.domain.alarm.SystemAlarmHelper
 import com.orca.orcaauto.domain.filter.SessionMessageFilter
+import com.orca.orcaauto.domain.filter.SummaryParser
 import com.orca.orcaauto.domain.prompt.GeminiPromptBuilder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -67,7 +68,13 @@ object LiveAiChatHelper {
         } else {
             prefs.getPromptPersona()
         }
-        val latestSummaryRecord = db.summaryDao().getLatestSummaryForSession(session.id)
+        val allSessionSummaries = db.summaryDao().getAllSummaries().filter {
+            it.sessionId == session.id || (session.id == SummarySessionConfig.MAIN_SESSION_ID && (it.sessionId.isNullOrBlank() || it.sessionId == SummarySessionConfig.MAIN_SESSION_ID))
+        }
+        val latestSummaryRecord = allSessionSummaries.firstOrNull {
+            val p = SummaryParser.parse(it.summaryContent)
+            p.totalTaskCount > 0
+        } ?: allSessionSummaries.firstOrNull()
         val rawPreviousSummary = if (prefs.isRecentSummaryContextEnabled()) latestSummaryRecord?.summaryContent.orEmpty() else ""
         val activeAlarms = if (prefs.isLongTermTasksContextEnabled()) db.smartAlarmDao().getActiveAlarms() else emptyList()
         // Luôn nạp danh sách việc đã hủy trong vòng 48 giờ để chặn tái sinh qua nhiều phiên

@@ -233,7 +233,7 @@ class FloatingBubbleService : Service() {
                             lastKnownSummaryId = latest.id
 
                             val parsedLatest = SummaryParser.parse(latest.summaryContent)
-                            val hasTasks = (parsedLatest.tasksToDo + parsedLatest.tasksPlanned + parsedLatest.tasksDone).isNotEmpty()
+                            val hasTasks = parsedLatest.totalTaskCount > 0
 
                             if (hasTasks || latestSummaryText.isBlank()) {
                                 latestSummaryText = latest.summaryContent
@@ -267,6 +267,17 @@ class FloatingBubbleService : Service() {
                             unreadDotView?.visibility = if (hasUnread) View.VISIBLE else View.GONE
                         }
                     }
+            } catch (_: Exception) {}
+        }
+
+        // 4. Clean up legacy ad-hoc chat records mistakenly saved into summary_history
+        serviceScope.launch(Dispatchers.IO) {
+            try {
+                val db = AppDatabase.getDatabase(this@FloatingBubbleService)
+                val legacyRecords = db.summaryDao().getAllSummaries().filter { it.summaryContent.startsWith("Hỏi:") }
+                for (record in legacyRecords) {
+                    db.summaryDao().deleteById(record.id)
+                }
             } catch (_: Exception) {}
         }
     }
@@ -304,7 +315,7 @@ class FloatingBubbleService : Service() {
                 if (model.isNotBlank()) latestModelInfo = model
             } else if (sessionRecord != null && sessionRecord.summaryContent.isNotBlank()) {
                 val parsedSession = SummaryParser.parse(sessionRecord.summaryContent)
-                val hasTasks = (parsedSession.tasksToDo + parsedSession.tasksPlanned + parsedSession.tasksDone).isNotEmpty()
+                val hasTasks = parsedSession.totalTaskCount > 0
                 if (hasTasks || latestSummaryText.isBlank()) {
                     latestSummaryText = sessionRecord.summaryContent
                     latestModelInfo = sessionRecord.modelInfo
@@ -1518,7 +1529,7 @@ class FloatingBubbleService : Service() {
                             val sessionSummary = db.summaryDao().getLatestSummaryForSession(session.id)
                             if (sessionSummary != null) {
                                 val parsedSession = SummaryParser.parse(sessionSummary.summaryContent)
-                                val hasTasks = (parsedSession.tasksToDo + parsedSession.tasksPlanned + parsedSession.tasksDone).isNotEmpty()
+                                val hasTasks = parsedSession.totalTaskCount > 0
                                 if (hasTasks || latestSummaryText.isBlank()) {
                                     latestSummaryText = sessionSummary.summaryContent
                                     latestModelInfo = sessionSummary.modelInfo

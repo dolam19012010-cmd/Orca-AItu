@@ -969,4 +969,79 @@ class FloatingBubbleServiceEmpiricalChallengeTest {
         val hasTasks = (parsed.tasksToDo + parsed.tasksPlanned + parsed.tasksDone).isNotEmpty()
         assertTrue("hasTasks phải là true để không bị coi là bản ghi rỗng", hasTasks)
     }
+
+    @Test
+    fun legacyChatRecords_whenPurged_removesHoiPrefixedRecordsFromSummaryHistory() {
+        val summaries = listOf(
+            com.orca.orcaauto.data.local.SummaryHistoryEntity(
+                id = 1,
+                timestamp = 1000L,
+                targetTimeSlot = "09:24 - 15/11",
+                messageCount = 36,
+                summaryContent = "=== PHẦN 1: LỜI KHUYÊN ===\nLàm bài tập\n=== PHẦN 2: BẢNG NHIỆM VỤ ===\n### 🔴 NHIỆM VỤ PHẢI LÀM (TO-DO)\n- Bài 1 | Nguồn: A | Hạn: 10h",
+                status = "SUCCESS",
+                modelInfo = "Gemini",
+                sessionId = "session_main_default",
+                sessionName = "Phiên chính"
+            ),
+            com.orca.orcaauto.data.local.SummaryHistoryEntity(
+                id = 2,
+                timestamp = 2000L,
+                targetTimeSlot = "11:31 - 15/11",
+                messageCount = 35,
+                summaryContent = "Hỏi: à t k thuộc đội văn nghệ nhé\n\nÀ vậy thì bạn không cần tham gia nhé",
+                status = "SUCCESS",
+                modelInfo = "Gemini",
+                sessionId = "session_main_default",
+                sessionName = "Phiên chính"
+            )
+        )
+
+        // Filter out legacy "Hỏi:" chat records
+        val legacyRecords = summaries.filter { it.summaryContent.startsWith("Hỏi:") }
+        val cleanSummaries = summaries.filterNot { it.summaryContent.startsWith("Hỏi:") }
+
+        assertEquals("Phải phát hiện 1 bản ghi chat cũ dạng Hỏi:", 1, legacyRecords.size)
+        assertEquals("Bản ghi bị lọc là id 2", 2L, legacyRecords.first().id)
+        assertEquals("Danh sách sạch chỉ còn 1 bản ghi chuẩn", 1, cleanSummaries.size)
+        assertEquals("Bản ghi chuẩn giữ lại là id 1", 1L, cleanSummaries.first().id)
+    }
+
+    @Test
+    fun previousSummarySelection_skipsZeroTaskChatRecordsAndFindsValidSummaryWithTasks() {
+        val summaries = listOf(
+            com.orca.orcaauto.data.local.SummaryHistoryEntity(
+                id = 2,
+                timestamp = 2000L,
+                targetTimeSlot = "11:31 - 15/11",
+                messageCount = 35,
+                summaryContent = "Hỏi: à t k thuộc đội văn nghệ nhé\n\nÀ vậy thì bạn không cần tham gia nhé",
+                status = "SUCCESS",
+                modelInfo = "Gemini",
+                sessionId = "session_main_default",
+                sessionName = "Phiên chính"
+            ),
+            com.orca.orcaauto.data.local.SummaryHistoryEntity(
+                id = 1,
+                timestamp = 1000L,
+                targetTimeSlot = "09:24 - 15/11",
+                messageCount = 36,
+                summaryContent = "=== PHẦN 1: LỜI KHUYÊN ===\nLàm bài tập\n=== PHẦN 2: BẢNG NHIỆM VỤ ===\n### 🔴 NHIỆM VỤ PHẢI LÀM (TO-DO)\n- Nộp Speaking Unit 3 | Nguồn: Cô Hiền | Hạn: 12h",
+                status = "SUCCESS",
+                modelInfo = "Gemini",
+                sessionId = "session_main_default",
+                sessionName = "Phiên chính"
+            )
+        )
+
+        // Robust summary selection: finds the latest summary that has actual tasks
+        val selectedSummaryRecord = summaries.firstOrNull {
+            val p = SummaryParser.parse(it.summaryContent)
+            (p.tasksToDo + p.tasksPlanned + p.tasksDone).isNotEmpty()
+        } ?: summaries.firstOrNull()
+
+        assertNotNull("Phải tìm thấy bản ghi tóm tắt", selectedSummaryRecord)
+        assertEquals("Bản ghi được chọn phải là id 1 có nhiệm vụ, không phải id 2 là chat rỗng", 1L, selectedSummaryRecord?.id)
+        assertTrue("Nội dung bản ghi được chọn phải chứa Speaking Unit 3", selectedSummaryRecord?.summaryContent?.contains("Speaking Unit 3") == true)
+    }
 }
