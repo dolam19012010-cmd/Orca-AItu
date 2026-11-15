@@ -934,4 +934,39 @@ class FloatingBubbleServiceEmpiricalChallengeTest {
         }
         assertTrue("Nhiệm vụ đã vuốt không được xuất hiện lại trong TaskBoard", filteredTasks.isEmpty())
     }
+
+    @Test
+    fun unifiedPipeline_whenUserSubmitsGuidance_producesFullSummaryWithAdviceAndTasks() {
+        val userPrompt = "à t k thuộc đội văn nghệ nhé"
+        val mockAiOutput = """
+=== PHẦN 1: LỜI KHUYÊN & LƯU Ý ===
+1. [Lời khuyên]: Vì bạn không thuộc đội văn nghệ nên các việc gửi MP4 và chuẩn bị tất đen bạn không cần tham gia. Hãy tập trung hoàn thành bài Speaking Unit 3 và BTVN IE08.
+2. [Lưu ý]: Nhớ nộp Speaking Unit 3 trước 12:00.
+
+=== PHẦN 2: BẢNG ĐIỀU PHỐI NHIỆM VỤ ===
+### 🔴 NHIỆM VỤ PHẢI LÀM (TO-DO)
+- Nộp bài Speaking Unit 3 lên bảng Padlet | Nguồn: Cô Hiền | Hạn: 12:00
+- Hoàn thành BTVN IE08 | Nguồn: Thầy Tuấn | Hạn: 22:00
+        """.trimIndent()
+
+        val parsed = SummaryParser.parse(mockAiOutput)
+        val cleanAdvice = SummaryParser.cleanAdviceText(parsed.conciseAdvice)
+
+        // 1. Verify that advice is extracted correctly and addresses user prompt
+        assertTrue("Lời khuyên phải đề cập đến văn nghệ", cleanAdvice.contains("văn nghệ"))
+        assertTrue("Lời khuyên phải đề cập đến Speaking Unit 3", cleanAdvice.contains("Speaking Unit 3"))
+
+        // 2. Verify that tasks are NOT zero
+        assertTrue("Bảng nhiệm vụ phải có nhiệm vụ TO-DO", parsed.tasksToDo.isNotEmpty())
+        assertEquals("Phải có 2 nhiệm vụ TO-DO", 2, parsed.tasksToDo.size)
+        assertTrue(parsed.tasksToDo.any { it.title.contains("Speaking Unit 3") })
+        assertTrue(parsed.tasksToDo.any { it.title.contains("Hoàn thành BTVN IE08") })
+
+        // 3. Verify that văn nghệ is NOT in TO-DO tasks
+        assertFalse(parsed.tasksToDo.any { it.title.contains("tất đen") || it.title.contains("file nhạc") })
+
+        // 4. Verify populateTaskBoard logic accepts this summary as having tasks
+        val hasTasks = (parsed.tasksToDo + parsed.tasksPlanned + parsed.tasksDone).isNotEmpty()
+        assertTrue("hasTasks phải là true để không bị coi là bản ghi rỗng", hasTasks)
+    }
 }

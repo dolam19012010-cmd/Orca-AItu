@@ -482,36 +482,9 @@ class AssistantPipeline(
             )
 
             // Tự động lưu lịch sử phiên tương tác vào Tóm Tắt Ca để người dùng xem lại được trong Trí Nhớ AI
-            val currentSummaryDao = activeSummaryDao
-            if (currentSummaryDao != null && finalCleanContent.isNotBlank()) {
-                try {
-                    val timeSlot = SimpleDateFormat("HH:mm - dd/MM", Locale.getDefault()).format(Date()) + " [$sessionName]"
-                    val modelInfo = activeUsedKey?.let { "${it.provider.displayName} • ${it.modelName}" }.orEmpty()
-
-                    val summaryContentToSave = if (userPrompt.isNotBlank() && !userPrompt.startsWith("Tóm tắt")) {
-                        "Hỏi: $userPrompt\n\n$finalCleanContent"
-                    } else {
-                        finalCleanContent
-                    }
-
-                    val notifCount = retrievedContext.relevantNotificationsSnippet.lines().count { it.isNotBlank() }.coerceAtLeast(1)
-
-                    val summaryRecord = SummaryHistoryEntity(
-                        timestamp = System.currentTimeMillis(),
-                        targetTimeSlot = timeSlot,
-                        messageCount = notifCount,
-                        summaryContent = summaryContentToSave,
-                        status = "SUCCESS",
-                        modelInfo = modelInfo,
-                        sessionId = targetSessionId,
-                        sessionName = sessionName
-                    )
-                    currentSummaryDao.insert(summaryRecord)
-                    Log.i(TAG, "Đã lưu lịch sử phiên chat vào Tóm tắt ca (id: ${summaryRecord.id}, session: $sessionName)")
-                } catch (e: Exception) {
-                    Log.w(TAG, "Không thể lưu lịch sử chat vào summaryDao: ${e.message}")
-                }
-            }
+            // Do NOT insert ad-hoc conversational chat responses into summary_history as fake ca summaries.
+            // Summary history is strictly reserved for authoritative session summaries produced by LiveAiChatHelper.
+            Log.d(TAG, "AssistantPipeline streaming completed successfully without polluting summary_history.")
 
         } catch (e: CancellationException) {
             Log.i(TAG, "AssistantPipeline coroutine cancelled cleanly.")

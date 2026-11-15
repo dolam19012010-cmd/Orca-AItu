@@ -303,8 +303,12 @@ class FloatingBubbleService : Service() {
                 latestSummaryText = summary
                 if (model.isNotBlank()) latestModelInfo = model
             } else if (sessionRecord != null && sessionRecord.summaryContent.isNotBlank()) {
-                latestSummaryText = sessionRecord.summaryContent
-                latestModelInfo = sessionRecord.modelInfo
+                val parsedSession = SummaryParser.parse(sessionRecord.summaryContent)
+                val hasTasks = (parsedSession.tasksToDo + parsedSession.tasksPlanned + parsedSession.tasksDone).isNotEmpty()
+                if (hasTasks || latestSummaryText.isBlank()) {
+                    latestSummaryText = sessionRecord.summaryContent
+                    latestModelInfo = sessionRecord.modelInfo
+                }
             } else {
                 val activeSession = prefs.getSelectedSession()
                 latestSummaryText = "Chưa có báo cáo cho '${activeSession.name}'.\n\nNhấn nút 'Gửi' bên dưới để tóm tắt các tin nhắn thuộc phiên này."
@@ -1513,9 +1517,13 @@ class FloatingBubbleService : Service() {
                             val db = AppDatabase.getDatabase(this@FloatingBubbleService)
                             val sessionSummary = db.summaryDao().getLatestSummaryForSession(session.id)
                             if (sessionSummary != null) {
-                                latestSummaryText = sessionSummary.summaryContent
-                                latestModelInfo = sessionSummary.modelInfo
-                                activeChatAnswer = null
+                                val parsedSession = SummaryParser.parse(sessionSummary.summaryContent)
+                                val hasTasks = (parsedSession.tasksToDo + parsedSession.tasksPlanned + parsedSession.tasksDone).isNotEmpty()
+                                if (hasTasks || latestSummaryText.isBlank()) {
+                                    latestSummaryText = sessionSummary.summaryContent
+                                    latestModelInfo = sessionSummary.modelInfo
+                                    activeChatAnswer = null
+                                }
                             } else {
                                 latestSummaryText = "Chưa có báo cáo cho '${session.name}'.\n\nNhấn nút 'Gửi' bên dưới để tóm tắt các tin nhắn thuộc phiên này."
                                 latestModelInfo = "${session.iconEmoji} ${session.name}"
@@ -1778,59 +1786,35 @@ class FloatingBubbleService : Service() {
                 }
 
                 targetNotesContainer.removeAllViews()
-                targetAdviceTv.text = "Đang tìm thông tin..."
+                targetAdviceTv.text = "⏳ Đang kết nối AI và phân tích ca..."
 
                 activeStreamingJob = serviceScope.launch(Dispatchers.Main) {
                     try {
-                        val pipeline = AssistantPipeline.create(this@FloatingBubbleService)
-                        pipeline.askStreaming(promptToSend).collect { uiState ->
-                            when (uiState.step) {
-                                AssistantStep.STAGE_1_PACKING_INDEX,
-                                AssistantStep.STAGE_2_ROUND_1_ROUTING,
-                                AssistantStep.STAGE_3_LOCAL_RETRIEVAL -> {
-                                    targetAdviceTv.text = uiState.stepDescription
-                                }
-                                AssistantStep.STAGE_4_STREAMING_ANSWER -> {
-                                    if (uiState.streamedContentClean.isBlank()) {
-                                        targetAdviceTv.text = "⏳ Đang kết nối máy chủ AI..."
-                                    } else {
-                                        targetAdviceTv.text = uiState.streamedContentClean + " ▌"
-                                    }
-                                }
-                                AssistantStep.STAGE_5_EXECUTING_ACTIONS -> {
-                                    targetAdviceTv.text = uiState.streamedContentClean.ifBlank { "Đang thực thi tác vụ..." }
-                                }
-                                AssistantStep.COMPLETED -> {
-                                    // AI chat responses strictly record in activeChatAnswer; NEVER overwrite or blank latestSummaryText
-                                    activeChatAnswer = uiState.streamedContentClean
+                        val currentSession = prefs.getSelectedSession()
+                        val result = withContext(Dispatchers.IO) {
+                            LiveAiChatHelper.summarizeSession(
+                                context = this@FloatingBubbleService,
+                                session = currentSession,
+                                userQueryOrInstruction = promptToSend
+                            )
+                        }
+                        if (result.isSuccess) {
+                            val (cleanSummary, usedKey) = result.getOrThrow()
+                            latestSummaryText = cleanSummary
+                            activeChatAnswer = null
+                            latestModelInfo = "${usedKey.provider.displayName} • ${usedKey.modelName}"
+                            modelTv.text = latestModelInfo
 
-                                    uiState.activeUsedKey?.let { key ->
-                                        latestModelInfo = "${key.provider.displayName} • ${key.modelName}"
-                                        modelTv.text = latestModelInfo
-                                    }
+                            val parsed = SummaryParser.parse(cleanSummary)
+                            val cleanAdvice = SummaryParser.cleanAdviceText(parsed.conciseAdvice)
+                            targetAdviceTv.text = if (cleanAdvice.isNotBlank()) cleanAdvice else parsed.conciseAdvice.ifBlank { cleanSummary }
 
-                                    // Gộp Lời chỉ dẫn + Thẻ ghi chú khi chat
-                                    val parsed = SummaryParser.parse(uiState.streamedContentClean)
-                                    val cleanAdvice = SummaryParser.cleanAdviceText(parsed.conciseAdvice)
-                                    targetAdviceTv.text = if (cleanAdvice.isNotBlank()) cleanAdvice else parsed.conciseAdvice.ifBlank { uiState.streamedContentClean }
-
-                                    targetNotesContainer.removeAllViews()
-                                    if (uiState.shownNoteCards.isNotEmpty()) {
-                                        renderLocalNoteCardsInBubble(targetNotesContainer, uiState.shownNoteCards)
-                                    }
-
-                                    // TaskBoard is always preserved and refreshed from Room DB smart_alarms
-                                    currentTasksBoardLayout?.let { board ->
-                                        populateTaskBoard(board, cardLayout, hasAdvice = true)
-                                    }
-                                }
-                                AssistantStep.ERROR -> {
-                                    targetAdviceTv.text = "Lỗi: ${uiState.errorMessage ?: "Không thể kết nối AI"}"
-                                }
-                                AssistantStep.IDLE -> {
-                                    // No-op
-                                }
+                            currentTasksBoardLayout?.let { board ->
+                                populateTaskBoard(board, cardLayout, hasAdvice = true)
                             }
+                        } else {
+                            val err = result.exceptionOrNull()
+                            targetAdviceTv.text = "Thất bại: ${err?.message ?: "Lỗi gọi AI"}"
                         }
                     } catch (e: CancellationException) {
                         // Clean cancellation
@@ -1849,9 +1833,6 @@ class FloatingBubbleService : Service() {
                         queryEt.isEnabled = true
                         queryEt.hint = "Nhập lệnh hoặc câu hỏi..."
                         activeStreamingJob = null
-                        currentTasksBoardLayout?.let { board ->
-                            populateTaskBoard(board, cardLayout, hasAdvice = true)
-                        }
                     }
                 }
             }
