@@ -78,6 +78,7 @@ import com.orca.orcaauto.domain.filter.SummaryParser
 import com.orca.orcaauto.domain.filter.TaskItem
 import com.orca.orcaauto.domain.filter.TaskStatus
 import com.orca.orcaauto.ui.MainActivity
+import java.util.concurrent.ConcurrentHashMap
 import com.orca.orcaauto.ui.wallpaper.WallpaperMode
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -104,6 +105,8 @@ class FloatingBubbleService : Service() {
     private var isExpanded = false
     private var latestSummaryText: String = ""
     private var latestModelInfo: String = ""
+    // In-Memory Hot Cache for instantaneous session switching & bubble expansion (0ms flash bypass)
+    private val sessionSummaryCache = ConcurrentHashMap<String, Pair<String, String>>()
     private var activeChatAnswer: String? = null
     private var currentTasksBoardLayout: LinearLayout? = null
     private var currentCardLayoutRef: View? = null
@@ -236,6 +239,10 @@ class FloatingBubbleService : Service() {
                     .getLatestSummaryFlow()
                     .collect { latest ->
                         if (latest != null && latest.summaryContent.isNotBlank()) {
+                            // Warm up in-memory cache for this session immediately
+                            val sid = latest.sessionId ?: com.orca.orcaauto.data.preferences.SummarySessionConfig.MAIN_SESSION_ID
+                            sessionSummaryCache[sid] = Pair(latest.summaryContent, latest.modelInfo)
+
                             // Đảm bảo chỉ xử lý bản ghi thuộc phiên hiện tại (hoặc phiên chính)
                             val prefs = UserPreferences.getInstance(this@FloatingBubbleService)
                             val currentSessionId = prefs.getSelectedSessionId()
@@ -318,6 +325,20 @@ class FloatingBubbleService : Service() {
             UserPreferences.getInstance(this).setSelectedSessionId(targetSessionId)
         }
 
+        val activeSessionId = UserPreferences.getInstance(this).getSelectedSessionId()
+        if (summary.isNotBlank()) {
+            latestSummaryText = summary
+            if (model.isNotBlank()) latestModelInfo = model
+            sessionSummaryCache[activeSessionId] = Pair(summary, model)
+        } else {
+            sessionSummaryCache[activeSessionId]?.let { cached ->
+                if (cached.first.isNotBlank()) {
+                    latestSummaryText = cached.first
+                    latestModelInfo = cached.second
+                }
+            }
+        }
+
         // Synchronize latest summary strictly for the active session clone
         sessionSwitchJob?.cancel()
         sessionSwitchJob = serviceScope.launch {
@@ -327,19 +348,26 @@ class FloatingBubbleService : Service() {
                 val db = AppDatabase.getDatabase(this@FloatingBubbleService)
                 val sessionRecord = db.summaryDao().getBestSummaryForSession(currentSessionId)
 
+                val newSummary: String
+                val newModel: String
                 if (summary.isNotBlank()) {
-                    latestSummaryText = summary
-                    if (model.isNotBlank()) latestModelInfo = model
+                    newSummary = summary
+                    newModel = model
                 } else if (sessionRecord != null && sessionRecord.summaryContent.isNotBlank()) {
-                    latestSummaryText = sessionRecord.summaryContent
-                    latestModelInfo = sessionRecord.modelInfo
+                    newSummary = sessionRecord.summaryContent
+                    newModel = sessionRecord.modelInfo
                 } else {
                     val activeSession = prefs.getSelectedSession()
-                    latestSummaryText = "Chưa có báo cáo cho '${activeSession.name}'.\n\nNhấn nút 'Gửi' bên dưới để tóm tắt các tin nhắn thuộc phiên này."
-                    latestModelInfo = "${activeSession.iconEmoji} ${activeSession.name}"
+                    newSummary = "Chưa có báo cáo cho '${activeSession.name}'.\n\nNhấn nút 'Gửi' bên dưới để tóm tắt các tin nhắn thuộc phiên này."
+                    newModel = "${activeSession.iconEmoji} ${activeSession.name}"
                 }
-                withContext(Dispatchers.Main) {
-                    if (isExpanded) updateBubbleContent()
+                sessionSummaryCache[currentSessionId] = Pair(newSummary, newModel)
+                if (latestSummaryText != newSummary || latestModelInfo != newModel) {
+                    latestSummaryText = newSummary
+                    latestModelInfo = newModel
+                    withContext(Dispatchers.Main) {
+                        if (isExpanded) updateBubbleContent()
+                    }
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -1473,6 +1501,16 @@ class FloatingBubbleService : Service() {
                     val targetSessionId = session.id
                     if (prefs.getSelectedSessionId() != targetSessionId) {
                         prefs.setSelectedSessionId(targetSessionId)
+
+                        // Hot Cache Check: RAM hit -> 0ms immediate UI update
+                        val cached = sessionSummaryCache[targetSessionId]
+                        if (cached != null && cached.first.isNotBlank()) {
+                            latestSummaryText = cached.first
+                            latestModelInfo = cached.second
+                            activeChatAnswer = null
+                            updateBubbleContent()
+                        }
+
                         sessionSwitchJob?.cancel()
                         sessionSwitchJob = serviceScope.launch {
                             try {
@@ -1480,18 +1518,26 @@ class FloatingBubbleService : Service() {
                                 val sessionSummary = db.summaryDao().getBestSummaryForSession(targetSessionId)
                                 if (prefs.getSelectedSessionId() != targetSessionId) return@launch
 
+                                val newSummaryText: String
+                                val newModelInfo: String
                                 if (sessionSummary != null && sessionSummary.summaryContent.isNotBlank()) {
-                                    latestSummaryText = sessionSummary.summaryContent
-                                    latestModelInfo = sessionSummary.modelInfo
-                                    activeChatAnswer = null
+                                    newSummaryText = sessionSummary.summaryContent
+                                    newModelInfo = sessionSummary.modelInfo
                                 } else {
-                                    latestSummaryText = "Chưa có báo cáo cho '${session.name}'.\n\nNhấn nút 'Gửi' bên dưới để tóm tắt các tin nhắn thuộc phiên này."
-                                    latestModelInfo = "${session.iconEmoji} ${session.name}"
-                                    activeChatAnswer = null
+                                    newSummaryText = "Chưa có báo cáo cho '${session.name}'.\n\nNhấn nút 'Gửi' bên dưới để tóm tắt các tin nhắn thuộc phiên này."
+                                    newModelInfo = "${session.iconEmoji} ${session.name}"
                                 }
-                                withContext(Dispatchers.Main) {
-                                    if (prefs.getSelectedSessionId() == targetSessionId) {
-                                        updateBubbleContent()
+
+                                sessionSummaryCache[targetSessionId] = Pair(newSummaryText, newModelInfo)
+
+                                if (latestSummaryText != newSummaryText || latestModelInfo != newModelInfo) {
+                                    latestSummaryText = newSummaryText
+                                    latestModelInfo = newModelInfo
+                                    activeChatAnswer = null
+                                    withContext(Dispatchers.Main) {
+                                        if (prefs.getSelectedSessionId() == targetSessionId) {
+                                            updateBubbleContent()
+                                        }
                                     }
                                 }
                             } catch (e: CancellationException) {
@@ -1771,11 +1817,12 @@ class FloatingBubbleService : Service() {
                                 userQueryOrInstruction = promptToSend,
                                 onTokenDelta = { delta ->
                                     accumulatedLive.append(delta)
+                                    val raw = accumulatedLive.toString()
+                                    val cleanLive = CommandStripper.cleanLive(raw)
+                                    val parsedLive = SummaryParser.parse(cleanLive)
+                                    val liveAdvice = SummaryParser.cleanAdviceText(parsedLive.conciseAdvice)
+                                    val displayText = if (liveAdvice.isNotBlank()) liveAdvice else if (cleanLive.isNotBlank()) cleanLive else "..."
                                     serviceScope.launch(Dispatchers.Main) {
-                                        val cleanLive = CommandStripper.cleanLive(accumulatedLive.toString())
-                                        val parsedLive = SummaryParser.parse(cleanLive)
-                                        val liveAdvice = SummaryParser.cleanAdviceText(parsedLive.conciseAdvice)
-                                        val displayText = if (liveAdvice.isNotBlank()) liveAdvice else if (cleanLive.isNotBlank()) cleanLive else "..."
                                         targetAdviceTv.text = "$displayText ▌"
                                     }
                                 }
@@ -1786,6 +1833,7 @@ class FloatingBubbleService : Service() {
                             latestSummaryText = cleanSummary
                             activeChatAnswer = null
                             latestModelInfo = "${usedKey.provider.displayName} • ${usedKey.modelName}"
+                            sessionSummaryCache[currentSession.id] = Pair(cleanSummary, latestModelInfo)
                             modelTv.text = latestModelInfo
 
                             val parsed = SummaryParser.parse(cleanSummary)
@@ -3334,6 +3382,7 @@ class FloatingBubbleService : Service() {
         bubbleLifecycleHandler.removeCallbacks(toState3Runnable)
         currentAnimator?.cancel()
         currentAnimator = null
+        sessionSummaryCache.clear()
         cachedWallpaperBmp?.recycle()
         cachedWallpaperBmp = null
         hideDismissTarget(immediate = true)
