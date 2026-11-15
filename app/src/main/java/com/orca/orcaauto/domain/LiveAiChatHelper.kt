@@ -22,6 +22,7 @@ import com.orca.orcaauto.domain.notes.NoteCommand
 import com.orca.orcaauto.domain.notes.SharedNoteRepositoryImpl
 import com.orca.orcaauto.domain.prompt.GeminiPromptBuilder
 import com.orca.orcaauto.domain.prompt.PromptPersona
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -139,6 +140,8 @@ object LiveAiChatHelper {
             try {
                 notifDao.deleteByIds(realIdsToDelete)
                 Log.i(TAG, "Đã xóa ${realIdsToDelete.size} tin nhắn rác khỏi Room DB: $realIdsToDelete")
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.w(TAG, "Lỗi khi xóa tin nhắn rác: ${e.message}")
             }
@@ -150,6 +153,8 @@ object LiveAiChatHelper {
         val retriever = LocalRetriever(noteRepo, notifDao, db.smartAlarmDao())
         val retrievedNotes = try {
             noteRepo.retrieveNotesForAi(routerDecision.neededNoteIds)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.w(TAG, "Không thể truy xuất ghi chú: ${e.message}")
             emptyList()

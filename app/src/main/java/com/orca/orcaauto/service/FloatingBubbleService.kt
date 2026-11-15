@@ -318,7 +318,8 @@ class FloatingBubbleService : Service() {
         }
 
         // Synchronize latest summary strictly for the active session clone
-        serviceScope.launch {
+        sessionSwitchJob?.cancel()
+        sessionSwitchJob = serviceScope.launch {
             try {
                 val prefs = UserPreferences.getInstance(this@FloatingBubbleService)
                 val currentSessionId = prefs.getSelectedSessionId()
