@@ -1925,18 +1925,32 @@ class FloatingBubbleService : Service() {
                 targetAdviceTv.isClickable = false
                 targetAdviceTv.text = "⏳ Đang kết nối AI và phân tích ca..."
 
-                val lastTokenReceivedAt = AtomicLong(System.currentTimeMillis())
+                val requestStartedAt = System.currentTimeMillis()
+                val hasReceivedFirstToken = AtomicBoolean(false)
+                val lastTokenReceivedAt = AtomicLong(0L)
                 val isWatchdogTimedOut = AtomicBoolean(false)
 
                 activeWatchdogJob?.cancel()
                 activeWatchdogJob = serviceScope.launch(Dispatchers.Main) {
                     while (isActive) {
                         delay(500)
-                        val elapsed = System.currentTimeMillis() - lastTokenReceivedAt.get()
-                        if (elapsed >= SSE_WATCHDOG_TIMEOUT_MS) {
-                            isWatchdogTimedOut.set(true)
-                            activeStreamingJob?.cancel(CancellationException("SSE_STREAM_WATCHDOG_TIMEOUT"))
-                            break
+                        val now = System.currentTimeMillis()
+                        if (hasReceivedFirstToken.get()) {
+                            // Phase 2: In-flight streaming token stall watchdog (15s)
+                            val elapsedSinceLastToken = now - lastTokenReceivedAt.get()
+                            if (elapsedSinceLastToken >= SSE_WATCHDOG_TIMEOUT_MS) {
+                                isWatchdogTimedOut.set(true)
+                                activeStreamingJob?.cancel(CancellationException("SSE_STREAM_WATCHDOG_TIMEOUT"))
+                                break
+                            }
+                        } else {
+                            // Phase 1: TTFB & Round 1 connection window (60s)
+                            val elapsedSinceStart = now - requestStartedAt
+                            if (elapsedSinceStart >= INITIAL_CONNECTION_TIMEOUT_MS) {
+                                isWatchdogTimedOut.set(true)
+                                activeStreamingJob?.cancel(CancellationException("INITIAL_CONNECTION_TIMEOUT"))
+                                break
+                            }
                         }
                     }
                 }
@@ -1952,6 +1966,7 @@ class FloatingBubbleService : Service() {
                                 session = currentSession,
                                 userQueryOrInstruction = promptToSend,
                                 onTokenDelta = { delta ->
+                                    hasReceivedFirstToken.set(true)
                                     lastTokenReceivedAt.set(System.currentTimeMillis())
                                     accumulatedLive.append(delta)
                                     val raw = accumulatedLive.toString()
@@ -3665,6 +3680,7 @@ class FloatingBubbleService : Service() {
     companion object {
         private const val TAG = "FloatingBubble"
         const val SSE_WATCHDOG_TIMEOUT_MS = 15_000L
+        const val INITIAL_CONNECTION_TIMEOUT_MS = 60_000L
         const val TAG_UNREAD_RED_DOT = "tag_unread_red_dot"
         const val ACTION_WAKE_TO_STATE_1 = "com.orca.orcaauto.action.WAKE_TO_STATE_1"
         const val EXTRA_WAKE_TO_STATE_1 = "extra_wake_to_state_1"
@@ -3684,7 +3700,8 @@ class FloatingBubbleService : Service() {
                     curr.message?.contains("Unable to resolve host", ignoreCase = true) == true ||
                     curr.message?.contains("Failed to connect", ignoreCase = true) == true ||
                     curr.message?.contains("Software caused connection abort", ignoreCase = true) == true ||
-                    curr.message?.contains("SSE_STREAM_WATCHDOG_TIMEOUT", ignoreCase = true) == true
+                    curr.message?.contains("SSE_STREAM_WATCHDOG_TIMEOUT", ignoreCase = true) == true ||
+                    curr.message?.contains("INITIAL_CONNECTION_TIMEOUT", ignoreCase = true) == true
                 ) {
                     return true
                 }

@@ -823,14 +823,17 @@ class FloatingBubbleServiceEmpiricalChallengeTest {
     }
 
     // =========================================================================
-    // 6. SSE STREAM WATCHDOG & NETWORK DROP HANDLING (ITEM 2)
+    // 6. SSE STREAM WATCHDOG & NETWORK DROP HANDLING (TWO-PHASE DECOUPLED)
     // =========================================================================
 
     @Test
-    fun streamWatchdog_whenNoTokensWithinTimeout_cancelsJobAndTriggersTimeoutState() = runBlocking {
+    fun streamWatchdog_twoPhase_whenConnectionTimeoutExceeded_cancelsJobAndTriggersTimeoutState() = runBlocking {
         val testScope = CoroutineScope(Dispatchers.Default)
-        val timeoutMs = 150L // Compressed for fast JVM test execution
-        val lastTokenReceivedAt = java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis())
+        val initialConnectionTimeoutMs = 150L // Compressed for fast JVM test execution
+        val sseWatchdogTimeoutMs = 60L
+        val requestStartedAt = System.currentTimeMillis()
+        val hasReceivedFirstToken = AtomicBoolean(false)
+        val lastTokenReceivedAt = java.util.concurrent.atomic.AtomicLong(0L)
         val isWatchdogTimedOut = AtomicBoolean(false)
         val uiStateRendered = AtomicBoolean(false)
         val streamLatch = CountDownLatch(1)
@@ -840,12 +843,22 @@ class FloatingBubbleServiceEmpiricalChallengeTest {
 
         watchdogJob = testScope.launch {
             while (isActive) {
-                delay(20)
-                val elapsed = System.currentTimeMillis() - lastTokenReceivedAt.get()
-                if (elapsed >= timeoutMs) {
-                    isWatchdogTimedOut.set(true)
-                    streamingJob?.cancel(CancellationException("SSE_STREAM_WATCHDOG_TIMEOUT"))
-                    break
+                delay(15)
+                val now = System.currentTimeMillis()
+                if (hasReceivedFirstToken.get()) {
+                    val elapsed = now - lastTokenReceivedAt.get()
+                    if (elapsed >= sseWatchdogTimeoutMs) {
+                        isWatchdogTimedOut.set(true)
+                        streamingJob?.cancel(CancellationException("SSE_STREAM_WATCHDOG_TIMEOUT"))
+                        break
+                    }
+                } else {
+                    val elapsed = now - requestStartedAt
+                    if (elapsed >= initialConnectionTimeoutMs) {
+                        isWatchdogTimedOut.set(true)
+                        streamingJob?.cancel(CancellationException("INITIAL_CONNECTION_TIMEOUT"))
+                        break
+                    }
                 }
             }
         }
@@ -867,37 +880,61 @@ class FloatingBubbleServiceEmpiricalChallengeTest {
         streamLatch.await(1, TimeUnit.SECONDS)
         streamingJob.join()
 
-        assertTrue("Watchdog timeout flag phải được kích hoạt sau khi hết timeout", isWatchdogTimedOut.get())
+        assertTrue("Watchdog timeout flag phải được kích hoạt sau khi hết timeout kết nối ban đầu", isWatchdogTimedOut.get())
         assertTrue("Giao diện thông báo mất mạng & nút thử lại phải được kích hoạt", uiStateRendered.get())
         assertFalse("Streaming job phải đã bị huỷ", streamingJob.isActive)
     }
 
     @Test
-    fun streamWatchdog_whenTokensArriveContinuously_resetsHeartbeatAndPreventsTimeout() = runBlocking {
+    fun streamWatchdog_twoPhase_allowsPreTokenDelayWithoutTriggeringStallWatchdog() = runBlocking {
+        // Models the exact bug in production: Round 1 routing + remote queuing takes 100ms.
+        // The in-flight stall watchdog is 50ms, but initial connection timeout is 300ms.
+        // In the old buggy code, a 100ms delay before first token triggered the 50ms watchdog!
+        // In the new decoupled code, stall watchdog is forbidden until hasReceivedFirstToken is true.
         val testScope = CoroutineScope(Dispatchers.Default)
-        val timeoutMs = 150L
-        val lastTokenReceivedAt = java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis())
+        val initialConnectionTimeoutMs = 300L
+        val sseWatchdogTimeoutMs = 50L
+        val requestStartedAt = System.currentTimeMillis()
+        val hasReceivedFirstToken = AtomicBoolean(false)
+        val lastTokenReceivedAt = java.util.concurrent.atomic.AtomicLong(0L)
         val isWatchdogTimedOut = AtomicBoolean(false)
         var streamCompletedCleanly = false
 
         var streamingJob: Job? = null
         val watchdogJob = testScope.launch {
             while (isActive) {
-                delay(20)
-                val elapsed = System.currentTimeMillis() - lastTokenReceivedAt.get()
-                if (elapsed >= timeoutMs) {
-                    isWatchdogTimedOut.set(true)
-                    streamingJob?.cancel(CancellationException("SSE_STREAM_WATCHDOG_TIMEOUT"))
-                    break
+                delay(10)
+                val now = System.currentTimeMillis()
+                if (hasReceivedFirstToken.get()) {
+                    val elapsed = now - lastTokenReceivedAt.get()
+                    if (elapsed >= sseWatchdogTimeoutMs) {
+                        isWatchdogTimedOut.set(true)
+                        streamingJob?.cancel(CancellationException("SSE_STREAM_WATCHDOG_TIMEOUT"))
+                        break
+                    }
+                } else {
+                    val elapsed = now - requestStartedAt
+                    if (elapsed >= initialConnectionTimeoutMs) {
+                        isWatchdogTimedOut.set(true)
+                        streamingJob?.cancel(CancellationException("INITIAL_CONNECTION_TIMEOUT"))
+                        break
+                    }
                 }
             }
         }
 
         streamingJob = testScope.launch {
             try {
-                // Emits 5 tokens with 40ms interval (well below 150ms timeout)
-                for (i in 1..5) {
-                    delay(40)
+                // Simulate Round 1 Router + remote model queueing taking 100ms (> 50ms stall watchdog)
+                delay(100)
+
+                // First token physically arrives!
+                hasReceivedFirstToken.set(true)
+                lastTokenReceivedAt.set(System.currentTimeMillis())
+
+                // Then in-flight tokens stream smoothly every 15ms (< 50ms stall watchdog)
+                for (i in 2..5) {
+                    delay(15)
                     lastTokenReceivedAt.set(System.currentTimeMillis())
                 }
                 streamCompletedCleanly = true
@@ -908,8 +945,67 @@ class FloatingBubbleServiceEmpiricalChallengeTest {
 
         streamingJob.join()
 
-        assertFalse("Watchdog không được phép timeout khi token về đều đặn", isWatchdogTimedOut.get())
-        assertTrue("Stream phải hoàn thành trọn vẹn mà không bị ngắt", streamCompletedCleanly)
+        assertFalse("Độ trễ trước token đầu tiên không được phép kích hoạt watchdog đứt dòng giữa chừng", isWatchdogTimedOut.get())
+        assertTrue("Stream phải hoàn thành trọn vẹn mà không bị bóp nghẹt", streamCompletedCleanly)
+    }
+
+    @Test
+    fun streamWatchdog_twoPhase_triggersStallTimeoutWhenStreamFreezesAfterFirstToken() = runBlocking {
+        val testScope = CoroutineScope(Dispatchers.Default)
+        val initialConnectionTimeoutMs = 500L
+        val sseWatchdogTimeoutMs = 60L
+        val requestStartedAt = System.currentTimeMillis()
+        val hasReceivedFirstToken = AtomicBoolean(false)
+        val lastTokenReceivedAt = java.util.concurrent.atomic.AtomicLong(0L)
+        val isWatchdogTimedOut = AtomicBoolean(false)
+        val uiStateRendered = AtomicBoolean(false)
+
+        var streamingJob: Job? = null
+        val watchdogJob = testScope.launch {
+            while (isActive) {
+                delay(10)
+                val now = System.currentTimeMillis()
+                if (hasReceivedFirstToken.get()) {
+                    val elapsed = now - lastTokenReceivedAt.get()
+                    if (elapsed >= sseWatchdogTimeoutMs) {
+                        isWatchdogTimedOut.set(true)
+                        streamingJob?.cancel(CancellationException("SSE_STREAM_WATCHDOG_TIMEOUT"))
+                        break
+                    }
+                } else {
+                    val elapsed = now - requestStartedAt
+                    if (elapsed >= initialConnectionTimeoutMs) {
+                        isWatchdogTimedOut.set(true)
+                        streamingJob?.cancel(CancellationException("INITIAL_CONNECTION_TIMEOUT"))
+                        break
+                    }
+                }
+            }
+        }
+
+        streamingJob = testScope.launch {
+            try {
+                // First token arrives early at 20ms
+                delay(20)
+                hasReceivedFirstToken.set(true)
+                lastTokenReceivedAt.set(System.currentTimeMillis())
+
+                // Stream suddenly dies/hangs (e.g. WiFi dropped mid-response)
+                delay(5000L)
+            } catch (e: CancellationException) {
+                if (isWatchdogTimedOut.get()) {
+                    uiStateRendered.set(true)
+                }
+            } finally {
+                watchdogJob.cancel()
+            }
+        }
+
+        streamingJob.join()
+
+        assertTrue("Watchdog phải phát hiện đứt dòng sau token đầu tiên", isWatchdogTimedOut.get())
+        assertTrue("UI timeout mạng phải được hiển thị khi đứt dòng giữa chừng", uiStateRendered.get())
+        assertFalse("Streaming job phải đã bị huỷ", streamingJob.isActive)
     }
 
     @Test
@@ -961,6 +1057,7 @@ class FloatingBubbleServiceEmpiricalChallengeTest {
         val nestedNetwork = java.io.IOException("Stream error", socketTimeout)
         val customMsg = java.io.IOException("Software caused connection abort")
         val watchdogTimeout = java.util.concurrent.CancellationException("SSE_STREAM_WATCHDOG_TIMEOUT")
+        val connectionTimeout = java.util.concurrent.CancellationException("INITIAL_CONNECTION_TIMEOUT")
 
         val npe = NullPointerException("Null pointer")
         val illegalArg = IllegalArgumentException("Bad input")
@@ -971,6 +1068,7 @@ class FloatingBubbleServiceEmpiricalChallengeTest {
         assertTrue(FloatingBubbleService.isNetworkException(nestedNetwork))
         assertTrue(FloatingBubbleService.isNetworkException(customMsg))
         assertTrue(FloatingBubbleService.isNetworkException(watchdogTimeout))
+        assertTrue(FloatingBubbleService.isNetworkException(connectionTimeout))
 
         assertFalse(FloatingBubbleService.isNetworkException(npe))
         assertFalse(FloatingBubbleService.isNetworkException(illegalArg))
