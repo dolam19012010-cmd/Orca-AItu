@@ -436,6 +436,26 @@ internal class FakeSummaryDao : SummaryDao {
         toRemove.size
     }
 
+    override suspend fun deleteLegacyChatRecords(): Int = synchronized(lock) {
+        val toRemove = _summariesFlow.value.values.filter {
+            val trimmed = it.summaryContent.trimStart()
+            trimmed.startsWith("Hỏi:", ignoreCase = true) || trimmed.startsWith("Hoi:", ignoreCase = true)
+        }.map { it.id }
+        _summariesFlow.value = _summariesFlow.value - toRemove.toSet()
+        toRemove.size
+    }
+
+    override suspend fun getRecentSummariesForSession(sessionId: String, limit: Int): List<SummaryHistoryEntity> = synchronized(lock) {
+        _summariesFlow.value.values
+            .filter {
+                (it.sessionId == sessionId || (sessionId == SummarySessionConfig.MAIN_SESSION_ID && it.sessionId.isBlank())) &&
+                !it.summaryContent.trimStart().startsWith("Hỏi:", ignoreCase = true) &&
+                !it.summaryContent.trimStart().startsWith("Hoi:", ignoreCase = true)
+            }
+            .sortedByDescending { it.timestamp }
+            .take(limit)
+    }
+
     fun clearAll() = synchronized(lock) {
         _summariesFlow.value = emptyMap()
         nextId.set(1L)

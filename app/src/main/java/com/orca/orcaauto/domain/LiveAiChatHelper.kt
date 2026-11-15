@@ -3,6 +3,7 @@ package com.orca.orcaauto.domain
 import android.content.Context
 import com.orca.orcaauto.data.local.AppDatabase
 import com.orca.orcaauto.data.local.SummaryHistoryEntity
+import com.orca.orcaauto.data.local.getBestSummaryForSession
 import com.orca.orcaauto.data.preferences.SummarySessionConfig
 import com.orca.orcaauto.data.preferences.UserPreferences
 import com.orca.orcaauto.data.remote.ApiKeyConfig
@@ -68,13 +69,7 @@ object LiveAiChatHelper {
         } else {
             prefs.getPromptPersona()
         }
-        val allSessionSummaries = db.summaryDao().getAllSummaries().filter {
-            it.sessionId == session.id || (session.id == SummarySessionConfig.MAIN_SESSION_ID && (it.sessionId.isNullOrBlank() || it.sessionId == SummarySessionConfig.MAIN_SESSION_ID))
-        }
-        val latestSummaryRecord = allSessionSummaries.firstOrNull {
-            val p = SummaryParser.parse(it.summaryContent)
-            p.totalTaskCount > 0
-        } ?: allSessionSummaries.firstOrNull()
+        val latestSummaryRecord = db.summaryDao().getBestSummaryForSession(session.id)
         val rawPreviousSummary = if (prefs.isRecentSummaryContextEnabled()) latestSummaryRecord?.summaryContent.orEmpty() else ""
         val activeAlarms = if (prefs.isLongTermTasksContextEnabled()) db.smartAlarmDao().getActiveAlarms() else emptyList()
         // Luôn nạp danh sách việc đã hủy trong vòng 48 giờ để chặn tái sinh qua nhiều phiên

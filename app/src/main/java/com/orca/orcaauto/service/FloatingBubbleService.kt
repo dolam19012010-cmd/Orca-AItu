@@ -65,6 +65,7 @@ import com.orca.orcaauto.data.local.AppDatabase
 import com.orca.orcaauto.data.local.SharedNoteEntity
 import com.orca.orcaauto.data.local.SmartAlarmEntity
 import com.orca.orcaauto.data.local.SmartAlarmStatus
+import com.orca.orcaauto.data.local.getBestSummaryForSession
 import com.orca.orcaauto.data.preferences.AssistantThinkingLevel
 import com.orca.orcaauto.data.preferences.UserPreferences
 import com.orca.orcaauto.domain.LiveAiChatHelper
@@ -148,6 +149,7 @@ class FloatingBubbleService : Service() {
     private var sensorHandler: Handler? = null
     private var isScreenOn = true
     private var screenReceiver: BroadcastReceiver? = null
+    private var sessionSwitchJob: Job? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -218,7 +220,11 @@ class FloatingBubbleService : Service() {
                             }
                         }
                     }
-            } catch (_: Exception) {}
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Lỗi lắng nghe alarm flow: ${e.message}")
+            }
         }
 
         // 2. Reactive DB Flow: Real-time latest AI summary updates (from Background Worker or App)
@@ -229,13 +235,29 @@ class FloatingBubbleService : Service() {
                     .getLatestSummaryFlow()
                     .collect { latest ->
                         if (latest != null && latest.summaryContent.isNotBlank()) {
+                            // Bỏ qua tuyệt đối các bản ghi chat đối thoại cũ
+                            if (SummaryParser.isLegacyChatRecord(latest.summaryContent)) {
+                                return@collect
+                            }
+
+                            // Đảm bảo chỉ xử lý bản ghi thuộc phiên hiện tại (hoặc phiên chính)
+                            val prefs = UserPreferences.getInstance(this@FloatingBubbleService)
+                            val currentSessionId = prefs.getSelectedSessionId()
+                            val isMatchingSession = latest.sessionId == currentSessionId ||
+                                    (currentSessionId == com.orca.orcaauto.data.preferences.SummarySessionConfig.MAIN_SESSION_ID &&
+                                            (latest.sessionId.isNullOrBlank() || latest.sessionId == com.orca.orcaauto.data.preferences.SummarySessionConfig.MAIN_SESSION_ID))
+                            if (!isMatchingSession) {
+                                return@collect
+                            }
+
                             val isNewSummary = lastKnownSummaryId != null && lastKnownSummaryId != latest.id
                             lastKnownSummaryId = latest.id
 
                             val parsedLatest = SummaryParser.parse(latest.summaryContent)
                             val hasTasks = parsedLatest.totalTaskCount > 0
 
-                            if (hasTasks || latestSummaryText.isBlank()) {
+                            val currentHasTasks = latestSummaryText.isNotBlank() && SummaryParser.parse(latestSummaryText).totalTaskCount > 0
+                            if (hasTasks || !currentHasTasks) {
                                 latestSummaryText = latest.summaryContent
                                 activeChatAnswer = null
                             }
@@ -254,7 +276,11 @@ class FloatingBubbleService : Service() {
                             if (isExpanded) updateBubbleContent()
                         }
                     }
-            } catch (_: Exception) {}
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Lỗi lắng nghe summary flow: ${e.message}")
+            }
         }
 
         // 3. Reactive Flow for Unread Red Dot Indicator (Clean Red Dot, no numbers)
@@ -267,18 +293,23 @@ class FloatingBubbleService : Service() {
                             unreadDotView?.visibility = if (hasUnread) View.VISIBLE else View.GONE
                         }
                     }
-            } catch (_: Exception) {}
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Lỗi lắng nghe unread flow: ${e.message}")
+            }
         }
 
-        // 4. Clean up legacy ad-hoc chat records mistakenly saved into summary_history
+        // 4. Batch clean up legacy ad-hoc chat records mistakenly saved into summary_history
         serviceScope.launch(Dispatchers.IO) {
             try {
                 val db = AppDatabase.getDatabase(this@FloatingBubbleService)
-                val legacyRecords = db.summaryDao().getAllSummaries().filter { it.summaryContent.startsWith("Hỏi:") }
-                for (record in legacyRecords) {
-                    db.summaryDao().deleteById(record.id)
-                }
-            } catch (_: Exception) {}
+                db.summaryDao().deleteLegacyChatRecords()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Lỗi dọn dẹp bản ghi chat cũ: ${e.message}")
+            }
         }
     }
 
@@ -305,28 +336,30 @@ class FloatingBubbleService : Service() {
 
         // Synchronize latest summary strictly for the active session clone
         serviceScope.launch {
-            val prefs = UserPreferences.getInstance(this@FloatingBubbleService)
-            val currentSessionId = prefs.getSelectedSessionId()
-            val db = AppDatabase.getDatabase(this@FloatingBubbleService)
-            val sessionRecord = db.summaryDao().getLatestSummaryForSession(currentSessionId)
+            try {
+                val prefs = UserPreferences.getInstance(this@FloatingBubbleService)
+                val currentSessionId = prefs.getSelectedSessionId()
+                val db = AppDatabase.getDatabase(this@FloatingBubbleService)
+                val sessionRecord = db.summaryDao().getBestSummaryForSession(currentSessionId)
 
-            if (summary.isNotBlank()) {
-                latestSummaryText = summary
-                if (model.isNotBlank()) latestModelInfo = model
-            } else if (sessionRecord != null && sessionRecord.summaryContent.isNotBlank()) {
-                val parsedSession = SummaryParser.parse(sessionRecord.summaryContent)
-                val hasTasks = parsedSession.totalTaskCount > 0
-                if (hasTasks || latestSummaryText.isBlank()) {
+                if (summary.isNotBlank()) {
+                    latestSummaryText = summary
+                    if (model.isNotBlank()) latestModelInfo = model
+                } else if (sessionRecord != null && sessionRecord.summaryContent.isNotBlank()) {
                     latestSummaryText = sessionRecord.summaryContent
                     latestModelInfo = sessionRecord.modelInfo
+                } else {
+                    val activeSession = prefs.getSelectedSession()
+                    latestSummaryText = "Chưa có báo cáo cho '${activeSession.name}'.\n\nNhấn nút 'Gửi' bên dưới để tóm tắt các tin nhắn thuộc phiên này."
+                    latestModelInfo = "${activeSession.iconEmoji} ${activeSession.name}"
                 }
-            } else {
-                val activeSession = prefs.getSelectedSession()
-                latestSummaryText = "Chưa có báo cáo cho '${activeSession.name}'.\n\nNhấn nút 'Gửi' bên dưới để tóm tắt các tin nhắn thuộc phiên này."
-                latestModelInfo = "${activeSession.iconEmoji} ${activeSession.name}"
-            }
-            withContext(Dispatchers.Main) {
-                if (isExpanded) updateBubbleContent()
+                withContext(Dispatchers.Main) {
+                    if (isExpanded) updateBubbleContent()
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Lỗi đồng bộ tóm tắt khi khởi động: ${e.message}")
             }
         }
 
@@ -1522,26 +1555,34 @@ class FloatingBubbleService : Service() {
                 }
 
                 setOnClickListener {
-                    if (session.id != currentSessionId) {
-                        prefs.setSelectedSessionId(session.id)
-                        serviceScope.launch {
-                            val db = AppDatabase.getDatabase(this@FloatingBubbleService)
-                            val sessionSummary = db.summaryDao().getLatestSummaryForSession(session.id)
-                            if (sessionSummary != null) {
-                                val parsedSession = SummaryParser.parse(sessionSummary.summaryContent)
-                                val hasTasks = parsedSession.totalTaskCount > 0
-                                if (hasTasks || latestSummaryText.isBlank()) {
+                    val targetSessionId = session.id
+                    if (prefs.getSelectedSessionId() != targetSessionId) {
+                        prefs.setSelectedSessionId(targetSessionId)
+                        sessionSwitchJob?.cancel()
+                        sessionSwitchJob = serviceScope.launch {
+                            try {
+                                val db = AppDatabase.getDatabase(this@FloatingBubbleService)
+                                val sessionSummary = db.summaryDao().getBestSummaryForSession(targetSessionId)
+                                if (prefs.getSelectedSessionId() != targetSessionId) return@launch
+
+                                if (sessionSummary != null && sessionSummary.summaryContent.isNotBlank()) {
                                     latestSummaryText = sessionSummary.summaryContent
                                     latestModelInfo = sessionSummary.modelInfo
                                     activeChatAnswer = null
+                                } else {
+                                    latestSummaryText = "Chưa có báo cáo cho '${session.name}'.\n\nNhấn nút 'Gửi' bên dưới để tóm tắt các tin nhắn thuộc phiên này."
+                                    latestModelInfo = "${session.iconEmoji} ${session.name}"
+                                    activeChatAnswer = null
                                 }
-                            } else {
-                                latestSummaryText = "Chưa có báo cáo cho '${session.name}'.\n\nNhấn nút 'Gửi' bên dưới để tóm tắt các tin nhắn thuộc phiên này."
-                                latestModelInfo = "${session.iconEmoji} ${session.name}"
-                                activeChatAnswer = null
-                            }
-                            withContext(Dispatchers.Main) {
-                                updateBubbleContent()
+                                withContext(Dispatchers.Main) {
+                                    if (prefs.getSelectedSessionId() == targetSessionId) {
+                                        updateBubbleContent()
+                                    }
+                                }
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Lỗi chuyển phiên trên bóng chat: ${e.message}")
                             }
                         }
                     }
@@ -1682,7 +1723,11 @@ class FloatingBubbleService : Service() {
                             }
                         }
                     }
-                } catch (_: Exception) {}
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(TAG, "Lỗi nạp danh sách alarm dự phòng: ${e.message}")
+                }
             }
         }
 
