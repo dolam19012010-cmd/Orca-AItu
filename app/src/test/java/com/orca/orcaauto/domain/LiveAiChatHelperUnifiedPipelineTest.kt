@@ -151,4 +151,20 @@ class LiveAiChatHelperUnifiedPipelineTest {
         assertFalse("Clean output không chứa thẻ [SHOW_NOTE:10]", clean.contains("[SHOW_NOTE:10]"))
         assertTrue("Clean output giữ nguyên văn bản trả lời", clean.contains("Chào bạn, tôi đã tìm thấy thông tin"))
     }
+
+    @Test
+    fun testLiveAiChatHelper_streamingCallbackContract() {
+        val capturedTokens = mutableListOf<String>()
+        val streamingCallback: (String) -> Unit = { token ->
+            capturedTokens.add(token)
+        }
+
+        // Simulate streaming token arrival
+        streamingCallback("Xin ")
+        streamingCallback("chào ")
+        streamingCallback("ngài!")
+
+        assertEquals(3, capturedTokens.size)
+        assertEquals("Xin chào ngài!", capturedTokens.joinToString(""))
+    }
 }

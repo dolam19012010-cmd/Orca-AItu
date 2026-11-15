@@ -5,7 +5,10 @@ import android.util.Log
 import com.orca.orcaauto.data.preferences.SummarySessionConfig
 import com.orca.orcaauto.data.preferences.UserPreferences
 import com.orca.orcaauto.data.remote.ApiKeyConfig
+import com.orca.orcaauto.data.remote.StreamUiEvent
+import com.orca.orcaauto.data.remote.StreamingAiClient
 import com.orca.orcaauto.data.remote.UniversalAiClient
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -26,12 +29,14 @@ object SequentialAiQueue {
 
     /**
      * Enqueues an AI summary request for a given session and waits for its sequential execution.
-     * Uses Mutex to ensure requests are processed sequentially.
+     * Uses Mutex to ensure requests are processed sequentially (Strict FIFO).
+     * Supports optional [onTokenDelta] streaming callback for real-time word-by-word token delivery.
      */
     suspend fun execute(
         context: Context,
         session: SummarySessionConfig,
-        prompt: String
+        prompt: String,
+        onTokenDelta: ((String) -> Unit)? = null
     ): Result<Pair<String, ApiKeyConfig>> {
         val userPrefs = UserPreferences.getInstance(context)
         val globalKeyPool = userPrefs.getKeyPool()
@@ -51,14 +56,55 @@ object SequentialAiQueue {
         return executionMutex.withLock {
             Log.i(TAG, "[AI Queue Running] Session: '${session.name}' acquired execution lock. Resolved keys: ${resolvedKeys.size}")
             try {
-                val result = client.executeWithFailover(resolvedKeys, prompt)
-                if (result.isSuccess) {
-                    val (_, usedKey) = result.getOrThrow()
-                    Log.i(TAG, "[AI Queue Completed] Session: '${session.name}' succeeded with key: ${usedKey.provider.displayName} (${usedKey.modelName})")
+                if (onTokenDelta != null) {
+                    val streamingClient = StreamingAiClient()
+                    val thinkingLevel = userPrefs.getAssistantThinkingLevel()
+                    val rawContentAcc = StringBuilder()
+                    var usedKeyConfig: ApiKeyConfig? = null
+
+                    try {
+                        val streamFlow = streamingClient.streamWithSpikeRacing(
+                            keyPool = resolvedKeys,
+                            prompt = prompt,
+                            thinkingLevel = thinkingLevel
+                        )
+                        streamFlow.collect { event ->
+                            when (event) {
+                                is StreamUiEvent.ContentDelta -> {
+                                    rawContentAcc.append(event.text)
+                                    onTokenDelta(event.text)
+                                }
+                                is StreamUiEvent.Complete -> {
+                                    usedKeyConfig = event.usedKey
+                                }
+                                is StreamUiEvent.Error -> {
+                                    throw event.throwable
+                                }
+                                else -> {}
+                            }
+                        }
+                        val finalUsedKey = usedKeyConfig ?: resolvedKeys.first()
+                        val finalResult = Result.success(Pair(rawContentAcc.toString(), finalUsedKey))
+                        Log.i(TAG, "[AI Queue Streaming Completed] Session: '${session.name}' succeeded with key: ${finalUsedKey.provider.displayName} (${finalUsedKey.modelName})")
+                        finalResult
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Throwable) {
+                        Log.w(TAG, "[AI Queue Streaming Failed] Session: '${session.name}' stream failed, falling back to batch execute: ${e.message}")
+                        client.executeWithFailover(resolvedKeys, prompt)
+                    }
                 } else {
-                    Log.w(TAG, "[AI Queue Failed] Session: '${session.name}' failed all keys: ${result.exceptionOrNull()?.message}")
+                    val result = client.executeWithFailover(resolvedKeys, prompt)
+                    if (result.isSuccess) {
+                        val (_, usedKey) = result.getOrThrow()
+                        Log.i(TAG, "[AI Queue Completed] Session: '${session.name}' succeeded with key: ${usedKey.provider.displayName} (${usedKey.modelName})")
+                    } else {
+                        Log.w(TAG, "[AI Queue Failed] Session: '${session.name}' failed all keys: ${result.exceptionOrNull()?.message}")
+                    }
+                    result
                 }
-                result
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 Log.e(TAG, "[AI Queue Error] Session: '${session.name}' unhandled error: ${e.message}", e)
                 Result.failure(e)

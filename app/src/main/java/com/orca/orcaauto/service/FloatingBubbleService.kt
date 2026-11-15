@@ -73,6 +73,7 @@ import com.orca.orcaauto.domain.alarm.AlarmCascadeMode
 import com.orca.orcaauto.domain.alarm.SystemAlarmHelper
 import com.orca.orcaauto.domain.assistant.AssistantPipeline
 import com.orca.orcaauto.domain.assistant.AssistantStep
+import com.orca.orcaauto.domain.assistant.CommandStripper
 import com.orca.orcaauto.domain.filter.SummaryParser
 import com.orca.orcaauto.domain.filter.TaskItem
 import com.orca.orcaauto.domain.filter.TaskStatus
@@ -1761,11 +1762,23 @@ class FloatingBubbleService : Service() {
                 activeStreamingJob = serviceScope.launch(Dispatchers.Main) {
                     try {
                         val currentSession = prefs.getSelectedSession()
+                        val accumulatedLive = StringBuilder()
+
                         val result = withContext(Dispatchers.IO) {
                             LiveAiChatHelper.summarizeSession(
                                 context = this@FloatingBubbleService,
                                 session = currentSession,
-                                userQueryOrInstruction = promptToSend
+                                userQueryOrInstruction = promptToSend,
+                                onTokenDelta = { delta ->
+                                    accumulatedLive.append(delta)
+                                    serviceScope.launch(Dispatchers.Main) {
+                                        val cleanLive = CommandStripper.cleanLive(accumulatedLive.toString())
+                                        val parsedLive = SummaryParser.parse(cleanLive)
+                                        val liveAdvice = SummaryParser.cleanAdviceText(parsedLive.conciseAdvice)
+                                        val displayText = if (liveAdvice.isNotBlank()) liveAdvice else if (cleanLive.isNotBlank()) cleanLive else "..."
+                                        targetAdviceTv.text = "$displayText ▌"
+                                    }
+                                }
                             )
                         }
                         if (result.isSuccess) {
@@ -3311,6 +3324,8 @@ class FloatingBubbleService : Service() {
         super.onDestroy()
         activeStreamingJob?.cancel()
         activeStreamingJob = null
+        sessionSwitchJob?.cancel()
+        sessionSwitchJob = null
         try {
             com.orca.orcaauto.domain.voice.VoiceBriefingManager.getInstance(this).stop()
         } catch (_: Exception) {}

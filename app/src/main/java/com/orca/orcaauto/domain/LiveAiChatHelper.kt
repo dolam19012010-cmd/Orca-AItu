@@ -51,14 +51,16 @@ object LiveAiChatHelper {
     /**
      * Executes an instant on-demand AI call from the Chat Bubble for the active session.
      * Combines user's direct question/instruction with latest message context and persona.
+     * Supports optional [onTokenDelta] streaming callback for real-time word-by-word token delivery.
      */
     suspend fun sendUserPrompt(
         context: Context,
-        userQuery: String
+        userQuery: String,
+        onTokenDelta: ((String) -> Unit)? = null
     ): Result<SessionSummaryResult> = withContext(Dispatchers.IO) {
         val prefs = UserPreferences.getInstance(context)
         val session = prefs.getSelectedSession()
-        summarizeSession(context, session, userQuery)
+        summarizeSession(context, session, userQuery, onTokenDelta)
     }
 
     /**
@@ -71,11 +73,13 @@ object LiveAiChatHelper {
      * Execution: SequentialAiQueue executes call sequentially (FIFO with session key prioritization).
      * Post-processing & persistence: CommandStripper extracts note commands, executes them via noteRepo,
      * collects shownCards, persists clean record to summary_history, and marks notifications processed.
+     * Supports optional [onTokenDelta] for real-time token streaming.
      */
     suspend fun summarizeSession(
         context: Context,
         session: SummarySessionConfig,
-        userQueryOrInstruction: String? = null
+        userQueryOrInstruction: String? = null,
+        onTokenDelta: ((String) -> Unit)? = null
     ): Result<SessionSummaryResult> = withContext(Dispatchers.IO) {
         val db = AppDatabase.getDatabase(context)
         val prefs = UserPreferences.getInstance(context)
@@ -211,7 +215,7 @@ object LiveAiChatHelper {
         // =========================================================================
         // Execution: SequentialAiQueue (FIFO with session key priorities)
         // =========================================================================
-        val result = SequentialAiQueue.execute(context, session, prompt)
+        val result = SequentialAiQueue.execute(context, session, prompt, onTokenDelta)
 
         if (result.isSuccess) {
             val (rawAiOutput, usedKey) = result.getOrThrow()
@@ -234,6 +238,8 @@ object LiveAiChatHelper {
                             shownCards.add(cmdRes.payload)
                         }
                     }
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (t: Throwable) {
                     Log.w(TAG, "Lỗi khi thực thi lệnh ghi chú $cmd: ${t.message}")
                 }
@@ -247,6 +253,8 @@ object LiveAiChatHelper {
                         if (noteEntity != null && shownCards.none { it.id == noteEntity.id }) {
                             shownCards.add(noteEntity)
                         }
+                    } catch (e: CancellationException) {
+                        throw e
                     } catch (_: Exception) {}
                 }
             }
@@ -259,6 +267,8 @@ object LiveAiChatHelper {
                         if (entity != null && (!entity.isPrivate || commands.any { it is NoteCommand.Show && it.noteId == noteId })) {
                             shownCards.add(entity)
                         }
+                    } catch (e: CancellationException) {
+                        throw e
                     } catch (_: Exception) {}
                 }
             }

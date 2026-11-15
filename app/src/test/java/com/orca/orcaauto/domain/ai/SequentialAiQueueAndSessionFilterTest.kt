@@ -128,4 +128,25 @@ class SequentialAiQueueAndSessionFilterTest {
         assertEquals(2, filtered.size)
         assertTrue(filtered.all { it.appName == "Telegram" })
     }
+
+    @Test
+    fun testResolveKeysForSession_withEmptyPool_returnsEmptyList() {
+        val session = SummarySessionConfig.createMainSession()
+        val emptyPool = emptyList<ApiKeyConfig>()
+        val resolved = SequentialAiQueue.resolveKeysForSession(session, emptyPool)
+        assertTrue("Empty pool resolves to empty list", resolved.isEmpty())
+    }
+
+    @Test
+    fun testResolveKeysForSession_disabledKeysFilteredOut() {
+        val session = SummarySessionConfig.createMainSession()
+        val pool = listOf(
+            ApiKeyConfig(id = "k1", provider = AiProviderType.GEMINI, rawKey = "key1", modelName = "m1", endpointUrl = "", isEnabled = false),
+            ApiKeyConfig(id = "k2", provider = AiProviderType.OPENROUTER, rawKey = "key2", modelName = "m2", endpointUrl = "", isEnabled = true),
+            ApiKeyConfig(id = "k3", provider = AiProviderType.GROQ, rawKey = "", modelName = "m3", endpointUrl = "", isEnabled = true)
+        )
+        val resolved = SequentialAiQueue.resolveKeysForSession(session, pool)
+        assertEquals(1, resolved.size)
+        assertEquals("k2", resolved[0].id)
+    }
 }
