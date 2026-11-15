@@ -43,6 +43,7 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
+import android.view.VelocityTracker
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup
@@ -51,6 +52,7 @@ import android.view.WindowManager
 import android.view.animation.AccelerateInterpolator
 import android.view.animation.DecelerateInterpolator
 import android.view.animation.OvershootInterpolator
+import android.view.animation.PathInterpolator
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -207,6 +209,7 @@ class FloatingBubbleService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "Lỗi đăng ký screenReceiver: ${e.message}")
         }
+        preWarmWallpaper()
 
         // 1. Reactive DB Flow: Real-time Alarms & Tasks status sync
         serviceScope.launch {
@@ -629,11 +632,7 @@ class FloatingBubbleService : Service() {
             BubbleState.STATE_2_DIMMED -> 0.45f
             BubbleState.STATE_3_HIDDEN -> 0.0f
         }
-        val currentScale = when (currentBubbleState) {
-            BubbleState.STATE_1_ACTIVE -> 1.0f
-            BubbleState.STATE_2_DIMMED -> 0.95f
-            BubbleState.STATE_3_HIDDEN -> 0.85f
-        }
+        val currentScale = 1.0f
 
         val pColl = windowParams
         if (pColl != null) {
@@ -726,6 +725,7 @@ class FloatingBubbleService : Service() {
         var downBubbleState = currentBubbleState
         var isDragging = false
         var isLongPressTriggered = false
+        var velocityTracker: VelocityTracker? = null
         val bubbleLongPressTimeout = 550L
         val bubbleLongPressRunnable = Runnable {
             if (!isDragging && isClick) {
@@ -739,6 +739,8 @@ class FloatingBubbleService : Service() {
             val p = windowParams ?: return@setOnTouchListener false
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
+                    velocityTracker = VelocityTracker.obtain()
+                    velocityTracker?.addMovement(event)
                     // Phương án 1: Nếu chuông báo thức đang kêu, chỉ cần chạm vào bóng chat là tắt tiếng ngay lập tức!
                     if (com.orca.orcaauto.receiver.AlarmRingtonePlayer.isPlaying) {
                         com.orca.orcaauto.receiver.AlarmRingtonePlayer.stop()
@@ -763,6 +765,7 @@ class FloatingBubbleService : Service() {
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
+                    velocityTracker?.addMovement(event)
                     val dx = (event.rawX - initialTouchX).toInt()
                     val dy = (event.rawY - initialTouchY).toInt()
 
@@ -802,6 +805,12 @@ class FloatingBubbleService : Service() {
                     true
                 }
                 MotionEvent.ACTION_UP -> {
+                    velocityTracker?.addMovement(event)
+                    velocityTracker?.computeCurrentVelocity(1000)
+                    val vx = velocityTracker?.xVelocity ?: 0f
+                    velocityTracker?.recycle()
+                    velocityTracker = null
+
                     bubbleLifecycleHandler.removeCallbacks(bubbleLongPressRunnable)
                     if (isLongPressTriggered) {
                         return@setOnTouchListener true
@@ -829,17 +838,27 @@ class FloatingBubbleService : Service() {
                             BubbleState.STATE_3_HIDDEN -> {}
                         }
                     } else if (isDragging) {
-                        // Thả tay sau khi kéo -> Snap mượt mà về mép an toàn (State 1 nhô ra 8dp)
-                        val isLeft = (p.x + bubbleSize / 2) < (screenWidth / 2)
+                        // Thả tay sau khi kéo -> Snap mượt mà với quán tính vuốt & đàn hồi vật lý
+                        val isLeft = if (Math.abs(vx) > 600f) {
+                            vx < 0
+                        } else {
+                            (p.x + bubbleSize / 2) < (screenWidth / 2)
+                        }
                         isAttachedLeft = isLeft
                         val targetX = if (isLeft) dpToPx(8) else screenWidth - bubbleSize - dpToPx(8)
+                        val distance = Math.abs(targetX - p.x)
+                        val animDuration = if (Math.abs(vx) > 800f) {
+                            (distance / (Math.abs(vx) / 1000f)).toLong().coerceIn(140L, 220L)
+                        } else {
+                            180L
+                        }
 
                         val startX = p.x
                         currentAnimator?.cancel()
                         var isCanceled = false
                         val animator = ValueAnimator.ofInt(startX, targetX).apply {
-                            duration = 180
-                            interpolator = DecelerateInterpolator()
+                            duration = animDuration
+                            interpolator = OvershootInterpolator(1.10f)
                             addUpdateListener { va ->
                                 p.x = va.animatedValue as Int
                                 p.y = p.y.coerceIn(minY, maxY)
@@ -869,6 +888,8 @@ class FloatingBubbleService : Service() {
                     true
                 }
                 MotionEvent.ACTION_CANCEL -> {
+                    velocityTracker?.recycle()
+                    velocityTracker = null
                     bubbleLifecycleHandler.removeCallbacks(bubbleLongPressRunnable)
                     hideDismissTarget(immediate = true)
                     isDragging = false
@@ -933,11 +954,7 @@ class FloatingBubbleService : Service() {
             BubbleState.STATE_2_DIMMED -> 0.45f
             BubbleState.STATE_3_HIDDEN -> 0.0f
         }
-        val targetScale = when (newState) {
-            BubbleState.STATE_1_ACTIVE -> 1.0f
-            BubbleState.STATE_2_DIMMED -> 0.95f
-            BubbleState.STATE_3_HIDDEN -> 0.85f
-        }
+        val targetScale = 1.0f
 
         p.y = lastCollapsedY
 
@@ -975,15 +992,13 @@ class FloatingBubbleService : Service() {
         }
 
         if (oldState == BubbleState.STATE_3_HIDDEN && newState == BubbleState.STATE_2_DIMMED) {
-            // Đánh thức từ State 3 (Ẩn) sang State 2: set alpha thẳng 20% (0.20f, scale = 0.85f),
-            // trượt nhẹ nhàng từ ngoài mép kính (startX = if (isLeft) -dpToPx(44) else screenWidth)
-            // trồi ra đúng vị trí nép của Trạng thái 2 (targetX = if (isLeft) -dpToPx(32) else screenWidth - bubbleSize + dpToPx(32)).
-            // Thời gian animation ~280ms với DecelerateInterpolator.
+            // Đánh thức từ State 3 (Ẩn) sang State 2: set alpha 0.45f, scale 1.0f (giữ sắc nét 100%)
+            // trồi ra vị trí nép của Trạng thái 2 với curve lò xo mềm
             updateShakeDetectorState()
             p.flags = p.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
-            bubbleView?.alpha = 0.20f
-            bubbleView?.scaleX = 0.85f
-            bubbleView?.scaleY = 0.85f
+            bubbleView?.alpha = 0.45f
+            bubbleView?.scaleX = 1.0f
+            bubbleView?.scaleY = 1.0f
 
             val startX = if (isLeft) -dpToPx(44) else screenWidth
             p.x = startX
@@ -996,8 +1011,8 @@ class FloatingBubbleService : Service() {
 
             var isCanceled = false
             val animator = ValueAnimator.ofInt(startX, targetX).apply {
-                duration = 280L
-                interpolator = DecelerateInterpolator()
+                duration = 260L
+                interpolator = OvershootInterpolator(1.08f)
                 addUpdateListener { va ->
                     p.x = va.animatedValue as Int
                     p.y = lastCollapsedY
@@ -1026,7 +1041,6 @@ class FloatingBubbleService : Service() {
         } else {
             val startX = p.x
             val startAlpha = bubbleView?.alpha ?: 1.0f
-            val startScale = bubbleView?.scaleX ?: 1.0f
             val animDuration = when (newState) {
                 BubbleState.STATE_1_ACTIVE -> 180L
                 BubbleState.STATE_2_DIMMED -> 260L
@@ -1040,16 +1054,15 @@ class FloatingBubbleService : Service() {
             var isCanceled = false
             val animator = ValueAnimator.ofFloat(0f, 1f).apply {
                 duration = animDuration
-                interpolator = DecelerateInterpolator()
+                interpolator = PathInterpolator(0.4f, 0.0f, 0.2f, 1.0f)
                 addUpdateListener { va ->
                     val f = va.animatedFraction
                     p.x = (startX + (targetX - startX) * f).toInt()
                     p.y = lastCollapsedY
                     val currentA = startAlpha + (targetAlpha - startAlpha) * f
-                    val currentS = startScale + (targetScale - startScale) * f
                     bubbleView?.alpha = currentA
-                    bubbleView?.scaleX = currentS
-                    bubbleView?.scaleY = currentS
+                    bubbleView?.scaleX = 1.0f
+                    bubbleView?.scaleY = 1.0f
                     lastCollapsedX = p.x
                     try {
                         if (bubbleRootView?.isAttachedToWindow == true) {
@@ -1066,8 +1079,8 @@ class FloatingBubbleService : Service() {
                         p.x = targetX
                         lastCollapsedX = targetX
                         bubbleView?.alpha = targetAlpha
-                        bubbleView?.scaleX = targetScale
-                        bubbleView?.scaleY = targetScale
+                        bubbleView?.scaleX = 1.0f
+                        bubbleView?.scaleY = 1.0f
                         if (newState == BubbleState.STATE_3_HIDDEN) {
                             p.flags = p.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
                         }
@@ -1095,6 +1108,17 @@ class FloatingBubbleService : Service() {
             }
             currentAnimator = animator
             animator.start()
+        }
+    }
+
+    private fun preWarmWallpaper() {
+        serviceScope.launch(Dispatchers.IO) {
+            try {
+                val dm = resources.displayMetrics
+                val cardWidth = (dm.widthPixels * 0.94f).toInt().coerceAtMost(dpToPx(500))
+                val cardHeight = (dm.heightPixels * 0.74f).toInt().coerceAtMost(dpToPx(620))
+                loadWallpaperBitmapOptimized(cardWidth, cardHeight)
+            } catch (_: Exception) {}
         }
     }
 
@@ -1219,20 +1243,39 @@ class FloatingBubbleService : Service() {
         if (isCollapsing || !isExpanded) return
         isCollapsing = true
         hideDismissTarget(immediate = true)
+
+        val dm = resources.displayMetrics
+        val screenWidth = dm.widthPixels
+        val screenHeight = dm.heightPixels
+        val bubbleSize = dpToPx(44)
         val card = root.getChildAt(0)
+        val cardWidth = card?.width?.takeIf { it > 0 } ?: (screenWidth * 0.94f).toInt().coerceAtMost(dpToPx(500))
+        val cardHeight = card?.height?.takeIf { it > 0 } ?: (screenHeight * 0.74f).toInt().coerceAtMost(dpToPx(620))
+
+        val bubbleCenterX = lastCollapsedX + bubbleSize / 2f
+        val bubbleCenterY = lastCollapsedY + bubbleSize / 2f
+        val cardCenterX = screenWidth / 2f
+        val cardCenterY = screenHeight / 2f
+        val deltaX = bubbleCenterX - cardCenterX
+        val deltaY = bubbleCenterY - cardCenterY
+        val targetScaleX = (bubbleSize.toFloat() / cardWidth).coerceIn(0.08f, 0.35f)
+        val targetScaleY = (bubbleSize.toFloat() / cardHeight).coerceIn(0.08f, 0.35f)
+
         if (card != null) {
+            card.setLayerType(View.LAYER_TYPE_HARDWARE, null)
             card.animate()
-                .scaleX(0.85f)
-                .scaleY(0.85f)
+                .translationX(deltaX)
+                .translationY(deltaY)
+                .scaleX(targetScaleX)
+                .scaleY(targetScaleY)
                 .alpha(0f)
-                .translationY(dpToPx(24).toFloat())
-                .setDuration(160)
-                .setInterpolator(AccelerateInterpolator())
+                .setDuration(190)
+                .setInterpolator(AccelerateInterpolator(1.2f))
                 .start()
         }
         root.animate()
             .alpha(0f)
-            .setDuration(160)
+            .setDuration(190)
             .withEndAction {
                 isCollapsing = false
                 currentBubbleState = BubbleState.STATE_1_ACTIVE
@@ -1993,23 +2036,42 @@ class FloatingBubbleService : Service() {
 
         root.addView(cardLayout)
 
-        // Smooth Entrance Animation
+        // Smooth Entrance Animation with Spatial Continuity & Zero-Jank Hardware Acceleration
         if (animate) {
-            root.alpha = 0f
-            root.animate().alpha(1f).setDuration(220).start()
+            val bubbleSize = dpToPx(44)
+            val bubbleCenterX = lastCollapsedX + bubbleSize / 2f
+            val bubbleCenterY = lastCollapsedY + bubbleSize / 2f
+            val cardCenterX = screenWidth / 2f
+            val cardCenterY = screenHeight / 2f
+            val deltaX = bubbleCenterX - cardCenterX
+            val deltaY = bubbleCenterY - cardCenterY
+            val startScaleX = (bubbleSize.toFloat() / cardWidth).coerceIn(0.08f, 0.35f)
+            val startScaleY = (bubbleSize.toFloat() / cardHeight).coerceIn(0.08f, 0.35f)
 
+            cardLayout.setLayerType(View.LAYER_TYPE_HARDWARE, null)
             cardLayout.alpha = 0f
-            cardLayout.scaleX = 0.85f
-            cardLayout.scaleY = 0.85f
-            cardLayout.translationY = dpToPx(24).toFloat()
-            cardLayout.animate()
-                .alpha(1f)
-                .scaleX(1.0f)
-                .scaleY(1.0f)
-                .translationY(0f)
-                .setDuration(240)
-                .setInterpolator(OvershootInterpolator(1.04f))
-                .start()
+            cardLayout.translationX = deltaX
+            cardLayout.translationY = deltaY
+            cardLayout.scaleX = startScaleX
+            cardLayout.scaleY = startScaleY
+
+            root.alpha = 0f
+            root.animate().alpha(1f).setDuration(200).start()
+
+            cardLayout.post {
+                cardLayout.animate()
+                    .alpha(1f)
+                    .scaleX(1.0f)
+                    .scaleY(1.0f)
+                    .translationX(0f)
+                    .translationY(0f)
+                    .setDuration(260)
+                    .setInterpolator(OvershootInterpolator(1.06f))
+                    .withEndAction {
+                        cardLayout.setLayerType(View.LAYER_TYPE_NONE, null)
+                    }
+                    .start()
+            }
         }
     }
 
