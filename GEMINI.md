@@ -51,3 +51,6 @@
 
 ### 3. Quy Định Commit & Push Git
 - Cho phép tự động commit và `git push` lên remote ngay sau khi hoàn tất đúng phạm vi công việc đã thống nhất và vượt qua toàn bộ unit test kiểm chứng (không cần chờ người dùng nhắc từng lệnh commit/push).
+
+### 4. Tự Động Kích Hoạt Teamwork Đa Tác Nhân (Auto Teamwork)
+- Mọi công việc sửa đổi mã nguồn, phát triển tính năng hoặc xử lý lỗi kỹ thuật từ nay về sau mặc định tự động vận hành theo mô hình Teamwork đa tác nhân song song (phân công chuyên trách, thẩm định độc lập và kiểm chứng thực tế), không cần người dùng phải gõ thủ công lệnh `/teamwork`.
