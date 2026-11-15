@@ -9,11 +9,16 @@ import java.text.Normalizer
 
 object NotificationFilter {
 
-    // Regex to detect OTP codes
-    private val OTP_PATTERNS = listOf(
-        Regex("(?i)(mã\\s*xác\\s*thực|mã\\s*otp|mã\\s*xác\\s*nhận|otp\\s*code|verification\\s*code|security\\s*code|mã\\s*giao\\s*dịch|passcode).*?(\\b\\d{4,8}\\b)"),
-        Regex("(?i)(\\b\\d{4,8}\\b).*?(là\\s*mã|is\\s*your\\s*code|để\\s*xác\\s*nhận|for\\s*verification)"),
-        Regex("(?i)\\b(otp|xác\\s*nhận|xác\\s*thực)\\b.*?\\b\\d{4,8}\\b")
+    // Strict 3-tier regex to detect genuine technical OTP messages:
+    // Tier 1: Explicit technical OTP / verification keywords
+    private val OTP_KEYWORD_REGEX = Regex(
+        "(?i)\\b(m[aã]\\s*otp|smart\\s*otp|otp\\s*code|otp|m[aã]\\s*x[aá]c\\s*th[uự]c|m[aã]\\s*x[aá]c\\s*minh|verification\\s*code|security\\s*code|one[- ]time\\s*password)\\b"
+    )
+    // Tier 2: Isolated numeric code (4 to 8 digits)
+    private val OTP_CODE_REGEX = Regex("\\b\\d{4,8}\\b")
+    // Tier 3: Short-term validity or secrecy / confidentiality context
+    private val OTP_CONTEXT_REGEX = Regex(
+        "(?i)(hi[eệ]u\\s*l[uự]c|h[eế]t\\s*h[aạ]n|h[aạ]n\\s*d[uù]ng|kh[oô]ng\\s*(chia\\s*s[eẻ]|cung\\s*c[aấ]p)|tuy[eệ]t\\s*[dđ][oố]i\\s*kh[oô]ng|b[aả]o\\s*m[aậ]t|m[aã]\\s*b[ií]\\s*m[aậ]t|ch[iỉ]\\s*d[uù]ng\\s*(1|m[oộ]t)\\s*l[aầ]n|valid\\s*for|expires?|do\\s*not\\s*share|never\\s*share|confidential)"
     )
 
     // Regex to detect system command syntax & prompt injection attempts
@@ -202,12 +207,10 @@ object NotificationFilter {
             .replace(WHITESPACE_REGEX, " ")
     }
 
-    private fun isOtpMessage(content: String): Boolean {
-        for (pattern in OTP_PATTERNS) {
-            if (pattern.containsMatchIn(content)) {
-                return true
-            }
-        }
-        return false
+    internal fun isOtpMessage(content: String): Boolean {
+        if (content.isBlank()) return false
+        return OTP_KEYWORD_REGEX.containsMatchIn(content) &&
+                OTP_CODE_REGEX.containsMatchIn(content) &&
+                OTP_CONTEXT_REGEX.containsMatchIn(content)
     }
 }

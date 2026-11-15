@@ -131,7 +131,7 @@ class LocalRetriever(
         }
     }
 
-    private fun buildNotesSnippet(notes: List<RetrievedNote>): String {
+    fun buildNotesSnippet(notes: List<RetrievedNote>): String {
         if (notes.isEmpty()) {
             return "(Không có ghi chú nào được trích xuất cho yêu cầu này)"
         }

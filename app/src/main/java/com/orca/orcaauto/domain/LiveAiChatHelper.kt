@@ -1,24 +1,51 @@
 package com.orca.orcaauto.domain
 
 import android.content.Context
+import android.util.Log
 import com.orca.orcaauto.data.local.AppDatabase
+import com.orca.orcaauto.data.local.SharedNoteEntity
 import com.orca.orcaauto.data.local.SummaryHistoryEntity
 import com.orca.orcaauto.data.local.getBestSummaryForSession
 import com.orca.orcaauto.data.preferences.SummarySessionConfig
 import com.orca.orcaauto.data.preferences.UserPreferences
 import com.orca.orcaauto.data.remote.ApiKeyConfig
+import com.orca.orcaauto.data.remote.UniversalAiClient
 import com.orca.orcaauto.domain.ai.SequentialAiQueue
 import com.orca.orcaauto.domain.alarm.SystemAlarmHelper
+import com.orca.orcaauto.domain.assistant.CommandStripper
+import com.orca.orcaauto.domain.assistant.ContextPacker
+import com.orca.orcaauto.domain.assistant.LocalRetriever
+import com.orca.orcaauto.domain.assistant.Round1Router
 import com.orca.orcaauto.domain.filter.SessionMessageFilter
-import com.orca.orcaauto.domain.filter.SummaryParser
+import com.orca.orcaauto.domain.notes.CommandResult
+import com.orca.orcaauto.domain.notes.NoteCommand
+import com.orca.orcaauto.domain.notes.SharedNoteRepositoryImpl
 import com.orca.orcaauto.domain.prompt.GeminiPromptBuilder
+import com.orca.orcaauto.domain.prompt.PromptPersona
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/**
+ * Result data class for session summarization containing:
+ * - summaryContent: clean 2-part summary text
+ * - usedKey: API key used by the LLM
+ * - shownCards: list of note cards to display on UI (from SHOW_NOTE / CREATE / referenced notes)
+ */
+data class SessionSummaryResult(
+    val summaryContent: String,
+    val usedKey: ApiKeyConfig,
+    val shownCards: List<SharedNoteEntity> = emptyList()
+) {
+    fun toTriple(): Triple<String, ApiKeyConfig, List<SharedNoteEntity>> =
+        Triple(summaryContent, usedKey, shownCards)
+}
+
 object LiveAiChatHelper {
+
+    private const val TAG = "LiveAiChatHelper"
 
     /**
      * Executes an instant on-demand AI call from the Chat Bubble for the active session.
@@ -27,63 +54,53 @@ object LiveAiChatHelper {
     suspend fun sendUserPrompt(
         context: Context,
         userQuery: String
-    ): Result<Pair<String, ApiKeyConfig>> = withContext(Dispatchers.IO) {
+    ): Result<SessionSummaryResult> = withContext(Dispatchers.IO) {
         val prefs = UserPreferences.getInstance(context)
         val session = prefs.getSelectedSession()
         summarizeSession(context, session, userQuery)
     }
 
     /**
-     * Executes AI summarization for a specific session strictly via SequentialAiQueue (FIFO).
-     * Filters messages by the session's whitelist/banlist and resolves the session's priority keys.
+     * Executes AI summarization for a specific session via the Unified 2-Round Pipeline:
+     * Stage 1: ContextPacker packs lightweight note catalog & 24h notification overview with ticket IDs.
+     * Round 1: Round1Router uses lightweight model to select neededNoteIds, senderFilter, deleteSpamTicketIds.
+     * Spam Deletion: Automatically deletes spam tickets from Room DB.
+     * Intermediate Stage: LocalRetriever loads full note contents (Sealed Pointer for private notes).
+     * Round 2: GeminiPromptBuilder builds clean 2-part prompt with internal reasoning guidelines.
+     * Execution: SequentialAiQueue executes call sequentially (FIFO with session key prioritization).
+     * Post-processing & persistence: CommandStripper extracts note commands, executes them via noteRepo,
+     * collects shownCards, persists clean record to summary_history, and marks notifications processed.
      */
     suspend fun summarizeSession(
         context: Context,
         session: SummarySessionConfig,
         userQueryOrInstruction: String? = null
-    ): Result<Pair<String, ApiKeyConfig>> = withContext(Dispatchers.IO) {
+    ): Result<SessionSummaryResult> = withContext(Dispatchers.IO) {
         val db = AppDatabase.getDatabase(context)
         val prefs = UserPreferences.getInstance(context)
+        val noteRepo = SharedNoteRepositoryImpl(db.sharedNoteDao())
+        val notifDao = db.notificationDao()
+        val universalClient = UniversalAiClient()
+        val keyPool = prefs.getKeyPool().filter { it.isEnabled && it.rawKey.isNotBlank() }
 
         // 1. Purge old notifications (>24h) and fetch recent messages within 24h
         val cutoff24h = System.currentTimeMillis() - (24 * 60 * 60 * 1000L)
-        db.notificationDao().deleteOldNotifications(cutoff24h)
-        val allNotifications = db.notificationDao().getNotificationsWithin24Hours(limit = 100)
+        notifDao.deleteOldNotifications(cutoff24h)
+        val allNotifications = notifDao.getNotificationsWithin24Hours(limit = 100)
 
         // 2. Filter notifications according to the session rules
         val sessionNotifications = SessionMessageFilter.filter(allNotifications, session)
 
         val isExplicitUserQuery = !userQueryOrInstruction.isNullOrBlank() &&
-                userQueryOrInstruction.trim() != "T\u00F3m t\u1EAFt c\u00E1c tin nh\u1EAFn quan tr\u1ECDng g\u1EA7n \u0111\u00E2y"
+                userQueryOrInstruction.trim() != "Tóm tắt các tin nhắn quan trọng gần đây"
 
         if (sessionNotifications.isEmpty() && !isExplicitUserQuery) {
             return@withContext Result.failure(
-                IllegalStateException("Kh\u00F4ng c\u00F3 tin nh\u1EAFn n\u00E0o thu\u1ED9c phi\u00EAn '${session.name}' trong 24 gi\u1EDD qua.")
+                IllegalStateException("Không có tin nhắn nào thuộc phiên '${session.name}' trong 24 giờ qua.")
             )
         }
 
-        // 3. Build tailored prompt with user's supplemental instruction and previous summary reference
-        val fixedContext = if (session.customFixedContext.isNotBlank()) session.customFixedContext else prefs.getCustomFixedContext()
-        val persona = if (session.promptPersonaId.isNotBlank()) {
-            com.orca.orcaauto.domain.prompt.PromptPersona.fromId(session.promptPersonaId)
-        } else {
-            prefs.getPromptPersona()
-        }
-        val latestSummaryRecord = db.summaryDao().getBestSummaryForSession(session.id)
-        val rawPreviousSummary = if (prefs.isRecentSummaryContextEnabled()) latestSummaryRecord?.summaryContent.orEmpty() else ""
-        val activeAlarms = if (prefs.isLongTermTasksContextEnabled()) db.smartAlarmDao().getActiveAlarms() else emptyList()
-        // Luôn nạp danh sách việc đã hủy trong vòng 48 giờ để chặn tái sinh qua nhiều phiên
-        val cancelledTasks = SystemAlarmHelper.filterRecentCancelled(db.smartAlarmDao().getCancelledAlarms())
-        val completedTasks = if (prefs.isLongTermTasksContextEnabled()) db.smartAlarmDao().getCompletedAlarms() else emptyList()
-        val taskNotes = prefs.getTaskNotes()
-
-        // Gắn nhãn [ĐÃ HỦY] cho các việc đã bị hủy trong ca trước để AI tự biết và không nối tiếp
-        val previousSummary = if (cancelledTasks.isNotEmpty() && rawPreviousSummary.isNotBlank()) {
-            tagCancelledTasksInSummary(rawPreviousSummary, cancelledTasks)
-        } else {
-            rawPreviousSummary
-        }
-
+        // Prepare effective instruction
         val instructionParts = mutableListOf<String>()
         if (session.customInstruction.isNotBlank()) {
             instructionParts.add("【CHỈ THỊ RIÊNG CỦA PHIÊN '${session.name}'】:\n${session.customInstruction.trim()}")
@@ -91,10 +108,88 @@ object LiveAiChatHelper {
         if (!userQueryOrInstruction.isNullOrBlank()) {
             instructionParts.add(userQueryOrInstruction.trim())
         }
-        val effectiveInstruction = instructionParts.joinToString("\n\n")
+        val effectiveInstruction = if (instructionParts.isNotEmpty()) {
+            instructionParts.joinToString("\n\n")
+        } else {
+            "Tóm tắt các tin nhắn quan trọng gần đây trong phiên '${session.name}'"
+        }
+
+        // =========================================================================
+        // Stage 1: ContextPacker
+        // =========================================================================
+        val packer = ContextPacker(noteRepo, notifDao)
+        val packagedContext = packer.pack(effectiveInstruction)
+
+        // =========================================================================
+        // Round 1: Round1Router
+        // =========================================================================
+        val router = Round1Router(universalClient)
+        val routerDecision = router.route(effectiveInstruction, packagedContext, keyPool)
+
+        // =========================================================================
+        // Delete Spam Tickets detected in Round 1
+        // =========================================================================
+        val deleteSpamTickets = routerDecision.deleteSpamTicketIds
+        val realIdsToDelete = if (deleteSpamTickets.isNotEmpty()) {
+            deleteSpamTickets.mapNotNull { packagedContext.ticketMap[it] }.distinct()
+        } else {
+            emptyList()
+        }
+        if (realIdsToDelete.isNotEmpty()) {
+            try {
+                notifDao.deleteByIds(realIdsToDelete)
+                Log.i(TAG, "Đã xóa ${realIdsToDelete.size} tin nhắn rác khỏi Room DB: $realIdsToDelete")
+            } catch (e: Exception) {
+                Log.w(TAG, "Lỗi khi xóa tin nhắn rác: ${e.message}")
+            }
+        }
+
+        // =========================================================================
+        // Intermediate Stage: LocalRetriever (Sealed Pointer for private notes)
+        // =========================================================================
+        val retriever = LocalRetriever(noteRepo, notifDao, db.smartAlarmDao())
+        val retrievedNotes = try {
+            noteRepo.retrieveNotesForAi(routerDecision.neededNoteIds)
+        } catch (e: Exception) {
+            Log.w(TAG, "Không thể truy xuất ghi chú: ${e.message}")
+            emptyList()
+        }
+        val notesSnippet = if (retrievedNotes.isNotEmpty()) {
+            retriever.buildNotesSnippet(retrievedNotes)
+        } else {
+            ""
+        }
+
+        val filteredSessionNotifications = if (realIdsToDelete.isNotEmpty()) {
+            sessionNotifications.filterNot { realIdsToDelete.contains(it.id) }
+        } else {
+            sessionNotifications
+        }
+
+        // =========================================================================
+        // Round 2 Prompt: GeminiPromptBuilder (clean 2-part format, internal reasoning)
+        // =========================================================================
+        val fixedContext = if (session.customFixedContext.isNotBlank()) session.customFixedContext else prefs.getCustomFixedContext()
+        val persona = if (session.promptPersonaId.isNotBlank()) {
+            PromptPersona.fromId(session.promptPersonaId)
+        } else {
+            prefs.getPromptPersona()
+        }
+        val latestSummaryRecord = db.summaryDao().getBestSummaryForSession(session.id)
+        val rawPreviousSummary = if (prefs.isRecentSummaryContextEnabled()) latestSummaryRecord?.summaryContent.orEmpty() else ""
+        val activeAlarms = if (prefs.isLongTermTasksContextEnabled()) db.smartAlarmDao().getActiveAlarms() else emptyList()
+        val cancelledTasks = SystemAlarmHelper.filterRecentCancelled(db.smartAlarmDao().getCancelledAlarms())
+        val completedTasks = if (prefs.isLongTermTasksContextEnabled()) db.smartAlarmDao().getCompletedAlarms() else emptyList()
+        val taskNotes = prefs.getTaskNotes()
+
+        val previousSummary = if (cancelledTasks.isNotEmpty() && rawPreviousSummary.isNotBlank()) {
+            tagCancelledTasksInSummary(rawPreviousSummary, cancelledTasks)
+        } else {
+            rawPreviousSummary
+        }
 
         val prompt = GeminiPromptBuilder.buildSummaryPrompt(
-            notifications = sessionNotifications,
+            notifications = filteredSessionNotifications,
             customFixedContext = fixedContext,
             persona = persona,
             userQueryOrInstruction = effectiveInstruction,
@@ -104,22 +199,74 @@ object LiveAiChatHelper {
             completedTasks = completedTasks,
             taskNotes = taskNotes,
             timezoneId = prefs.getUserTimezone(),
-            autoCompleteOverdue = session.autoCompleteOverdue
+            autoCompleteOverdue = session.autoCompleteOverdue,
+            notesSnippet = notesSnippet
         )
 
-        // 4. Execute strictly sequentially through SequentialAiQueue (FIFO with session key priorities)
+        // =========================================================================
+        // Execution: SequentialAiQueue (FIFO with session key priorities)
+        // =========================================================================
         val result = SequentialAiQueue.execute(context, session, prompt)
 
         if (result.isSuccess) {
-            val (cleanSummary, usedKey) = result.getOrThrow()
+            val (rawAiOutput, usedKey) = result.getOrThrow()
+
+            // =====================================================================
+            // Post-processing & persistence
+            // =====================================================================
+            val commands = CommandStripper.extractCommands(rawAiOutput)
+            val shownCards = mutableListOf<SharedNoteEntity>()
+
+            // Execute each command via noteRepo.executeAiCommand(...)
+            for (cmd in commands) {
+                try {
+                    val cmdRes = noteRepo.executeAiCommand(cmd)
+                    if (cmdRes is CommandResult.Success && cmdRes.payload != null) {
+                        val existingIdx = shownCards.indexOfFirst { it.id == cmdRes.payload.id }
+                        if (existingIdx >= 0) {
+                            shownCards[existingIdx] = cmdRes.payload
+                        } else {
+                            shownCards.add(cmdRes.payload)
+                        }
+                    }
+                } catch (t: Throwable) {
+                    Log.w(TAG, "Lỗi khi thực thi lệnh ghi chú $cmd: ${t.message}")
+                }
+            }
+
+            // Also collect shownCards for any [SHOW_NOTE:...] or referenced notes
+            for (cmd in commands) {
+                if (cmd is NoteCommand.Show) {
+                    try {
+                        val noteEntity = noteRepo.getNoteById(cmd.noteId)
+                        if (noteEntity != null && shownCards.none { it.id == noteEntity.id }) {
+                            shownCards.add(noteEntity)
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+
+            // If user asked about notes and router identified public notes, add them if not present
+            for (noteId in routerDecision.neededNoteIds) {
+                if (shownCards.none { it.id == noteId }) {
+                    try {
+                        val entity = noteRepo.getNoteById(noteId)
+                        if (entity != null && (!entity.isPrivate || commands.any { it is NoteCommand.Show && it.noteId == noteId })) {
+                            shownCards.add(entity)
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+
+            val cleanSummary = CommandStripper.cleanFinal(rawAiOutput)
             val modelInfo = "${usedKey.provider.displayName} • ${usedKey.modelName}"
 
-            // 5. Save to history with session metadata
+            // Save clean record into Room DB summary_history
             val timeSlot = SimpleDateFormat("HH:mm - dd/MM", Locale.getDefault()).format(Date()) + " [${session.name}]"
             val summaryRecord = SummaryHistoryEntity(
                 timestamp = System.currentTimeMillis(),
                 targetTimeSlot = timeSlot,
-                messageCount = sessionNotifications.size,
+                messageCount = filteredSessionNotifications.size,
                 summaryContent = cleanSummary,
                 status = "SUCCESS",
                 modelInfo = modelInfo,
@@ -128,14 +275,14 @@ object LiveAiChatHelper {
             )
             db.summaryDao().insert(summaryRecord)
 
-            // 6. Mark messages as processed
-            if (sessionNotifications.isNotEmpty()) {
-                db.notificationDao().markAsProcessed(sessionNotifications.map { it.id })
+            // Mark notifications as processed
+            if (filteredSessionNotifications.isNotEmpty()) {
+                notifDao.markAsProcessed(filteredSessionNotifications.map { it.id })
             }
 
-            Result.success(Pair(cleanSummary, usedKey))
+            Result.success(SessionSummaryResult(cleanSummary, usedKey, shownCards))
         } else {
-            result
+            Result.failure(result.exceptionOrNull() ?: Exception("Lỗi gọi AI"))
         }
     }
 

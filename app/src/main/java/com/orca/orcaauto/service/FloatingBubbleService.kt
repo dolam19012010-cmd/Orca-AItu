@@ -1231,79 +1231,9 @@ class FloatingBubbleService : Service() {
             dismissedTaskTitles.any { SystemAlarmHelper.isTitleMatching(task.title, it) }
         }
 
-        val existingParsedTasks = parsedTasksToDo + parsedTasksPlanned + parsedTasksDone
-
-        val now = System.currentTimeMillis()
-        val startOfToday = Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }.timeInMillis
-        val cutoff24h = now - 24 * 3600 * 1000L
-
-        // Candidates from DB: exclude cancelled, expired, already present in parsed tasks, or dismissed
-        val validDbAlarms = alarmDbMap.values
-            .filter { it.status != SmartAlarmStatus.CANCELLED && it.status != SmartAlarmStatus.EXPIRED }
-            .filterNot { alarm ->
-                dismissedTaskTitles.any { SystemAlarmHelper.isTitleMatching(it, alarm.taskTitle) } ||
-                existingParsedTasks.any { task ->
-                    SystemAlarmHelper.isTitleMatching(task.title, alarm.taskTitle)
-                }
-            }
-
-        // Layer 1: Internal deduplication for dbTasksDone (COMPLETED within today or last 24h, newest updatedAt first, max 5)
-        val deduplicatedDoneAlarms = mutableListOf<SmartAlarmEntity>()
-        validDbAlarms
-            .filter { it.status == SmartAlarmStatus.COMPLETED }
-            .filter { it.targetTimeMillis >= startOfToday || it.updatedAt >= cutoff24h }
-            .sortedByDescending { it.updatedAt }
-            .forEach { alarm ->
-                val alreadyPresent = deduplicatedDoneAlarms.any { existing ->
-                    SystemAlarmHelper.isTitleMatching(existing.taskTitle, alarm.taskTitle)
-                }
-                if (!alreadyPresent) {
-                    deduplicatedDoneAlarms.add(alarm)
-                }
-            }
-
-        val dbTasksDone = deduplicatedDoneAlarms.take(5).map { alarm ->
-            TaskItem(
-                title = alarm.taskTitle,
-                deadline = alarm.targetDateLabel,
-                status = TaskStatus.DONE
-            )
-        }
-
-        // Layer 2: Internal deduplication for dbTasksToDo (TODO / ACTIVE / PROPOSED, newest updatedAt first, retain all unfinished)
-        val deduplicatedToDoAlarms = mutableListOf<SmartAlarmEntity>()
-        validDbAlarms
-            .filter { it.status != SmartAlarmStatus.COMPLETED }
-            .sortedByDescending { it.updatedAt }
-            .forEach { alarm ->
-                val alreadyInDone = deduplicatedDoneAlarms.any { doneAlarm ->
-                    SystemAlarmHelper.isTitleMatching(doneAlarm.taskTitle, alarm.taskTitle) &&
-                        doneAlarm.updatedAt >= alarm.updatedAt
-                }
-                val alreadyPresent = deduplicatedToDoAlarms.any { existing ->
-                    SystemAlarmHelper.isTitleMatching(existing.taskTitle, alarm.taskTitle)
-                }
-                if (!alreadyInDone && !alreadyPresent) {
-                    deduplicatedToDoAlarms.add(alarm)
-                }
-            }
-
-        val dbTasksToDo = deduplicatedToDoAlarms.map { alarm ->
-            TaskItem(
-                title = alarm.taskTitle,
-                deadline = alarm.targetDateLabel,
-                status = TaskStatus.TODO
-            )
-        }
-
-        val allTasksToDo = parsedTasksToDo + dbTasksToDo
+        val allTasksToDo = parsedTasksToDo
         val allTasksPlanned = parsedTasksPlanned
-        val allTasksDone = (parsedTasksDone + dbTasksDone).take(5)
+        val allTasksDone = parsedTasksDone
         val allTasks = allTasksToDo + allTasksPlanned + allTasksDone
 
         if (allTasks.isEmpty()) {
@@ -1838,7 +1768,7 @@ class FloatingBubbleService : Service() {
                             )
                         }
                         if (result.isSuccess) {
-                            val (cleanSummary, usedKey) = result.getOrThrow()
+                            val (cleanSummary, usedKey, shownCards) = result.getOrThrow()
                             latestSummaryText = cleanSummary
                             activeChatAnswer = null
                             latestModelInfo = "${usedKey.provider.displayName} • ${usedKey.modelName}"
@@ -1847,6 +1777,8 @@ class FloatingBubbleService : Service() {
                             val parsed = SummaryParser.parse(cleanSummary)
                             val cleanAdvice = SummaryParser.cleanAdviceText(parsed.conciseAdvice)
                             targetAdviceTv.text = if (cleanAdvice.isNotBlank()) cleanAdvice else parsed.conciseAdvice.ifBlank { cleanSummary }
+
+                            renderLocalNoteCardsInBubble(targetNotesContainer, shownCards)
 
                             currentTasksBoardLayout?.let { board ->
                                 populateTaskBoard(board, cardLayout, hasAdvice = true)

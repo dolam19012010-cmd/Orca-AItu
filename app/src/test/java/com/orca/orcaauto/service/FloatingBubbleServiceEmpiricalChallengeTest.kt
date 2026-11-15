@@ -357,37 +357,18 @@ class FloatingBubbleServiceEmpiricalChallengeTest {
         assertEquals("latestSummaryText phải được giữ nguyên vẹn", initialSummary, latestSummaryText)
         assertEquals("activeChatAnswer lưu trữ câu trả lời chat", chatAnswer, activeChatAnswer)
 
-        // Evaluate task board population logic: merges parsed summary tasks + Room DB smart_alarms
+        // Under R4: TaskBoard strictly renders tasks from AI parsed summary, eliminating DB task injection
         val parsed = SummaryParser.parse(latestSummaryText)
         val speakableParsed = com.orca.orcaauto.domain.alarm.SystemAlarmHelper.filterOutCancelled(parsed, alarmDbMap)
-        val existingParsedTasks = speakableParsed.tasksToDo + speakableParsed.tasksPlanned + speakableParsed.tasksDone
 
-        val dbTasksToDo = mutableListOf<TaskItem>()
-        for (alarm in alarmDbMap.values) {
-            if (alarm.status == com.orca.orcaauto.data.local.SmartAlarmStatus.CANCELLED ||
-                alarm.status == com.orca.orcaauto.data.local.SmartAlarmStatus.EXPIRED) {
-                continue
-            }
-            val alreadyPresent = existingParsedTasks.any { task ->
-                com.orca.orcaauto.domain.alarm.SystemAlarmHelper.isTitleMatching(task.title, alarm.taskTitle)
-            }
-            if (!alreadyPresent) {
-                dbTasksToDo.add(
-                    TaskItem(
-                        title = alarm.taskTitle,
-                        deadline = alarm.targetDateLabel,
-                        status = TaskStatus.TODO
-                    )
-                )
-            }
-        }
+        val allTasksToDo = speakableParsed.tasksToDo
+        val allTasksPlanned = speakableParsed.tasksPlanned
+        val allTasksDone = speakableParsed.tasksDone
+        val allTasks = allTasksToDo + allTasksPlanned + allTasksDone
 
-        val allTasksToDo = speakableParsed.tasksToDo + dbTasksToDo
-        val allTasks = allTasksToDo + speakableParsed.tasksPlanned + speakableParsed.tasksDone
-
-        assertEquals("TaskBoard phải có đủ 2 nhiệm vụ (1 từ summary + 1 từ Room DB smart_alarms)", 2, allTasks.size)
+        assertEquals("TaskBoard chỉ hiển thị trung thực 1 nhiệm vụ từ AI summary, không tự nhồi thêm từ Room DB", 1, allTasks.size)
         assertTrue("Chứa nhiệm vụ Họp giao ban", allTasks.any { it.title.contains("Họp giao ban") })
-        assertTrue("Chứa nhiệm vụ Diễn tập PCCC từ Room DB", allTasks.any { it.title.contains("Diễn tập PCCC") })
+        assertFalse("Không tự ý nhồi Diễn tập PCCC từ Room DB vào TaskBoard khi AI không yêu cầu", allTasks.any { it.title.contains("Diễn tập PCCC") })
     }
 
     @Test
@@ -506,56 +487,14 @@ class FloatingBubbleServiceEmpiricalChallengeTest {
             alarm4Cancelled.alarmId to alarm4Cancelled
         )
 
-        // Execute populateTaskBoard synthesis logic
+        // Under R4: TaskBoard takes 100% tasks from AI parse and dismissed filters, with NO Room DB injection
         val speakableParsed = com.orca.orcaauto.domain.alarm.SystemAlarmHelper.filterOutCancelled(parsed, alarmDbMap)
-        val existingParsedTasks = speakableParsed.tasksToDo + speakableParsed.tasksPlanned + speakableParsed.tasksDone
+        val allTasksToDo = speakableParsed.tasksToDo
+        val allTasksPlanned = speakableParsed.tasksPlanned
+        val allTasksDone = speakableParsed.tasksDone
+        val allTasks = allTasksToDo + allTasksPlanned + allTasksDone
 
-        val dbTasksToDo = mutableListOf<TaskItem>()
-        val dbTasksDone = mutableListOf<TaskItem>()
-
-        for (alarm in alarmDbMap.values) {
-            if (alarm.status == com.orca.orcaauto.data.local.SmartAlarmStatus.CANCELLED ||
-                alarm.status == com.orca.orcaauto.data.local.SmartAlarmStatus.EXPIRED) {
-                continue
-            }
-            val alreadyPresent = existingParsedTasks.any { task ->
-                com.orca.orcaauto.domain.alarm.SystemAlarmHelper.isTitleMatching(task.title, alarm.taskTitle)
-            }
-            if (!alreadyPresent) {
-                if (alarm.status == com.orca.orcaauto.data.local.SmartAlarmStatus.COMPLETED) {
-                    dbTasksDone.add(
-                        TaskItem(
-                            title = alarm.taskTitle,
-                            deadline = alarm.targetDateLabel,
-                            status = TaskStatus.DONE
-                        )
-                    )
-                } else {
-                    dbTasksToDo.add(
-                        TaskItem(
-                            title = alarm.taskTitle,
-                            deadline = alarm.targetDateLabel,
-                            status = TaskStatus.TODO
-                        )
-                    )
-                }
-            }
-        }
-
-        val allTasksToDo = speakableParsed.tasksToDo + dbTasksToDo
-        val allTasksDone = speakableParsed.tasksDone + dbTasksDone
-        val allTasks = allTasksToDo + speakableParsed.tasksPlanned + allTasksDone
-
-        // 1. Verify tasks are populated from Room DB smart_alarms
-        assertEquals("Phải có 2 nhiệm vụ cần làm (ACTIVE và PROPOSED)", 2, allTasksToDo.size)
-        assertEquals("Phải có 1 nhiệm vụ đã hoàn thành (COMPLETED)", 1, dbTasksDone.size)
-        assertEquals("Tổng số nhiệm vụ phải là 3 (bỏ qua CANCELLED)", 3, allTasks.size)
-
-        // 2. Verify specific tasks
-        assertTrue("Chứa Tuần tra tầng thượng", allTasksToDo.any { it.title.contains("Tuần tra tầng thượng") })
-        assertTrue("Chứa Thử máy phát điện", allTasksToDo.any { it.title.contains("Thử máy phát điện") })
-        assertTrue("Chứa Giao ban ca sáng trong tasksDone", allTasksDone.any { it.title.contains("Giao ban ca sáng") })
-        assertFalse("Tuyệt đối không chứa nhiệm vụ đã hủy", allTasks.any { it.title.contains("Diễn tập hủy bỏ") })
+        assertTrue("Dưới R4: TaskBoard không tự nhồi task từ Room DB khi AI không có task", allTasks.isEmpty())
     }
 
     // =========================================================================
@@ -564,281 +503,106 @@ class FloatingBubbleServiceEmpiricalChallengeTest {
 
     @Test
     fun r1_completedTasksFiltering_onlyIncludesTodayOrLast24Hours_andLimitsToAtMost5() {
+        // Under R4: TaskBoard strictly displays AI parsed tasks, completely eliminating Room DB injection
+        val summaryWithDone = """
+            ### LỜI KHUYÊN:
+            Các nhiệm vụ ca trực hôm nay.
+            
+            ### 🟢 NHIỆM VỤ ĐÃ LÀM (DONE)
+            - [x] Bàn giao ca trực sáng | Nguồn: Trưởng ca | Hạn: 08:00
+            - [x] Kiểm tra sổ nhật ký trực | Nguồn: Sổ trực | Hạn: 09:00
+        """.trimIndent()
+
+        val parsed = SummaryParser.parse(summaryWithDone)
+        assertEquals("AI phân giải được 2 việc đã xong", 2, parsed.tasksDone.size)
+
+        // Even if Room DB has 10+ completed alarms from past days/today
         val now = System.currentTimeMillis()
-        val startOfToday = Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }.timeInMillis
-        val cutoff24h = now - 24 * 3600 * 1000L
-
-        // 1. Task completed today (targetTimeMillis >= startOfToday) -> Valid
-        val alarmToday = SmartAlarmEntity(
-            alarmId = "ALM_today_1",
-            taskTitle = "Nhiệm vụ xong hôm nay",
-            targetTimeMillis = startOfToday + 3600_000L,
-            targetDateLabel = "Hôm nay",
-            status = SmartAlarmStatus.COMPLETED,
-            updatedAt = now - 5000L
-        )
-
-        // 2. Task completed in last 24h (updatedAt >= cutoff24h, though targetTimeMillis was yesterday) -> Valid
-        val alarmLast24h = SmartAlarmEntity(
-            alarmId = "ALM_24h_1",
-            taskTitle = "Nhiệm vụ xong 3 giờ trước",
-            targetTimeMillis = startOfToday - 3600_000L,
-            targetDateLabel = "Hôm qua",
-            status = SmartAlarmStatus.COMPLETED,
-            updatedAt = now - 3 * 3600 * 1000L
-        )
-
-        // 3. Stale task from 3 days ago (targetTimeMillis < startOfToday AND updatedAt < cutoff24h) -> EXCLUDED
-        val alarmStale1 = SmartAlarmEntity(
-            alarmId = "ALM_stale_3d",
-            taskTitle = "Nhiệm vụ cũ 3 ngày trước",
-            targetTimeMillis = startOfToday - 3 * 86400_000L,
-            targetDateLabel = "3 ngày trước",
-            status = SmartAlarmStatus.COMPLETED,
-            updatedAt = now - 3 * 86400_000L
-        )
-
-        // 4. Stale task from 10 days ago -> EXCLUDED
-        val alarmStale2 = SmartAlarmEntity(
-            alarmId = "ALM_stale_10d",
-            taskTitle = "Nhiệm vụ cũ 10 ngày trước",
-            targetTimeMillis = startOfToday - 10 * 86400_000L,
-            targetDateLabel = "10 ngày trước",
-            status = SmartAlarmStatus.COMPLETED,
-            updatedAt = now - 10 * 86400_000L
-        )
-
-        // 5-11: 7 more completed tasks today
-        val moreTodayTasks = (1..7).map { i ->
-            SmartAlarmEntity(
-                alarmId = "ALM_today_batch_$i",
-                taskTitle = "Nhiệm vụ hôm nay $i",
-                targetTimeMillis = startOfToday + i * 1800_000L,
-                targetDateLabel = "Hôm nay $i",
-                status = SmartAlarmStatus.COMPLETED,
-                updatedAt = now - i * 60_000L
+        val manyDbAlarms = (1..10).associate { i ->
+            val id = "ALM_db_done_$i"
+            id to SmartAlarmEntity(
+                alarmId = id,
+                taskTitle = "Nhiệm vụ DB cũ $i",
+                targetTimeMillis = now - i * 60_000L,
+                targetDateLabel = "Xong",
+                status = SmartAlarmStatus.COMPLETED
             )
         }
 
-        val allCandidateAlarms = listOf(alarmToday, alarmLast24h, alarmStale1, alarmStale2) + moreTodayTasks
-        val alarmDbMap = allCandidateAlarms.associateBy { it.alarmId }
+        val speakableParsed = SystemAlarmHelper.filterOutCancelled(parsed, manyDbAlarms)
+        val allTasksDone = speakableParsed.tasksDone
 
-        // Filter and deduplicate completed tasks according to R1 logic
-        val validDbAlarms = alarmDbMap.values
-            .filter { it.status != SmartAlarmStatus.CANCELLED && it.status != SmartAlarmStatus.EXPIRED }
-
-        val deduplicatedDoneAlarms = mutableListOf<SmartAlarmEntity>()
-        validDbAlarms
-            .filter { it.status == SmartAlarmStatus.COMPLETED }
-            .filter { it.targetTimeMillis >= startOfToday || it.updatedAt >= cutoff24h }
-            .sortedByDescending { it.updatedAt }
-            .forEach { alarm ->
-                val alreadyPresent = deduplicatedDoneAlarms.any { existing ->
-                    SystemAlarmHelper.isTitleMatching(existing.taskTitle, alarm.taskTitle)
-                }
-                if (!alreadyPresent) {
-                    deduplicatedDoneAlarms.add(alarm)
-                }
-            }
-
-        val dbTasksDone = deduplicatedDoneAlarms.take(5).map { alarm ->
-            TaskItem(
-                title = alarm.taskTitle,
-                deadline = alarm.targetDateLabel,
-                status = TaskStatus.DONE
-            )
-        }
-
-        // Verify:
-        // Stale tasks must be excluded
-        assertFalse("Nhiệm vụ cũ 3 ngày trước phải bị lọc bỏ", dbTasksDone.any { it.title.contains("3 ngày trước") })
-        assertFalse("Nhiệm vụ cũ 10 ngày trước phải bị lọc bỏ", dbTasksDone.any { it.title.contains("10 ngày trước") })
-
-        // Must strictly not exceed 5 tasks
-        assertEquals("Số lượng nhiệm vụ đã hoàn thành tối đa là 5", 5, dbTasksDone.size)
-
-        // Tasks in list must be from today or last 24h
-        assertTrue("Chứa nhiệm vụ xong hôm nay", dbTasksDone.any { it.title.contains("Nhiệm vụ xong hôm nay") })
+        // R4 Contract: TaskBoard only contains the 2 tasks from AI, zero injection from Room DB
+        assertEquals("TaskBoard chỉ chứa đúng 2 việc đã xong từ AI", 2, allTasksDone.size)
+        assertTrue(allTasksDone.any { it.title.contains("Bàn giao ca trực sáng") })
+        assertTrue(allTasksDone.any { it.title.contains("Kiểm tra sổ nhật ký trực") })
+        assertFalse("Không tự nhồi bất kỳ việc cũ nào từ Room DB", allTasksDone.any { it.title.contains("Nhiệm vụ DB cũ") })
     }
 
     @Test
     fun r1_internalTwoLayerDeduplication_keepsNewestUpdatedAtForMatchingTitles() {
-        val now = System.currentTimeMillis()
-        val startOfToday = Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }.timeInMillis
-        val cutoff24h = now - 24 * 3600 * 1000L
+        // Under R4: TaskBoard eliminates SQLite task injection and duplicate creation.
+        // It reflects AI summary tasks, and uses alarmDbMap purely for status resolution (e.g. isTaskCompleted)
+        val summaryWithTasks = """
+            ### VIỆC CẦN LÀM NGAY:
+            - [ ] Báo cáo doanh thu tháng | Nguồn: Kế toán | Hạn: 10:00
+            - [ ] Gặp đối tác chiến lược Alpha | Nguồn: Giám đốc | Hạn: 15:00
+            - [ ] Kiểm tra hệ thống PCCC | Nguồn: BQL | Hạn: 11:00
+        """.trimIndent()
 
-        // Duplicated COMPLETED entries with same/similar title
-        val doneOlder = SmartAlarmEntity(
-            alarmId = "ALM_done_v1",
-            taskTitle = "Báo cáo doanh thu tháng",
-            targetTimeMillis = startOfToday + 3600_000L,
-            targetDateLabel = "09:00",
-            status = SmartAlarmStatus.COMPLETED,
-            updatedAt = now - 10000L
-        )
-        val doneNewer = SmartAlarmEntity(
-            alarmId = "TASK_done_v2",
-            taskTitle = "báo cáo doanh thu tháng",
-            targetTimeMillis = startOfToday + 7200_000L,
-            targetDateLabel = "10:00",
-            status = SmartAlarmStatus.COMPLETED,
-            updatedAt = now - 1000L
-        )
+        val parsed = SummaryParser.parse(summaryWithTasks)
+        assertEquals(3, parsed.tasksToDo.size)
 
-        // Duplicated TODO entries with same/similar title
-        val todoOlder = SmartAlarmEntity(
-            alarmId = "ALM_todo_v1",
-            taskTitle = "Gặp đối tác chiến lược Alpha",
-            targetTimeMillis = now + 3600_000L,
-            targetDateLabel = "14:00",
-            status = SmartAlarmStatus.ACTIVE,
-            updatedAt = now - 8000L
-        )
-        val todoNewer = SmartAlarmEntity(
-            alarmId = "TASK_todo_v2",
-            taskTitle = "gặp đối tác chiến lược Alpha",
-            targetTimeMillis = now + 7200_000L,
-            targetDateLabel = "15:00",
-            status = SmartAlarmStatus.ACTIVE,
-            updatedAt = now - 2000L
-        )
-
-        // An entry with an active alarm that was subsequently completed in a newer entry
-        val supersededTodo = SmartAlarmEntity(
-            alarmId = "ALM_superseded",
+        // Suppose "Kiểm tra hệ thống PCCC" was completed in alarmDbMap
+        val completedPcccAlarm = SmartAlarmEntity(
+            alarmId = "ALM_pccc",
             taskTitle = "Kiểm tra hệ thống PCCC",
-            targetTimeMillis = now,
+            targetTimeMillis = System.currentTimeMillis(),
             targetDateLabel = "11:00",
-            status = SmartAlarmStatus.ACTIVE,
-            updatedAt = now - 5000L
-        )
-        val completedSuper = SmartAlarmEntity(
-            alarmId = "TASK_completed_super",
-            taskTitle = "Kiểm tra hệ thống PCCC",
-            targetTimeMillis = now,
-            targetDateLabel = "Đã xong",
             status = SmartAlarmStatus.COMPLETED,
-            updatedAt = now - 500L
+            updatedAt = System.currentTimeMillis()
         )
+        val alarmDbMap = mapOf(completedPcccAlarm.alarmId to completedPcccAlarm)
 
-        val alarmDbMap = mapOf(
-            doneOlder.alarmId to doneOlder,
-            doneNewer.alarmId to doneNewer,
-            todoOlder.alarmId to todoOlder,
-            todoNewer.alarmId to todoNewer,
-            supersededTodo.alarmId to supersededTodo,
-            completedSuper.alarmId to completedSuper
-        )
-
-        val validDbAlarms = alarmDbMap.values
-            .filter { it.status != SmartAlarmStatus.CANCELLED && it.status != SmartAlarmStatus.EXPIRED }
-
-        // Layer 1: deduplicate COMPLETED (keep newest updatedAt)
-        val deduplicatedDoneAlarms = mutableListOf<SmartAlarmEntity>()
-        validDbAlarms
-            .filter { it.status == SmartAlarmStatus.COMPLETED }
-            .filter { it.targetTimeMillis >= startOfToday || it.updatedAt >= cutoff24h }
-            .sortedByDescending { it.updatedAt }
-            .forEach { alarm ->
-                val alreadyPresent = deduplicatedDoneAlarms.any { existing ->
-                    SystemAlarmHelper.isTitleMatching(existing.taskTitle, alarm.taskTitle)
-                }
-                if (!alreadyPresent) {
-                    deduplicatedDoneAlarms.add(alarm)
-                }
-            }
-
-        val dbTasksDone = deduplicatedDoneAlarms.take(5).map { alarm ->
-            TaskItem(title = alarm.taskTitle, deadline = alarm.targetDateLabel, status = TaskStatus.DONE)
+        // In FloatingBubbleService.populateTaskBoard:
+        // Filter out completed tasks from parsed TODO
+        val parsedTasksToDo = parsed.tasksToDo.filterNot { task ->
+            SystemAlarmHelper.isTaskCompleted(task.title, alarmDbMap)
         }
 
-        // Layer 2: deduplicate TODO (keep newest updatedAt, skip if superseded by completed)
-        val deduplicatedToDoAlarms = mutableListOf<SmartAlarmEntity>()
-        validDbAlarms
-            .filter { it.status != SmartAlarmStatus.COMPLETED }
-            .sortedByDescending { it.updatedAt }
-            .forEach { alarm ->
-                val alreadyInDone = deduplicatedDoneAlarms.any { doneAlarm ->
-                    SystemAlarmHelper.isTitleMatching(doneAlarm.taskTitle, alarm.taskTitle) &&
-                        doneAlarm.updatedAt >= alarm.updatedAt
-                }
-                val alreadyPresent = deduplicatedToDoAlarms.any { existing ->
-                    SystemAlarmHelper.isTitleMatching(existing.taskTitle, alarm.taskTitle)
-                }
-                if (!alreadyInDone && !alreadyPresent) {
-                    deduplicatedToDoAlarms.add(alarm)
-                }
-            }
-
-        val dbTasksToDo = deduplicatedToDoAlarms.map { alarm ->
-            TaskItem(title = alarm.taskTitle, deadline = alarm.targetDateLabel, status = TaskStatus.TODO)
-        }
-
-        // 1. Verify dbTasksDone has only 1 entry for "Báo cáo doanh thu tháng" with deadline "10:00" (the newer one)
-        val revenueTasks = dbTasksDone.filter { SystemAlarmHelper.isTitleMatching("Báo cáo doanh thu tháng", it.title) }
-        assertEquals("Bản ghi hoàn thành trùng lặp phải được khử, chỉ giữ lại 1", 1, revenueTasks.size)
-        assertEquals("Phải giữ bản ghi có updatedAt mới nhất (deadline 10:00)", "10:00", revenueTasks.first().deadline)
-
-        // 2. Verify dbTasksToDo has only 1 entry for "Gặp đối tác chiến lược Alpha" with deadline "15:00" (the newer one)
-        val partnerTasks = dbTasksToDo.filter { SystemAlarmHelper.isTitleMatching("Gặp đối tác chiến lược Alpha", it.title) }
-        assertEquals("Bản ghi việc cần làm trùng lặp phải được khử, chỉ giữ lại 1", 1, partnerTasks.size)
-        assertEquals("Phải giữ bản ghi có updatedAt mới nhất (deadline 15:00)", "15:00", partnerTasks.first().deadline)
-
-        // 3. Verify superseded todo task is NOT in dbTasksToDo because a newer completed record exists
-        val pcccInTodo = dbTasksToDo.any { SystemAlarmHelper.isTitleMatching("Kiểm tra hệ thống PCCC", it.title) }
-        assertFalse("Nhiệm vụ đã hoàn thành không được phép xuất hiện trong danh sách việc cần làm", pcccInTodo)
-        val pcccInDone = dbTasksDone.any { SystemAlarmHelper.isTitleMatching("Kiểm tra hệ thống PCCC", it.title) }
-        assertTrue("Nhiệm vụ PCCC phải nằm trong danh sách đã hoàn thành", pcccInDone)
+        // Verify: PCCC is filtered out of ToDo because DB marked it COMPLETED
+        assertEquals("Chỉ còn 2 việc ToDo (PCCC đã hoàn thành trong DB được loại khỏi ToDo)", 2, parsedTasksToDo.size)
+        assertTrue(parsedTasksToDo.any { it.title.contains("Báo cáo doanh thu") })
+        assertTrue(parsedTasksToDo.any { it.title.contains("Gặp đối tác") })
+        assertFalse("Việc đã hoàn thành không xuất hiện trong ToDo", parsedTasksToDo.any { it.title.contains("Kiểm tra hệ thống PCCC") })
     }
 
     @Test
     fun r1_unfinishedTasks_allRetainedWithout24hCutoffOr5ItemLimit() {
-        val now = System.currentTimeMillis()
-        // Create 8 unfinished tasks, including overdue ones from several days ago
-        val unfinishedAlarms = (1..8).map { i ->
-            SmartAlarmEntity(
-                alarmId = "ALM_todo_$i",
-                taskTitle = "Nhiệm vụ còn hạn hoặc tồn đọng $i",
-                targetTimeMillis = now - i * 86400_000L, // Past dates (overdue)
-                targetDateLabel = "Quá hạn $i ngày",
-                status = if (i % 2 == 0) SmartAlarmStatus.ACTIVE else SmartAlarmStatus.PROPOSED,
-                updatedAt = now - i * 3600_000L
-            )
+        // Under R4: TaskBoard faithfully renders 100% of tasks parsed from AI without arbitrary capping or DB injection
+        val aiSummaryWith8Tasks = """
+            ### VIỆC CẦN LÀM NGAY:
+            - [ ] Nhiệm vụ ca trực 1 | Nguồn: Sếp | Hạn: 09:00
+            - [ ] Nhiệm vụ ca trực 2 | Nguồn: Sếp | Hạn: 10:00
+            - [ ] Nhiệm vụ ca trực 3 | Nguồn: Sếp | Hạn: 11:00
+            - [ ] Nhiệm vụ ca trực 4 | Nguồn: Sếp | Hạn: 12:00
+            - [ ] Nhiệm vụ ca trực 5 | Nguồn: Sếp | Hạn: 13:00
+            - [ ] Nhiệm vụ ca trực 6 | Nguồn: Sếp | Hạn: 14:00
+            - [ ] Nhiệm vụ ca trực 7 | Nguồn: Sếp | Hạn: 15:00
+            - [ ] Nhiệm vụ ca trực 8 | Nguồn: Sếp | Hạn: 16:00
+        """.trimIndent()
+
+        val parsed = SummaryParser.parse(aiSummaryWith8Tasks)
+        val speakableParsed = SystemAlarmHelper.filterOutCancelled(parsed, emptyMap())
+
+        val allTasksToDo = speakableParsed.tasksToDo
+        val allTasks = allTasksToDo + speakableParsed.tasksPlanned + speakableParsed.tasksDone
+
+        // Verify all 8 tasks are retained faithfully
+        assertEquals("Toàn bộ 8 nhiệm vụ từ AI phải được hiển thị đầy đủ trên TaskBoard", 8, allTasks.size)
+        for (i in 1..8) {
+            assertTrue("Chứa nhiệm vụ $i", allTasks.any { it.title.contains("Nhiệm vụ ca trực $i") })
         }
-
-        val alarmDbMap = unfinishedAlarms.associateBy { it.alarmId }
-        val validDbAlarms = alarmDbMap.values
-            .filter { it.status != SmartAlarmStatus.CANCELLED && it.status != SmartAlarmStatus.EXPIRED }
-
-        val deduplicatedToDoAlarms = mutableListOf<SmartAlarmEntity>()
-        validDbAlarms
-            .filter { it.status != SmartAlarmStatus.COMPLETED }
-            .sortedByDescending { it.updatedAt }
-            .forEach { alarm ->
-                val alreadyPresent = deduplicatedToDoAlarms.any { existing ->
-                    SystemAlarmHelper.isTitleMatching(existing.taskTitle, alarm.taskTitle)
-                }
-                if (!alreadyPresent) {
-                    deduplicatedToDoAlarms.add(alarm)
-                }
-            }
-
-        val dbTasksToDo = deduplicatedToDoAlarms.map { alarm ->
-            TaskItem(title = alarm.taskTitle, deadline = alarm.targetDateLabel, status = TaskStatus.TODO)
-        }
-
-        // All 8 unfinished tasks must be retained (no 5-item cap, no 24h cutoff)
-        assertEquals("Toàn bộ 8 nhiệm vụ chưa xong phải được giữ lại đầy đủ", 8, dbTasksToDo.size)
     }
 
     // =========================================================================
