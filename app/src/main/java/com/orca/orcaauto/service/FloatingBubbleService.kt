@@ -106,6 +106,7 @@ class FloatingBubbleService : Service() {
     private var currentTasksBoardLayout: LinearLayout? = null
     private var currentCardLayoutRef: View? = null
     private val dismissedTaskTitles = mutableSetOf<String>()
+    @Volatile private var isSwipeAnimating: Boolean = false
     private var alarmDbMap = mapOf<String, SmartAlarmEntity>()
     private var currentAnimator: ValueAnimator? = null
     private var cachedWallpaperBmp: Bitmap? = null
@@ -209,14 +210,10 @@ class FloatingBubbleService : Service() {
                     .getAllAlarmsFlow()
                     .collect { alarms ->
                         alarmDbMap = alarms.associateBy { it.alarmId }
-                        if (isExpanded) {
-                            if (!isCallingAi) {
-                                updateBubbleContent()
-                            } else {
-                                currentTasksBoardLayout?.let { board ->
-                                    currentCardLayoutRef?.let { card ->
-                                        populateTaskBoard(board, card, hasAdvice = true)
-                                    }
+                        if (isExpanded && !isSwipeAnimating) {
+                            currentTasksBoardLayout?.let { board ->
+                                currentCardLayoutRef?.let { card ->
+                                    populateTaskBoard(board, card, hasAdvice = isCallingAi || !activeChatAnswer.isNullOrBlank() || latestSummaryText.isNotBlank())
                                 }
                             }
                         }
@@ -246,6 +243,7 @@ class FloatingBubbleService : Service() {
                                 latestModelInfo = latest.modelInfo
                             }
                             if (isNewSummary && hasTasks) {
+                                dismissedTaskTitles.clear()
                                 UserPreferences.getInstance(this@FloatingBubbleService).setHasUnreadSummary(true)
                                 withContext(Dispatchers.Main) {
                                     if (bubbleRootView != null && !isExpanded) {
@@ -1152,6 +1150,8 @@ class FloatingBubbleService : Service() {
         activeChatAnswer = null
         currentTasksBoardLayout = null
         currentCardLayoutRef = null
+        dismissedTaskTitles.clear()
+        isSwipeAnimating = false
         try {
             com.orca.orcaauto.domain.voice.VoiceBriefingManager.getInstance(this).stop()
         } catch (_: Exception) {}
@@ -1186,78 +1186,110 @@ class FloatingBubbleService : Service() {
 
         val parsed = SummaryParser.parse(latestSummaryText)
         val speakableParsed = SystemAlarmHelper.filterOutCancelled(parsed, alarmDbMap)
-        val existingParsedTasks = speakableParsed.tasksToDo + speakableParsed.tasksPlanned + speakableParsed.tasksDone
 
-        val dbTasksToDo = mutableListOf<TaskItem>()
-        val dbTasksDone = mutableListOf<TaskItem>()
-
-        for (alarm in alarmDbMap.values) {
-            if (alarm.status == SmartAlarmStatus.CANCELLED || alarm.status == SmartAlarmStatus.EXPIRED) {
-                continue
-            }
-            val alreadyPresent = existingParsedTasks.any { task ->
-                SystemAlarmHelper.isTitleMatching(task.title, alarm.taskTitle)
-            }
-            if (!alreadyPresent) {
-                if (alarm.status == SmartAlarmStatus.COMPLETED) {
-                    dbTasksDone.add(
-                        TaskItem(
-                            title = alarm.taskTitle,
-                            deadline = alarm.targetDateLabel,
-                            status = TaskStatus.DONE
-                        )
-                    )
-                } else {
-                    dbTasksToDo.add(
-                        TaskItem(
-                            title = alarm.taskTitle,
-                            deadline = alarm.targetDateLabel,
-                            status = TaskStatus.TODO
-                        )
-                    )
-                }
-            }
+        // Filter out dismissed tasks and completed tasks from parsed TODO/Planned
+        val parsedTasksToDo = speakableParsed.tasksToDo.filterNot { task ->
+            dismissedTaskTitles.any { SystemAlarmHelper.isTitleMatching(task.title, it) } ||
+            SystemAlarmHelper.isTaskCompleted(task.title, alarmDbMap)
+        }
+        val parsedTasksPlanned = speakableParsed.tasksPlanned.filterNot { task ->
+            dismissedTaskTitles.any { SystemAlarmHelper.isTitleMatching(task.title, it) } ||
+            SystemAlarmHelper.isTaskCompleted(task.title, alarmDbMap)
+        }
+        val parsedTasksDone = speakableParsed.tasksDone.filterNot { task ->
+            dismissedTaskTitles.any { SystemAlarmHelper.isTitleMatching(task.title, it) }
         }
 
-        val allTasksToDo = speakableParsed.tasksToDo + dbTasksToDo
-        val allTasksPlanned = speakableParsed.tasksPlanned
-        val allTasksDone = speakableParsed.tasksDone + dbTasksDone
+        val existingParsedTasks = parsedTasksToDo + parsedTasksPlanned + parsedTasksDone
+
+        val now = System.currentTimeMillis()
+        val startOfToday = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        val cutoff24h = now - 24 * 3600 * 1000L
+
+        // Candidates from DB: exclude cancelled, expired, already present in parsed tasks, or dismissed
+        val validDbAlarms = alarmDbMap.values
+            .filter { it.status != SmartAlarmStatus.CANCELLED && it.status != SmartAlarmStatus.EXPIRED }
+            .filterNot { alarm ->
+                dismissedTaskTitles.any { SystemAlarmHelper.isTitleMatching(it, alarm.taskTitle) } ||
+                existingParsedTasks.any { task ->
+                    SystemAlarmHelper.isTitleMatching(task.title, alarm.taskTitle)
+                }
+            }
+
+        // Layer 1: Internal deduplication for dbTasksDone (COMPLETED within today or last 24h, newest updatedAt first, max 5)
+        val deduplicatedDoneAlarms = mutableListOf<SmartAlarmEntity>()
+        validDbAlarms
+            .filter { it.status == SmartAlarmStatus.COMPLETED }
+            .filter { it.targetTimeMillis >= startOfToday || it.updatedAt >= cutoff24h }
+            .sortedByDescending { it.updatedAt }
+            .forEach { alarm ->
+                val alreadyPresent = deduplicatedDoneAlarms.any { existing ->
+                    SystemAlarmHelper.isTitleMatching(existing.taskTitle, alarm.taskTitle)
+                }
+                if (!alreadyPresent) {
+                    deduplicatedDoneAlarms.add(alarm)
+                }
+            }
+
+        val dbTasksDone = deduplicatedDoneAlarms.take(5).map { alarm ->
+            TaskItem(
+                title = alarm.taskTitle,
+                deadline = alarm.targetDateLabel,
+                status = TaskStatus.DONE
+            )
+        }
+
+        // Layer 2: Internal deduplication for dbTasksToDo (TODO / ACTIVE / PROPOSED, newest updatedAt first, retain all unfinished)
+        val deduplicatedToDoAlarms = mutableListOf<SmartAlarmEntity>()
+        validDbAlarms
+            .filter { it.status != SmartAlarmStatus.COMPLETED }
+            .sortedByDescending { it.updatedAt }
+            .forEach { alarm ->
+                val alreadyInDone = deduplicatedDoneAlarms.any { doneAlarm ->
+                    SystemAlarmHelper.isTitleMatching(doneAlarm.taskTitle, alarm.taskTitle) &&
+                        doneAlarm.updatedAt >= alarm.updatedAt
+                }
+                val alreadyPresent = deduplicatedToDoAlarms.any { existing ->
+                    SystemAlarmHelper.isTitleMatching(existing.taskTitle, alarm.taskTitle)
+                }
+                if (!alreadyInDone && !alreadyPresent) {
+                    deduplicatedToDoAlarms.add(alarm)
+                }
+            }
+
+        val dbTasksToDo = deduplicatedToDoAlarms.map { alarm ->
+            TaskItem(
+                title = alarm.taskTitle,
+                deadline = alarm.targetDateLabel,
+                status = TaskStatus.TODO
+            )
+        }
+
+        val allTasksToDo = parsedTasksToDo + dbTasksToDo
+        val allTasksPlanned = parsedTasksPlanned
+        val allTasksDone = (parsedTasksDone + dbTasksDone).take(5)
         val allTasks = allTasksToDo + allTasksPlanned + allTasksDone
 
         if (allTasks.isEmpty()) {
-            if (!hasAdvice) {
-                val emptyBox = LinearLayout(this).apply {
-                    tag = "EMPTY_BOX_TAG"
-                    orientation = LinearLayout.VERTICAL
-                    gravity = Gravity.CENTER
-                    setPadding(0, dpToPx(36), 0, dpToPx(36))
-                }
-                val emptyIcon = TextView(this).apply {
-                    text = "✨"
-                    textSize = 28f
-                    gravity = Gravity.CENTER
-                }
-                emptyBox.addView(emptyIcon)
-                val emptyTv = TextView(this).apply {
-                    text = "Không có nhiệm vụ tồn đọng. Mọi thứ đã hoàn tất!"
-                    setTextColor(Color.parseColor("#94A3B8"))
-                    textSize = 12f
-                    gravity = Gravity.CENTER
-                    setPadding(0, dpToPx(6), 0, 0)
-                }
-                emptyBox.addView(emptyTv)
-                container.addView(emptyBox)
-            }
-        } else {
-            allTasksToDo.forEach { task ->
-                container.addView(renderTaskRow(task, isPlanned = false, cardLayout = cardLayout))
-            }
-            allTasksPlanned.forEach { task ->
-                container.addView(renderTaskRow(task, isPlanned = true, cardLayout = cardLayout))
-            }
-            allTasksDone.forEach { task ->
-                container.addView(renderTaskRow(task, isPlanned = false, cardLayout = cardLayout))
-            }
+            container.removeAllViews()
+            container.visibility = View.GONE
+            return
+        }
+
+        container.visibility = View.VISIBLE
+        allTasksToDo.forEach { task ->
+            container.addView(renderTaskRow(task, isPlanned = false, cardLayout = cardLayout))
+        }
+        allTasksPlanned.forEach { task ->
+            container.addView(renderTaskRow(task, isPlanned = true, cardLayout = cardLayout))
+        }
+        allTasksDone.forEach { task ->
+            container.addView(renderTaskRow(task, isPlanned = false, cardLayout = cardLayout))
         }
     }
 
@@ -1270,6 +1302,8 @@ class FloatingBubbleService : Service() {
         currentAnimator?.cancel()
         isCollapsing = false
         updateShakeDetectorState()
+        dismissedTaskTitles.clear()
+        isSwipeAnimating = false
         root.removeAllViews()
         root.alpha = 1.0f
 
@@ -1767,16 +1801,8 @@ class FloatingBubbleService : Service() {
                                     targetAdviceTv.text = uiState.streamedContentClean.ifBlank { "Đang thực thi tác vụ..." }
                                 }
                                 AssistantStep.COMPLETED -> {
-                                    val parsed = SummaryParser.parse(uiState.streamedContentClean)
-                                    val allTasks = parsed.tasksToDo + parsed.tasksPlanned + parsed.tasksDone
-
-                                    if (allTasks.isNotEmpty()) {
-                                        latestSummaryText = uiState.streamedContentClean
-                                        activeChatAnswer = null
-                                    } else {
-                                        // Chat answers without tasks do NOT overwrite latestSummaryText!
-                                        activeChatAnswer = uiState.streamedContentClean
-                                    }
+                                    // AI chat responses strictly record in activeChatAnswer; NEVER overwrite or blank latestSummaryText
+                                    activeChatAnswer = uiState.streamedContentClean
 
                                     uiState.activeUsedKey?.let { key ->
                                         latestModelInfo = "${key.provider.displayName} • ${key.modelName}"
@@ -1784,6 +1810,7 @@ class FloatingBubbleService : Service() {
                                     }
 
                                     // Gộp Lời chỉ dẫn + Thẻ ghi chú khi chat
+                                    val parsed = SummaryParser.parse(uiState.streamedContentClean)
                                     val cleanAdvice = SummaryParser.cleanAdviceText(parsed.conciseAdvice)
                                     targetAdviceTv.text = if (cleanAdvice.isNotBlank()) cleanAdvice else parsed.conciseAdvice.ifBlank { uiState.streamedContentClean }
 
@@ -2652,6 +2679,8 @@ class FloatingBubbleService : Service() {
                         val dx = event.rawX - startX
                         if (dx > swipeThreshold && !isCompleted && !isCancelled) {
                             // Vuốt phải vượt 72dp -> Hoàn thành
+                            isSwipeAnimating = true
+                            dismissedTaskTitles.add(cleanTitle)
                             v.animate().translationX(v.width.toFloat()).setDuration(160).withEndAction {
                                 SystemAlarmHelper.markTaskCompleted(this@FloatingBubbleService, cleanTitle, alarmId)
                                 val completedAlarm = (existingAlarm ?: SmartAlarmEntity(
@@ -2663,10 +2692,21 @@ class FloatingBubbleService : Service() {
                                 )).copy(status = SmartAlarmStatus.COMPLETED, updatedAt = System.currentTimeMillis())
                                 alarmDbMap = alarmDbMap + (alarmId to completedAlarm) + (generatedAlarmId to completedAlarm)
                                 Toast.makeText(this@FloatingBubbleService, "✓ Đã hoàn thành: ${cleanTitle.take(24)}...", Toast.LENGTH_SHORT).show()
-                                updateBubbleContent()
+
+                                container.visibility = View.GONE
+                                currentTasksBoardLayout?.removeView(container)
+                                val hasVisibleChild = currentTasksBoardLayout?.let { board ->
+                                    (0 until board.childCount).any { idx -> board.getChildAt(idx).visibility == View.VISIBLE }
+                                } ?: false
+                                if (!hasVisibleChild) {
+                                    currentTasksBoardLayout?.visibility = View.GONE
+                                }
+                                isSwipeAnimating = false
                             }.start()
                         } else if (dx < -swipeThreshold && !isCancelled) {
                             // Vuốt trái vượt 72dp -> Hủy việc
+                            isSwipeAnimating = true
+                            dismissedTaskTitles.add(cleanTitle)
                             v.animate().translationX(-v.width.toFloat()).setDuration(160).withEndAction {
                                 SystemAlarmHelper.markTaskCancelled(this@FloatingBubbleService, cleanTitle, alarmId)
                                 val cancelledAlarm = (existingAlarm ?: SmartAlarmEntity(
@@ -2678,7 +2718,16 @@ class FloatingBubbleService : Service() {
                                 )).copy(status = SmartAlarmStatus.CANCELLED, updatedAt = System.currentTimeMillis())
                                 alarmDbMap = alarmDbMap + (alarmId to cancelledAlarm) + (generatedAlarmId to cancelledAlarm)
                                 Toast.makeText(this@FloatingBubbleService, "✕ Đã hủy: ${cleanTitle.take(24)}...", Toast.LENGTH_SHORT).show()
-                                updateBubbleContent()
+
+                                container.visibility = View.GONE
+                                currentTasksBoardLayout?.removeView(container)
+                                val hasVisibleChild = currentTasksBoardLayout?.let { board ->
+                                    (0 until board.childCount).any { idx -> board.getChildAt(idx).visibility == View.VISIBLE }
+                                } ?: false
+                                if (!hasVisibleChild) {
+                                    currentTasksBoardLayout?.visibility = View.GONE
+                                }
+                                isSwipeAnimating = false
                             }.start()
                         } else {
                             v.animate().translationX(0f).setDuration(180).withEndAction {
@@ -2716,6 +2765,7 @@ class FloatingBubbleService : Service() {
                             rightSwipeAction.visibility = View.GONE
                         }.start()
                     }
+                    isSwipeAnimating = false
                     false
                 }
                 else -> false

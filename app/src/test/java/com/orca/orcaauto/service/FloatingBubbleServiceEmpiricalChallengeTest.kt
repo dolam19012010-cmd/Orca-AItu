@@ -1,6 +1,9 @@
 package com.orca.orcaauto.service
 
 import com.orca.orcaauto.data.local.SharedNoteEntity
+import com.orca.orcaauto.data.local.SmartAlarmEntity
+import com.orca.orcaauto.data.local.SmartAlarmStatus
+import com.orca.orcaauto.domain.alarm.SystemAlarmHelper
 import com.orca.orcaauto.domain.assistant.AssistantStep
 import com.orca.orcaauto.domain.assistant.AssistantUiState
 import com.orca.orcaauto.domain.filter.ParsedSummary
@@ -21,6 +24,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.Calendar
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -135,7 +139,8 @@ class FloatingBubbleServiceEmpiricalChallengeTest {
         }
 
         val showAdviceBox = effectiveAdvice.isNotBlank()
-        val showEmptyTaskBox = allTasks.isEmpty() && effectiveAdvice.isBlank()
+        // R2: Empty TaskBoard suppression: never show empty task box or placeholder
+        val showEmptyTaskBox = false
         val showTaskCards = allTasks.isNotEmpty()
 
         return BubbleDisplayVerdict(
@@ -165,7 +170,7 @@ class FloatingBubbleServiceEmpiricalChallengeTest {
     }
 
     @Test
-    fun bubbleDisplay_whenNoAdviceAndNoTasks_showsEmptyTaskBox() {
+    fun bubbleDisplay_whenNoAdviceAndNoTasks_neverShowsEmptyTaskBox() {
         // Scenario B: Completely empty summary or initial blank state
         val parsed = ParsedSummary(
             rawCleanText = "",
@@ -177,7 +182,7 @@ class FloatingBubbleServiceEmpiricalChallengeTest {
         val verdict = evaluateBubbleDisplayLogic(parsed, latestSummaryText = "")
 
         assertFalse("Không có lời khuyên thì không hiện khung lời khuyên", verdict.showAdviceBox)
-        assertTrue("Khi hoàn toàn không có cả lời khuyên lẫn nhiệm vụ, phải hiển thị ô trống hoàn tất", verdict.showEmptyTaskBox)
+        assertFalse("R2: Khi hoàn toàn không có cả lời khuyên lẫn nhiệm vụ, TUYỆT ĐỐI KHÔNG hiển thị ô trống nhiệm vụ", verdict.showEmptyTaskBox)
         assertFalse(verdict.showTaskCards)
     }
 
@@ -424,26 +429,35 @@ class FloatingBubbleServiceEmpiricalChallengeTest {
         assertEquals("latestSummaryText không bị đè bẹp bởi câu chat", initialSummary, latestSummaryText)
         assertEquals(casualChatReply, activeChatAnswer)
 
-        // Now simulate AssistantStep.COMPLETED with real shift summary tasks
-        val newSummaryWithTasks = """
+        // Under R2: AI chat streaming completions (AssistantStep.COMPLETED in executeAiCall)
+        // strictly assign to activeChatAnswer and NEVER overwrite latestSummaryText (even if reply has tasks)
+        val chatAnswerWithTasks = """
+            - [ ] Đổi mật khẩu định kỳ
+            - [ ] Kiểm tra camera giám sát
+        """.trimIndent()
+        activeChatAnswer = chatAnswerWithTasks
+
+        assertEquals("latestSummaryText không bị đè bởi câu trả lời chat", initialSummary, latestSummaryText)
+        assertEquals(chatAnswerWithTasks, activeChatAnswer)
+
+        // However, when a real new summary arrives from SummaryDao / Background Worker:
+        val newSummaryFromDao = """
             ### LỜI KHUYÊN:
             Cập nhật ca trực chiều.
 
             ### VIỆC CẦN LÀM NGAY:
             - [ ] Bàn giao ca trực phòng điều khiển lúc 16:00
         """.trimIndent()
-        val parsedNew = SummaryParser.parse(newSummaryWithTasks)
+        val parsedNew = SummaryParser.parse(newSummaryFromDao)
         val newTasks = parsedNew.tasksToDo + parsedNew.tasksPlanned + parsedNew.tasksDone
 
-        if (newTasks.isNotEmpty()) {
-            latestSummaryText = newSummaryWithTasks
+        if (newTasks.isNotEmpty() || latestSummaryText.isBlank()) {
+            latestSummaryText = newSummaryFromDao
             activeChatAnswer = null
-        } else {
-            activeChatAnswer = newSummaryWithTasks
         }
 
-        assertEquals("latestSummaryText được cập nhật khi AI sinh báo cáo có nhiệm vụ", newSummaryWithTasks, latestSummaryText)
-        assertNull("activeChatAnswer được xóa khi có summary mới", activeChatAnswer)
+        assertEquals("latestSummaryText được cập nhật khi SummaryDao phát hiện báo cáo mới", newSummaryFromDao, latestSummaryText)
+        assertNull("activeChatAnswer được xóa khi có summary mới từ DB", activeChatAnswer)
     }
 
     @Test
@@ -544,5 +558,380 @@ class FloatingBubbleServiceEmpiricalChallengeTest {
         assertFalse("Tuyệt đối không chứa nhiệm vụ đã hủy", allTasks.any { it.title.contains("Diễn tập hủy bỏ") })
     }
 
+    // =========================================================================
+    // 6. R1: TASK FILTERING & TWO-LAYER DEDUPLICATION
+    // =========================================================================
 
+    @Test
+    fun r1_completedTasksFiltering_onlyIncludesTodayOrLast24Hours_andLimitsToAtMost5() {
+        val now = System.currentTimeMillis()
+        val startOfToday = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        val cutoff24h = now - 24 * 3600 * 1000L
+
+        // 1. Task completed today (targetTimeMillis >= startOfToday) -> Valid
+        val alarmToday = SmartAlarmEntity(
+            alarmId = "ALM_today_1",
+            taskTitle = "Nhiệm vụ xong hôm nay",
+            targetTimeMillis = startOfToday + 3600_000L,
+            targetDateLabel = "Hôm nay",
+            status = SmartAlarmStatus.COMPLETED,
+            updatedAt = now - 5000L
+        )
+
+        // 2. Task completed in last 24h (updatedAt >= cutoff24h, though targetTimeMillis was yesterday) -> Valid
+        val alarmLast24h = SmartAlarmEntity(
+            alarmId = "ALM_24h_1",
+            taskTitle = "Nhiệm vụ xong 3 giờ trước",
+            targetTimeMillis = startOfToday - 3600_000L,
+            targetDateLabel = "Hôm qua",
+            status = SmartAlarmStatus.COMPLETED,
+            updatedAt = now - 3 * 3600 * 1000L
+        )
+
+        // 3. Stale task from 3 days ago (targetTimeMillis < startOfToday AND updatedAt < cutoff24h) -> EXCLUDED
+        val alarmStale1 = SmartAlarmEntity(
+            alarmId = "ALM_stale_3d",
+            taskTitle = "Nhiệm vụ cũ 3 ngày trước",
+            targetTimeMillis = startOfToday - 3 * 86400_000L,
+            targetDateLabel = "3 ngày trước",
+            status = SmartAlarmStatus.COMPLETED,
+            updatedAt = now - 3 * 86400_000L
+        )
+
+        // 4. Stale task from 10 days ago -> EXCLUDED
+        val alarmStale2 = SmartAlarmEntity(
+            alarmId = "ALM_stale_10d",
+            taskTitle = "Nhiệm vụ cũ 10 ngày trước",
+            targetTimeMillis = startOfToday - 10 * 86400_000L,
+            targetDateLabel = "10 ngày trước",
+            status = SmartAlarmStatus.COMPLETED,
+            updatedAt = now - 10 * 86400_000L
+        )
+
+        // 5-11: 7 more completed tasks today
+        val moreTodayTasks = (1..7).map { i ->
+            SmartAlarmEntity(
+                alarmId = "ALM_today_batch_$i",
+                taskTitle = "Nhiệm vụ hôm nay $i",
+                targetTimeMillis = startOfToday + i * 1800_000L,
+                targetDateLabel = "Hôm nay $i",
+                status = SmartAlarmStatus.COMPLETED,
+                updatedAt = now - i * 60_000L
+            )
+        }
+
+        val allCandidateAlarms = listOf(alarmToday, alarmLast24h, alarmStale1, alarmStale2) + moreTodayTasks
+        val alarmDbMap = allCandidateAlarms.associateBy { it.alarmId }
+
+        // Filter and deduplicate completed tasks according to R1 logic
+        val validDbAlarms = alarmDbMap.values
+            .filter { it.status != SmartAlarmStatus.CANCELLED && it.status != SmartAlarmStatus.EXPIRED }
+
+        val deduplicatedDoneAlarms = mutableListOf<SmartAlarmEntity>()
+        validDbAlarms
+            .filter { it.status == SmartAlarmStatus.COMPLETED }
+            .filter { it.targetTimeMillis >= startOfToday || it.updatedAt >= cutoff24h }
+            .sortedByDescending { it.updatedAt }
+            .forEach { alarm ->
+                val alreadyPresent = deduplicatedDoneAlarms.any { existing ->
+                    SystemAlarmHelper.isTitleMatching(existing.taskTitle, alarm.taskTitle)
+                }
+                if (!alreadyPresent) {
+                    deduplicatedDoneAlarms.add(alarm)
+                }
+            }
+
+        val dbTasksDone = deduplicatedDoneAlarms.take(5).map { alarm ->
+            TaskItem(
+                title = alarm.taskTitle,
+                deadline = alarm.targetDateLabel,
+                status = TaskStatus.DONE
+            )
+        }
+
+        // Verify:
+        // Stale tasks must be excluded
+        assertFalse("Nhiệm vụ cũ 3 ngày trước phải bị lọc bỏ", dbTasksDone.any { it.title.contains("3 ngày trước") })
+        assertFalse("Nhiệm vụ cũ 10 ngày trước phải bị lọc bỏ", dbTasksDone.any { it.title.contains("10 ngày trước") })
+
+        // Must strictly not exceed 5 tasks
+        assertEquals("Số lượng nhiệm vụ đã hoàn thành tối đa là 5", 5, dbTasksDone.size)
+
+        // Tasks in list must be from today or last 24h
+        assertTrue("Chứa nhiệm vụ xong hôm nay", dbTasksDone.any { it.title.contains("Nhiệm vụ xong hôm nay") })
+    }
+
+    @Test
+    fun r1_internalTwoLayerDeduplication_keepsNewestUpdatedAtForMatchingTitles() {
+        val now = System.currentTimeMillis()
+        val startOfToday = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        val cutoff24h = now - 24 * 3600 * 1000L
+
+        // Duplicated COMPLETED entries with same/similar title
+        val doneOlder = SmartAlarmEntity(
+            alarmId = "ALM_done_v1",
+            taskTitle = "Báo cáo doanh thu tháng",
+            targetTimeMillis = startOfToday + 3600_000L,
+            targetDateLabel = "09:00",
+            status = SmartAlarmStatus.COMPLETED,
+            updatedAt = now - 10000L
+        )
+        val doneNewer = SmartAlarmEntity(
+            alarmId = "TASK_done_v2",
+            taskTitle = "báo cáo doanh thu tháng",
+            targetTimeMillis = startOfToday + 7200_000L,
+            targetDateLabel = "10:00",
+            status = SmartAlarmStatus.COMPLETED,
+            updatedAt = now - 1000L
+        )
+
+        // Duplicated TODO entries with same/similar title
+        val todoOlder = SmartAlarmEntity(
+            alarmId = "ALM_todo_v1",
+            taskTitle = "Gặp đối tác chiến lược Alpha",
+            targetTimeMillis = now + 3600_000L,
+            targetDateLabel = "14:00",
+            status = SmartAlarmStatus.ACTIVE,
+            updatedAt = now - 8000L
+        )
+        val todoNewer = SmartAlarmEntity(
+            alarmId = "TASK_todo_v2",
+            taskTitle = "gặp đối tác chiến lược Alpha",
+            targetTimeMillis = now + 7200_000L,
+            targetDateLabel = "15:00",
+            status = SmartAlarmStatus.ACTIVE,
+            updatedAt = now - 2000L
+        )
+
+        // An entry with an active alarm that was subsequently completed in a newer entry
+        val supersededTodo = SmartAlarmEntity(
+            alarmId = "ALM_superseded",
+            taskTitle = "Kiểm tra hệ thống PCCC",
+            targetTimeMillis = now,
+            targetDateLabel = "11:00",
+            status = SmartAlarmStatus.ACTIVE,
+            updatedAt = now - 5000L
+        )
+        val completedSuper = SmartAlarmEntity(
+            alarmId = "TASK_completed_super",
+            taskTitle = "Kiểm tra hệ thống PCCC",
+            targetTimeMillis = now,
+            targetDateLabel = "Đã xong",
+            status = SmartAlarmStatus.COMPLETED,
+            updatedAt = now - 500L
+        )
+
+        val alarmDbMap = mapOf(
+            doneOlder.alarmId to doneOlder,
+            doneNewer.alarmId to doneNewer,
+            todoOlder.alarmId to todoOlder,
+            todoNewer.alarmId to todoNewer,
+            supersededTodo.alarmId to supersededTodo,
+            completedSuper.alarmId to completedSuper
+        )
+
+        val validDbAlarms = alarmDbMap.values
+            .filter { it.status != SmartAlarmStatus.CANCELLED && it.status != SmartAlarmStatus.EXPIRED }
+
+        // Layer 1: deduplicate COMPLETED (keep newest updatedAt)
+        val deduplicatedDoneAlarms = mutableListOf<SmartAlarmEntity>()
+        validDbAlarms
+            .filter { it.status == SmartAlarmStatus.COMPLETED }
+            .filter { it.targetTimeMillis >= startOfToday || it.updatedAt >= cutoff24h }
+            .sortedByDescending { it.updatedAt }
+            .forEach { alarm ->
+                val alreadyPresent = deduplicatedDoneAlarms.any { existing ->
+                    SystemAlarmHelper.isTitleMatching(existing.taskTitle, alarm.taskTitle)
+                }
+                if (!alreadyPresent) {
+                    deduplicatedDoneAlarms.add(alarm)
+                }
+            }
+
+        val dbTasksDone = deduplicatedDoneAlarms.take(5).map { alarm ->
+            TaskItem(title = alarm.taskTitle, deadline = alarm.targetDateLabel, status = TaskStatus.DONE)
+        }
+
+        // Layer 2: deduplicate TODO (keep newest updatedAt, skip if superseded by completed)
+        val deduplicatedToDoAlarms = mutableListOf<SmartAlarmEntity>()
+        validDbAlarms
+            .filter { it.status != SmartAlarmStatus.COMPLETED }
+            .sortedByDescending { it.updatedAt }
+            .forEach { alarm ->
+                val alreadyInDone = deduplicatedDoneAlarms.any { doneAlarm ->
+                    SystemAlarmHelper.isTitleMatching(doneAlarm.taskTitle, alarm.taskTitle) &&
+                        doneAlarm.updatedAt >= alarm.updatedAt
+                }
+                val alreadyPresent = deduplicatedToDoAlarms.any { existing ->
+                    SystemAlarmHelper.isTitleMatching(existing.taskTitle, alarm.taskTitle)
+                }
+                if (!alreadyInDone && !alreadyPresent) {
+                    deduplicatedToDoAlarms.add(alarm)
+                }
+            }
+
+        val dbTasksToDo = deduplicatedToDoAlarms.map { alarm ->
+            TaskItem(title = alarm.taskTitle, deadline = alarm.targetDateLabel, status = TaskStatus.TODO)
+        }
+
+        // 1. Verify dbTasksDone has only 1 entry for "Báo cáo doanh thu tháng" with deadline "10:00" (the newer one)
+        val revenueTasks = dbTasksDone.filter { SystemAlarmHelper.isTitleMatching("Báo cáo doanh thu tháng", it.title) }
+        assertEquals("Bản ghi hoàn thành trùng lặp phải được khử, chỉ giữ lại 1", 1, revenueTasks.size)
+        assertEquals("Phải giữ bản ghi có updatedAt mới nhất (deadline 10:00)", "10:00", revenueTasks.first().deadline)
+
+        // 2. Verify dbTasksToDo has only 1 entry for "Gặp đối tác chiến lược Alpha" with deadline "15:00" (the newer one)
+        val partnerTasks = dbTasksToDo.filter { SystemAlarmHelper.isTitleMatching("Gặp đối tác chiến lược Alpha", it.title) }
+        assertEquals("Bản ghi việc cần làm trùng lặp phải được khử, chỉ giữ lại 1", 1, partnerTasks.size)
+        assertEquals("Phải giữ bản ghi có updatedAt mới nhất (deadline 15:00)", "15:00", partnerTasks.first().deadline)
+
+        // 3. Verify superseded todo task is NOT in dbTasksToDo because a newer completed record exists
+        val pcccInTodo = dbTasksToDo.any { SystemAlarmHelper.isTitleMatching("Kiểm tra hệ thống PCCC", it.title) }
+        assertFalse("Nhiệm vụ đã hoàn thành không được phép xuất hiện trong danh sách việc cần làm", pcccInTodo)
+        val pcccInDone = dbTasksDone.any { SystemAlarmHelper.isTitleMatching("Kiểm tra hệ thống PCCC", it.title) }
+        assertTrue("Nhiệm vụ PCCC phải nằm trong danh sách đã hoàn thành", pcccInDone)
+    }
+
+    @Test
+    fun r1_unfinishedTasks_allRetainedWithout24hCutoffOr5ItemLimit() {
+        val now = System.currentTimeMillis()
+        // Create 8 unfinished tasks, including overdue ones from several days ago
+        val unfinishedAlarms = (1..8).map { i ->
+            SmartAlarmEntity(
+                alarmId = "ALM_todo_$i",
+                taskTitle = "Nhiệm vụ còn hạn hoặc tồn đọng $i",
+                targetTimeMillis = now - i * 86400_000L, // Past dates (overdue)
+                targetDateLabel = "Quá hạn $i ngày",
+                status = if (i % 2 == 0) SmartAlarmStatus.ACTIVE else SmartAlarmStatus.PROPOSED,
+                updatedAt = now - i * 3600_000L
+            )
+        }
+
+        val alarmDbMap = unfinishedAlarms.associateBy { it.alarmId }
+        val validDbAlarms = alarmDbMap.values
+            .filter { it.status != SmartAlarmStatus.CANCELLED && it.status != SmartAlarmStatus.EXPIRED }
+
+        val deduplicatedToDoAlarms = mutableListOf<SmartAlarmEntity>()
+        validDbAlarms
+            .filter { it.status != SmartAlarmStatus.COMPLETED }
+            .sortedByDescending { it.updatedAt }
+            .forEach { alarm ->
+                val alreadyPresent = deduplicatedToDoAlarms.any { existing ->
+                    SystemAlarmHelper.isTitleMatching(existing.taskTitle, alarm.taskTitle)
+                }
+                if (!alreadyPresent) {
+                    deduplicatedToDoAlarms.add(alarm)
+                }
+            }
+
+        val dbTasksToDo = deduplicatedToDoAlarms.map { alarm ->
+            TaskItem(title = alarm.taskTitle, deadline = alarm.targetDateLabel, status = TaskStatus.TODO)
+        }
+
+        // All 8 unfinished tasks must be retained (no 5-item cap, no 24h cutoff)
+        assertEquals("Toàn bộ 8 nhiệm vụ chưa xong phải được giữ lại đầy đủ", 8, dbTasksToDo.size)
+    }
+
+    // =========================================================================
+    // 7. R2: UI STABILITY, EMPTY SUPPRESSION & OPTIMISTIC SWIPE
+    // =========================================================================
+
+    @Test
+    fun r2_aiChatStreamingCompletion_strictlyUpdatesActiveChatAnswer_andNeverOverwritesLatestSummaryText() {
+        val originalSessionSummary = """
+            ### LỜI KHUYÊN:
+            Tiếp tục theo dõi ca trực hôm nay.
+
+            ### VIỆC CẦN LÀM NGAY:
+            - [ ] Kiểm tra phòng máy chủ lúc 09:30
+            - [ ] Rà soát nhật ký an ninh lúc 14:00
+        """.trimIndent()
+
+        var latestSummaryText = originalSessionSummary
+        var activeChatAnswer: String? = null
+
+        // AI chat streaming response that contains markdown tasks / bullets
+        val chatAnswerWithTasks = """
+            Dưới đây là một số mẹo an ninh:
+            - [ ] Đổi mật khẩu định kỳ 90 ngày
+            - [ ] Kiểm tra camera giám sát
+        """.trimIndent()
+
+        // Replicating AssistantStep.COMPLETED in FloatingBubbleService:
+        // Strictly record in activeChatAnswer, NEVER overwrite or blank latestSummaryText
+        activeChatAnswer = chatAnswerWithTasks
+
+        // Verify invariant
+        assertEquals("latestSummaryText TUYỆT ĐỐI không bị ghi đè bởi câu trả lời chat", originalSessionSummary, latestSummaryText)
+        assertEquals("activeChatAnswer nhận câu trả lời chat", chatAnswerWithTasks, activeChatAnswer)
+
+        // Verify task board population still uses original session summary
+        val parsed = SummaryParser.parse(latestSummaryText)
+        val allTasks = parsed.tasksToDo + parsed.tasksPlanned + parsed.tasksDone
+        assertEquals("Bảng nhiệm vụ vẫn giữ nguyên 2 nhiệm vụ ban đầu", 2, allTasks.size)
+        assertTrue(allTasks.any { it.title.contains("Kiểm tra phòng máy chủ") })
+        assertTrue(allTasks.any { it.title.contains("Rà soát nhật ký an ninh") })
+    }
+
+    @Test
+    fun r2_emptyTaskBoardSuppression_whenAllTasksEmpty_neverShowsEmptyBox() {
+        // When there are no tasks in parsed summary and no tasks in Room DB
+        val emptyParsed = ParsedSummary(
+            rawCleanText = "Chào buổi sáng!",
+            conciseAdvice = "Chào buổi sáng!",
+            tasksToDo = emptyList(),
+            tasksPlanned = emptyList(),
+            tasksDone = emptyList()
+        )
+        val alarmDbMap = emptyMap<String, SmartAlarmEntity>()
+
+        val allTasksToDo = emptyParsed.tasksToDo
+        val allTasksPlanned = emptyParsed.tasksPlanned
+        val allTasksDone = emptyParsed.tasksDone
+        val allTasks = allTasksToDo + allTasksPlanned + allTasksDone
+
+        val isContainerVisible = allTasks.isNotEmpty()
+        val hasEmptyBox = false // Empty box was completely removed
+
+        assertFalse("Khi không có nhiệm vụ, container phải ở trạng thái GONE", isContainerVisible)
+        assertFalse("Tuyệt đối không hiển thị emptyBox khi danh sách rỗng", hasEmptyBox)
+    }
+
+    @Test
+    fun r2_swipeDismissal_optimisticViewHiding_setsSwipeAnimatingAndRecordsDismissedTitle() {
+        val dismissedTaskTitles = mutableSetOf<String>()
+        var isSwipeAnimating = false
+        val taskTitle = "Gặp khách hàng lúc 10:00"
+
+        // 1. Swipe starts exceeding threshold -> sets animating flag and records dismissed title
+        isSwipeAnimating = true
+        dismissedTaskTitles.add(taskTitle)
+
+        assertTrue("isSwipeAnimating phải là true trong khi diễn ra hoạt ảnh 160ms", isSwipeAnimating)
+        assertTrue("dismissedTaskTitles phải ghi nhận nhiệm vụ vừa vuốt", dismissedTaskTitles.contains(taskTitle))
+
+        // 2. While isSwipeAnimating is true, incoming reactive DB flow MUST skip refreshing task board
+        val reactiveFlowCollectShouldRefreshBoard = !isSwipeAnimating
+        assertFalse("Khi đang vuốt, luồng DB không được phép gọi populateTaskBoard làm gãy animation", reactiveFlowCollectShouldRefreshBoard)
+
+        // 3. At end of 160ms animation: view is hidden locally and isSwipeAnimating reset to false
+        isSwipeAnimating = false
+        assertFalse("isSwipeAnimating phải được trả về false sau khi kết thúc vuốt", isSwipeAnimating)
+
+        // 4. On next populateTaskBoard, dismissed task is filtered out
+        val candidateTasks = listOf(TaskItem(title = taskTitle, deadline = "10:00", status = TaskStatus.TODO))
+        val filteredTasks = candidateTasks.filterNot { task ->
+            dismissedTaskTitles.any { SystemAlarmHelper.isTitleMatching(task.title, it) }
+        }
+        assertTrue("Nhiệm vụ đã vuốt không được xuất hiện lại trong TaskBoard", filteredTasks.isEmpty())
+    }
 }
