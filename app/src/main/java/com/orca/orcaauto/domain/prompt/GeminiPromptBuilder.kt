@@ -148,7 +148,7 @@ object GeminiPromptBuilder {
         contentBuilder.append("\n=== CHỈ THỊ TƯ DUY NỘI BỘ (SYSTEM REASONING GUIDELINES) ===\n")
         contentBuilder.append("Trước khi xuất bản nội dung báo cáo chính thức, bạn BẮT BUỘC phải tư duy logic ngầm theo đúng 5 bước (TUYỆT ĐỐI KHÔNG in ra thẻ nháp hay bước suy luận, chỉ tính toán nội bộ để xuất thẳng kết quả sạch):\n")
         contentBuilder.append("1. Neo thời gian: Xác định NOW là thời điểm nào (dd/MM/yyyy HH:mm). Liệt kê các mốc thời gian tương đối trong tin nhắn (\"mai\", \"chiều nay\", \"15h\") và quy đổi sang mốc thời gian cụ thể.\n")
-        contentBuilder.append("2. Lọc ý định & cam kết: Loại bỏ tin nhắn quảng cáo, mã OTP, tán gẫu không hành động. Chỉ giữ lại các việc có người giao việc hoặc cam kết rõ ràng.\n")
+        contentBuilder.append("2. Lọc ý định & cam kết: Bỏ qua tin rác, tán gẫu. Ưu tiên độ chắc chắn: chỉ ghi nhận việc khi có yêu cầu hoặc cam kết hành động rõ ràng, tránh suy diễn phỏng đoán.\n")
         contentBuilder.append("3. Phân giải mâu thuẫn: Tìm các tin nhắn dời lịch/hủy việc/đính chính; đối chiếu với danh sách việc đã làm/đã hủy để không tạo lặp.\n")
         contentBuilder.append("4. Kiểm toán quá hạn: So sánh hạn của từng việc với NOW. Nếu việc chưa hoàn thành mà đã quá hạn, đánh dấu và giữ lại theo dõi thêm 1-2 phiên theo lệnh người dùng.\n")
         contentBuilder.append("5. Đề xuất báo thức: Tính toán giờ kích hoạt chuông hợp lý (họp/hẹn báo trước 15-30p; việc trong ngày chưa có giờ cụ thể thì ước tính 09:30 hoặc 14:30).\n\n")
