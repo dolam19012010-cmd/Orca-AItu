@@ -9,6 +9,8 @@ import com.orca.orcaauto.data.local.SummaryHistoryEntity
 import com.orca.orcaauto.data.preferences.UserPreferences
 import com.orca.orcaauto.data.remote.UniversalAiClient
 import com.orca.orcaauto.domain.prompt.GeminiPromptBuilder
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -19,8 +21,28 @@ class SummaryWorker(
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
+        val targetHour = inputData.getInt(WorkScheduler.KEY_TARGET_HOUR, -1)
+        val targetMinute = inputData.getInt(WorkScheduler.KEY_TARGET_MINUTE, -1)
+        val isScheduledShift = targetHour in 0..23 && targetMinute in 0..59
+        val nominalShiftTag = if (isScheduledShift) {
+            inputData.getString(WorkScheduler.KEY_NOMINAL_SHIFT_TAG) ?: WorkScheduler.formatShiftTag(targetHour, targetMinute)
+        } else null
+
+        suspend fun rescheduleNextOccurrenceIfNeeded() {
+            if (isScheduledShift) {
+                withContext(NonCancellable) {
+                    try {
+                        WorkScheduler.scheduleNextOccurrence(applicationContext, targetHour, targetMinute)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Không thể tái lập lịch cho ca $nominalShiftTag: ${e.message}")
+                    }
+                }
+            }
+        }
+
         if (runAttemptCount >= 2) {
             Log.w(TAG, "SummaryWorker đã vượt quá số lần thử lại tối đa ($runAttemptCount). Dừng tác vụ để tiết kiệm pin.")
+            rescheduleNextOccurrenceIfNeeded()
             return Result.failure()
         }
 
@@ -28,10 +50,11 @@ class SummaryWorker(
         val preferences = UserPreferences.getInstance(applicationContext)
         val keyPool = preferences.getKeyPool().filter { it.isEnabled && it.rawKey.isNotBlank() }
 
-        Log.i(TAG, "SummaryWorker bắt đầu thực thi tác vụ tóm tắt...")
+        Log.i(TAG, "SummaryWorker bắt đầu thực thi tác vụ tóm tắt [${nominalShiftTag ?: "Thủ công"}]...")
 
         if (keyPool.isEmpty()) {
             Log.i(TAG, "Chưa thiết lập bất kỳ API Key nào trong Key Pool. Hoàn tất chu kỳ để tiết kiệm pin.")
+            rescheduleNextOccurrenceIfNeeded()
             return Result.success()
         }
 
@@ -43,6 +66,7 @@ class SummaryWorker(
 
             if (notificationsIn24h.isEmpty()) {
                 Log.i(TAG, "Không có tin nhắn nào trong 24 giờ qua. Hoàn tất chu kỳ.")
+                rescheduleNextOccurrenceIfNeeded()
                 return Result.success()
             }
 
@@ -74,7 +98,11 @@ class SummaryWorker(
                 }
 
                 Log.i(TAG, "Bắt đầu tóm tắt tuần tự cho phiên '${session.name}' (${sessionMsgs.size} tin nhắn)...")
-                val result = com.orca.orcaauto.domain.LiveAiChatHelper.summarizeSession(applicationContext, session)
+                val result = com.orca.orcaauto.domain.LiveAiChatHelper.summarizeSession(
+                    context = applicationContext,
+                    session = session,
+                    nominalShiftTag = nominalShiftTag
+                )
 
                 if (result.isSuccess) {
                     anySessionSuccess = true
@@ -106,7 +134,7 @@ class SummaryWorker(
                         val timeShort = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
                         com.orca.orcaauto.service.SummaryNotificationHelper.showSummaryReportNotification(
                             context = applicationContext,
-                            timeSlot = timeShort,
+                            timeSlot = nominalShiftTag ?: timeShort,
                             messageCount = displayMessageCount,
                             parsed = parsed,
                             rawSummary = displaySummaryContent,
@@ -134,16 +162,28 @@ class SummaryWorker(
                     Log.w(TAG, "Không thể hiển thị Bong bóng nổi: ${e.message}")
                 }
 
+                rescheduleNextOccurrenceIfNeeded()
                 Result.success()
             } else if (anySessionSuccess) {
+                rescheduleNextOccurrenceIfNeeded()
                 Result.success()
             } else {
                 Log.w(TAG, "Toàn bộ các phiên đều thất bại. Số lần đã thử: $runAttemptCount.")
-                if (runAttemptCount >= 2) Result.failure() else Result.retry()
+                if (runAttemptCount >= 2) {
+                    rescheduleNextOccurrenceIfNeeded()
+                    Result.failure()
+                } else {
+                    Result.retry()
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Lỗi ngoại lệ trong SummaryWorker: ${e.message}. Số lần đã thử: $runAttemptCount.", e)
-            if (runAttemptCount >= 2) Result.failure() else Result.retry()
+            if (runAttemptCount >= 2) {
+                rescheduleNextOccurrenceIfNeeded()
+                Result.failure()
+            } else {
+                Result.retry()
+            }
         }
     }
 

@@ -5,6 +5,7 @@ import android.util.Log
 import com.orca.orcaauto.data.preferences.SummarySessionConfig
 import com.orca.orcaauto.data.preferences.UserPreferences
 import com.orca.orcaauto.data.remote.ApiKeyConfig
+import com.orca.orcaauto.data.remote.RateLimitDetector
 import com.orca.orcaauto.data.remote.StreamUiEvent
 import com.orca.orcaauto.data.remote.StreamingAiClient
 import com.orca.orcaauto.data.remote.UniversalAiClient
@@ -90,7 +91,11 @@ object SequentialAiQueue {
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Throwable) {
-                        Log.w(TAG, "[AI Queue Streaming Failed] Session: '${session.name}' stream failed, falling back to batch execute: ${e.message}")
+                        Log.w(TAG, "[AI Queue Streaming Failed] Session: '${session.name}' stream failed, evaluating fallback: ${e.message}")
+                        if (RateLimitDetector.isRateLimit(e)) {
+                            Log.w(TAG, "[AI Queue 429 Suppressed] Toàn bộ API Key đã cạn hoặc Key đơn bị 429 - Dừng ngay không thử lại batch.")
+                            return@withLock Result.failure(e)
+                        }
                         client.executeWithFailover(resolvedKeys, prompt)
                     }
                 } else {

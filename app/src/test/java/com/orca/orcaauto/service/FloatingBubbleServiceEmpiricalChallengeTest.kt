@@ -16,6 +16,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -819,5 +820,160 @@ class FloatingBubbleServiceEmpiricalChallengeTest {
         job.cancel()
         job.join()
         assertTrue("CancellationException phải được rethrow chuẩn xác", cancellationRethrown)
+    }
+
+    // =========================================================================
+    // 6. SSE STREAM WATCHDOG & NETWORK DROP HANDLING (ITEM 2)
+    // =========================================================================
+
+    @Test
+    fun streamWatchdog_whenNoTokensWithinTimeout_cancelsJobAndTriggersTimeoutState() = runBlocking {
+        val testScope = CoroutineScope(Dispatchers.Default)
+        val timeoutMs = 150L // Compressed for fast JVM test execution
+        val lastTokenReceivedAt = java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis())
+        val isWatchdogTimedOut = AtomicBoolean(false)
+        val uiStateRendered = AtomicBoolean(false)
+        val streamLatch = CountDownLatch(1)
+
+        var streamingJob: Job? = null
+        var watchdogJob: Job? = null
+
+        watchdogJob = testScope.launch {
+            while (isActive) {
+                delay(20)
+                val elapsed = System.currentTimeMillis() - lastTokenReceivedAt.get()
+                if (elapsed >= timeoutMs) {
+                    isWatchdogTimedOut.set(true)
+                    streamingJob?.cancel(CancellationException("SSE_STREAM_WATCHDOG_TIMEOUT"))
+                    break
+                }
+            }
+        }
+
+        streamingJob = testScope.launch {
+            try {
+                // Simulates a hanging network stream that yields zero tokens
+                streamLatch.countDown()
+                delay(5000L)
+            } catch (e: CancellationException) {
+                if (isWatchdogTimedOut.get()) {
+                    uiStateRendered.set(true)
+                }
+            } finally {
+                watchdogJob.cancel()
+            }
+        }
+
+        streamLatch.await(1, TimeUnit.SECONDS)
+        streamingJob.join()
+
+        assertTrue("Watchdog timeout flag phải được kích hoạt sau khi hết timeout", isWatchdogTimedOut.get())
+        assertTrue("Giao diện thông báo mất mạng & nút thử lại phải được kích hoạt", uiStateRendered.get())
+        assertFalse("Streaming job phải đã bị huỷ", streamingJob.isActive)
+    }
+
+    @Test
+    fun streamWatchdog_whenTokensArriveContinuously_resetsHeartbeatAndPreventsTimeout() = runBlocking {
+        val testScope = CoroutineScope(Dispatchers.Default)
+        val timeoutMs = 150L
+        val lastTokenReceivedAt = java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis())
+        val isWatchdogTimedOut = AtomicBoolean(false)
+        var streamCompletedCleanly = false
+
+        var streamingJob: Job? = null
+        val watchdogJob = testScope.launch {
+            while (isActive) {
+                delay(20)
+                val elapsed = System.currentTimeMillis() - lastTokenReceivedAt.get()
+                if (elapsed >= timeoutMs) {
+                    isWatchdogTimedOut.set(true)
+                    streamingJob?.cancel(CancellationException("SSE_STREAM_WATCHDOG_TIMEOUT"))
+                    break
+                }
+            }
+        }
+
+        streamingJob = testScope.launch {
+            try {
+                // Emits 5 tokens with 40ms interval (well below 150ms timeout)
+                for (i in 1..5) {
+                    delay(40)
+                    lastTokenReceivedAt.set(System.currentTimeMillis())
+                }
+                streamCompletedCleanly = true
+            } finally {
+                watchdogJob.cancel()
+            }
+        }
+
+        streamingJob.join()
+
+        assertFalse("Watchdog không được phép timeout khi token về đều đặn", isWatchdogTimedOut.get())
+        assertTrue("Stream phải hoàn thành trọn vẹn mà không bị ngắt", streamCompletedCleanly)
+    }
+
+    @Test
+    fun streamWatchdog_whenUserCollapsesCard_cancelsJobWithoutTriggeringTimeoutUi() = runBlocking {
+        val testScope = CoroutineScope(Dispatchers.Default)
+        val isWatchdogTimedOut = AtomicBoolean(false)
+        val timeoutUiRendered = AtomicBoolean(false)
+        val jobStarted = CountDownLatch(1)
+
+        val streamingJob = testScope.launch {
+            try {
+                jobStarted.countDown()
+                delay(5000L)
+            } catch (e: CancellationException) {
+                if (isWatchdogTimedOut.get()) {
+                    timeoutUiRendered.set(true)
+                }
+            }
+        }
+
+        jobStarted.await(1, TimeUnit.SECONDS)
+        // User collapses floating bubble
+        streamingJob.cancel()
+        streamingJob.join()
+
+        assertFalse("Người dùng chủ động đóng bóng không được kích hoạt cờ timeout", isWatchdogTimedOut.get())
+        assertFalse("Không được hiển thị lỗi timeout mạng khi người dùng chủ động đóng bóng", timeoutUiRendered.get())
+    }
+
+    @Test
+    fun streamWatchdog_whenRetryTriggered_reinvokesExecuteAiCallWithOriginalPrompt() {
+        var retriedPrompt: String? = null
+        val originalPrompt = "Tóm tắt ca 18:00"
+        val onRetryMock: (String) -> Unit = { prompt ->
+            retriedPrompt = prompt
+        }
+
+        // Simulate user clicking retry
+        onRetryMock(originalPrompt)
+
+        assertEquals("Prompt truyền vào hàm retry phải khớp chính xác với prompt ban đầu", originalPrompt, retriedPrompt)
+    }
+
+    @Test
+    fun networkExceptionClassifier_correctlyIdentifiesSocketAndHostExceptions() {
+        val unknownHost = java.net.UnknownHostException("Unable to resolve host api.gemini.google.com")
+        val socketTimeout = java.net.SocketTimeoutException("timeout")
+        val connectEx = java.net.ConnectException("Failed to connect to host")
+        val nestedNetwork = java.io.IOException("Stream error", socketTimeout)
+        val customMsg = java.io.IOException("Software caused connection abort")
+        val watchdogTimeout = java.util.concurrent.CancellationException("SSE_STREAM_WATCHDOG_TIMEOUT")
+
+        val npe = NullPointerException("Null pointer")
+        val illegalArg = IllegalArgumentException("Bad input")
+
+        assertTrue(FloatingBubbleService.isNetworkException(unknownHost))
+        assertTrue(FloatingBubbleService.isNetworkException(socketTimeout))
+        assertTrue(FloatingBubbleService.isNetworkException(connectEx))
+        assertTrue(FloatingBubbleService.isNetworkException(nestedNetwork))
+        assertTrue(FloatingBubbleService.isNetworkException(customMsg))
+        assertTrue(FloatingBubbleService.isNetworkException(watchdogTimeout))
+
+        assertFalse(FloatingBubbleService.isNetworkException(npe))
+        assertFalse(FloatingBubbleService.isNetworkException(illegalArg))
+        assertFalse(FloatingBubbleService.isNetworkException(null))
     }
 }

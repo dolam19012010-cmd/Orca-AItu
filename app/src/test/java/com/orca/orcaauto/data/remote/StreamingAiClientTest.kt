@@ -526,4 +526,138 @@ class StreamingAiClientTest {
         val bodyStr = buffer.readUtf8()
         return JsonParser.parseString(bodyStr).asJsonObject
     }
+
+    // =========================================================================
+    // 429 RATE LIMIT DETECTION & FAILOVER TESTS (ITEM 3)
+    // =========================================================================
+
+    @Test
+    fun streamWithSpikeRacing_whenPrimaryReturns429AndBackupKeyExists_failsOverImmediatelyToBackupKey() = runBlocking {
+        val key1 = ApiKeyConfig(
+            id = "key_1",
+            provider = AiProviderType.GEMINI,
+            rawKey = "AIzaSyPrimary_429",
+            modelName = "gemini-2.5-flash",
+            endpointUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=AIzaSyPrimary_429",
+            isEnabled = true
+        )
+        val key2 = ApiKeyConfig(
+            id = "key_2",
+            provider = AiProviderType.GROQ,
+            rawKey = "gsk_backup_ok",
+            endpointUrl = "https://api.groq.com/openai/v1/chat/completions",
+            modelName = "llama-3.3-70b-versatile",
+            isEnabled = true
+        )
+
+        val requestsReceived = mutableListOf<String>()
+        val okHttpClient = OkHttpClient.Builder()
+            .addInterceptor(Interceptor { chain ->
+                val url = chain.request().url.toString()
+                if (url.contains("AIzaSyPrimary_429")) {
+                    requestsReceived.add("primary_429")
+                    val errJson = """{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","message":"Quota exceeded"}}"""
+                    Response.Builder()
+                        .request(chain.request())
+                        .protocol(Protocol.HTTP_1_1)
+                        .code(429)
+                        .message("Too Many Requests")
+                        .body(errJson.toResponseBody("application/json".toMediaType()))
+                        .build()
+                } else {
+                    requestsReceived.add("backup_ok")
+                    val openAiSse = """
+                        data: {"choices":[{"delta":{"content":"Câu trả lời từ backup"}}]}
+                        data: [DONE]
+                    """.trimIndent()
+                    Response.Builder()
+                        .request(chain.request())
+                        .protocol(Protocol.HTTP_1_1)
+                        .code(200)
+                        .message("OK")
+                        .body(openAiSse.toResponseBody("text/event-stream".toMediaType()))
+                        .build()
+                }
+            })
+            .build()
+
+        val client = StreamingAiClient(httpClient = okHttpClient)
+        val events = client.streamWithSpikeRacing(
+            keyPool = listOf(key1, key2),
+            prompt = "Test failover"
+        ).toList()
+
+        val spikeEvent = events.filterIsInstance<StreamUiEvent.SpikeDetected>().firstOrNull()
+        assertNotNull("Phải phát hiện và emit sự kiện SpikeDetected khi key 1 bị 429", spikeEvent)
+        assertTrue("SpikeDetected phải có cờ isInFlightReset = true", spikeEvent?.isInFlightReset == true)
+        assertEquals("Groq Cloud (LPU)", spikeEvent?.backupProvider)
+
+        val deltas = events.filterIsInstance<StreamUiEvent.ContentDelta>()
+        assertTrue("Deltas phải nhận được từ backup key", deltas.any { it.text.contains("Câu trả lời từ backup") })
+
+        val completeEvent = events.filterIsInstance<StreamUiEvent.Complete>().firstOrNull()
+        assertNotNull("Stream phải hoàn thành thành công", completeEvent)
+        assertEquals("key_2", completeEvent?.usedKey?.id)
+        assertEquals("Câu trả lời từ backup", completeEvent?.fullContent)
+    }
+
+    @Test
+    fun streamWithSpikeRacing_whenSingleKeyReturns429_cancelsImmediatelyAndZeroRacingRetries() = runBlocking {
+        val singleKey = ApiKeyConfig(
+            id = "single_key",
+            provider = AiProviderType.GEMINI,
+            rawKey = "AIzaSy_Only_One_Key",
+            modelName = "gemini-2.5-flash",
+            endpointUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=AIzaSy_Only_One_Key",
+            isEnabled = true
+        )
+
+        val requestCount = AtomicInteger(0)
+        val okHttpClient = OkHttpClient.Builder()
+            .addInterceptor(Interceptor { chain ->
+                requestCount.incrementAndGet()
+                val errJson = """{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","message":"Quota exceeded for key"}}"""
+                Response.Builder()
+                    .request(chain.request())
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(429)
+                    .message("Too Many Requests")
+                    .body(errJson.toResponseBody("application/json".toMediaType()))
+                    .build()
+            })
+            .build()
+
+        val client = StreamingAiClient(httpClient = okHttpClient)
+        val events = client.streamWithSpikeRacing(
+            keyPool = listOf(singleKey),
+            prompt = "Test single key 429"
+        ).toList()
+
+        val errorEvent = events.filterIsInstance<StreamUiEvent.Error>().firstOrNull()
+        assertNotNull("Phải emit StreamUiEvent.Error", errorEvent)
+        assertTrue(
+            "Lỗi phải là RateLimitException hoặc có chứa thông tin hạn mức",
+            errorEvent?.throwable is RateLimitException || RateLimitDetector.isRateLimit(errorEvent?.throwable)
+        )
+        assertEquals("Chỉ được gửi duy nhất 1 request, tuyệt đối không được khuếch đại bão lỗi", 1, requestCount.get())
+    }
+
+    @Test
+    fun rateLimitDetector_correctlyIdentifiesHttp429AndQuotaKeywords() {
+        assertTrue(RateLimitDetector.isRateLimit(429))
+        assertTrue(RateLimitDetector.isRateLimit(200, "error: RESOURCE_EXHAUSTED"))
+        assertTrue(RateLimitDetector.isRateLimit(500, "Quota exceeded for project"))
+        assertTrue(RateLimitDetector.isRateLimit(500, "Rate limit reached"))
+        assertTrue(RateLimitDetector.isRateLimit(500, "Too many requests"))
+
+        assertFalse(RateLimitDetector.isRateLimit(200, "OK"))
+        assertFalse(RateLimitDetector.isRateLimit(500, "Internal Server Error"))
+        assertFalse(RateLimitDetector.isRateLimit(404, "Model not found"))
+
+        val ex429 = RateLimitException("HTTP 429: Too Many Requests")
+        val nestedEx = IOException("Failed call", ex429)
+        assertTrue(RateLimitDetector.isRateLimit(ex429))
+        assertTrue(RateLimitDetector.isRateLimit(nestedEx))
+        assertFalse(RateLimitDetector.isRateLimit(IOException("Socket closed")))
+    }
 }

@@ -164,7 +164,11 @@ class UniversalAiClient {
                         errorMessage = lastError
                     )
                 )
-                if (code == 404 || code == 503 || code == 429 || code == 500 || code == 502 || code == 504 || code == 505) {
+                if (RateLimitDetector.isRateLimit(code, responseBody)) {
+                    Log.w(TAG, "Gemini $model gặp sự cố HTTP $code (Hạn mức API Key đã cạn). Huỷ thử các model khác trên cùng Key này để chuyển sang Key dự phòng.")
+                    return Result.failure(RateLimitException(lastError))
+                }
+                if (code == 404 || code == 503 || code == 500 || code == 502 || code == 504 || code == 505) {
                     Log.w(TAG, "Gemini $model gặp sự cố HTTP $code (quá tải spike demand hoặc chưa mở). Tự động chuyển model tiếp theo...")
                     continue // Thử model tiếp theo trong danh sách dự phòng
                 } else {

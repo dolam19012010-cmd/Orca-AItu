@@ -103,17 +103,24 @@ class StreamingAiClient(
         val lastHeartbeat = AtomicLong(totalStartTime)
         val activeWorkers = ConcurrentHashMap<Int, WorkerHandle>()
         val workerCounter = AtomicInteger(0)
-        val keyIndex = AtomicInteger(0)
         val fullContentAcc = StringBuilder()
         val fullThoughtAcc = StringBuilder()
         val isCompleted = AtomicBoolean(false)
         val completionSignal = CompletableDeferred<Unit>()
+        val exhaustedKeyIds = ConcurrentHashMap.newKeySet<String>()
 
         fun cancelAllWorkers() {
             for ((_, handle) in activeWorkers) {
                 handle.cancel()
             }
             activeWorkers.clear()
+        }
+
+        fun findNextAvailableKey(): ApiKeyConfig? {
+            return eligibleKeys.firstOrNull { candidateKey ->
+                !exhaustedKeyIds.contains(candidateKey.rawKey) &&
+                        activeWorkers.values.none { it.config.rawKey == candidateKey.rawKey }
+            }
         }
 
         fun launchWorker(key: ApiKeyConfig) {
@@ -148,6 +155,48 @@ class StreamingAiClient(
                     activeWorkers.remove(workerId)
                     if (isCompleted.get()) return@launch
 
+                    val isRateLimit = RateLimitDetector.isRateLimit(e)
+                    if (isRateLimit) {
+                        exhaustedKeyIds.add(key.rawKey)
+                        // Cancel any active workers that share this exhausted rawKey
+                        val sameKeyWorkers = activeWorkers.filterValues { it.config.rawKey == key.rawKey }
+                        for ((id, w) in sameKeyWorkers) {
+                            w.cancel()
+                            activeWorkers.remove(id)
+                        }
+
+                        val backupKey = findNextAvailableKey()
+                        if (backupKey != null) {
+                            // Multiple keys exist and healthy backup key available -> Failover immediately!
+                            val currentLeader = leaderId.get()
+                            if (currentLeader == workerId) {
+                                leaderId.set(null)
+                                fullContentAcc.setLength(0)
+                                fullThoughtAcc.setLength(0)
+                            }
+                            send(
+                                StreamUiEvent.SpikeDetected(
+                                    delayMs = System.currentTimeMillis() - totalStartTime,
+                                    backupProvider = backupKey.provider.displayName,
+                                    backupModel = backupKey.modelName,
+                                    isInFlightReset = true
+                                )
+                            )
+                            lastHeartbeat.set(System.currentTimeMillis())
+                            launchWorker(backupKey)
+                            return@launch
+                        } else {
+                            // Only 1 key configured OR all keys exhausted -> Cancel all workers immediately
+                            if (!isCompleted.getAndSet(true)) {
+                                val friendlyMsg = "Tài khoản AI đã chạm hạn mức sử dụng (HTTP 429 / RESOURCE_EXHAUSTED). Vui lòng thêm API Key dự phòng trong Cài đặt hoặc thử lại sau."
+                                send(StreamUiEvent.Error(RateLimitException(friendlyMsg, e)))
+                                cancelAllWorkers()
+                                completionSignal.complete(Unit)
+                            }
+                            return@launch
+                        }
+                    }
+
                     val currentLeader = leaderId.get()
                     if (currentLeader == workerId) {
                         // Leader failed mid-stream after emitting content
@@ -159,9 +208,9 @@ class StreamingAiClient(
                     } else if (currentLeader == null) {
                         // Failed before any leader was elected
                         if (activeWorkers.isEmpty()) {
-                            val nextIdx = keyIndex.getAndIncrement()
-                            if (nextIdx < eligibleKeys.size) {
-                                launchWorker(eligibleKeys[nextIdx])
+                            val backupKey = findNextAvailableKey()
+                            if (backupKey != null) {
+                                launchWorker(backupKey)
                             } else {
                                 if (!isCompleted.getAndSet(true)) {
                                     send(StreamUiEvent.Error(e))
@@ -180,7 +229,8 @@ class StreamingAiClient(
         }
 
         // Launch initial primary worker
-        launchWorker(eligibleKeys[keyIndex.getAndIncrement()])
+        val primaryKey = findNextAvailableKey() ?: eligibleKeys.first()
+        launchWorker(primaryKey)
 
         // Watchdog coroutine monitoring token heartbeats for spike & stall detection
         val watchdogJob = launch(Dispatchers.Default) {
@@ -194,9 +244,8 @@ class StreamingAiClient(
                 if (currentLeader == null) {
                     // Initial connection spike detected: primary worker took longer than spikeThresholdMs
                     if (timeSinceHeartbeat >= spikeThresholdMs) {
-                        val nextIdx = keyIndex.getAndIncrement()
-                        if (nextIdx < eligibleKeys.size) {
-                            val backupKey = eligibleKeys[nextIdx]
+                        val backupKey = findNextAvailableKey()
+                        if (backupKey != null) {
                             send(
                                 StreamUiEvent.SpikeDetected(
                                     delayMs = timeSinceHeartbeat,
@@ -211,9 +260,8 @@ class StreamingAiClient(
                 } else {
                     // In-flight stall detected: leader stopped yielding tokens for longer than stallThresholdMs
                     if (timeSinceHeartbeat >= stallThresholdMs) {
-                        val nextIdx = keyIndex.getAndIncrement()
-                        if (nextIdx < eligibleKeys.size) {
-                            val backupKey = eligibleKeys[nextIdx]
+                        val backupKey = findNextAvailableKey()
+                        if (backupKey != null) {
                             send(
                                 StreamUiEvent.SpikeDetected(
                                     delayMs = timeSinceHeartbeat,
@@ -313,6 +361,9 @@ class StreamingAiClient(
                         errorMessage = "HTTP $code: $errBody"
                     )
                 )
+                if (RateLimitDetector.isRateLimit(code, errBody)) {
+                    throw RateLimitException("HTTP $code (${key.provider.displayName} - ${key.modelName}): $errBody")
+                }
                 throw IOException("HTTP $code (${key.provider.displayName} - ${key.modelName}): $errBody")
             }
 

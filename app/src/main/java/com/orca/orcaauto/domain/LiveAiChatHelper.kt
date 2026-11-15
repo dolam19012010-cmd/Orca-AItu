@@ -79,7 +79,8 @@ object LiveAiChatHelper {
         context: Context,
         session: SummarySessionConfig,
         userQueryOrInstruction: String? = null,
-        onTokenDelta: ((String) -> Unit)? = null
+        onTokenDelta: ((String) -> Unit)? = null,
+        nominalShiftTag: String? = null
     ): Result<SessionSummaryResult> = withContext(Dispatchers.IO) {
         val db = AppDatabase.getDatabase(context)
         val prefs = UserPreferences.getInstance(context)
@@ -277,7 +278,12 @@ object LiveAiChatHelper {
             val modelInfo = "${usedKey.provider.displayName} • ${usedKey.modelName}"
 
             // Save clean record into Room DB summary_history
-            val timeSlot = SimpleDateFormat("HH:mm - dd/MM", Locale.getDefault()).format(Date()) + " [${session.name}]"
+            val dateStr = SimpleDateFormat("dd/MM", Locale.getDefault()).format(Date())
+            val timeSlot = if (!nominalShiftTag.isNullOrBlank()) {
+                "$nominalShiftTag - $dateStr [${session.name}]"
+            } else {
+                SimpleDateFormat("HH:mm - dd/MM", Locale.getDefault()).format(Date()) + " [${session.name}]"
+            }
             val summaryRecord = SummaryHistoryEntity(
                 timestamp = System.currentTimeMillis(),
                 targetTimeSlot = timeSlot,

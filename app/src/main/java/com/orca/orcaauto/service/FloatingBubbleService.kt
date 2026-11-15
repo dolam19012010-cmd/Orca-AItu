@@ -88,6 +88,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -95,6 +97,8 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 class FloatingBubbleService : Service() {
 
@@ -105,6 +109,7 @@ class FloatingBubbleService : Service() {
     private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
     private var isCallingAi = false
     private var activeStreamingJob: Job? = null
+    private var activeWatchdogJob: Job? = null
     private var isExpanded = false
     private var latestSummaryText: String = ""
     private var latestModelInfo: String = ""
@@ -1236,6 +1241,8 @@ class FloatingBubbleService : Service() {
     private fun collapseExpandedCard(root: FrameLayout) {
         activeStreamingJob?.cancel()
         activeStreamingJob = null
+        activeWatchdogJob?.cancel()
+        activeWatchdogJob = null
         activeChatAnswer = null
         currentTasksBoardLayout = null
         currentCardLayoutRef = null
@@ -1344,6 +1351,51 @@ class FloatingBubbleService : Service() {
             }
             false
         }
+    }
+
+    private fun renderStreamTimeoutUi(
+        adviceTv: TextView,
+        notesContainer: LinearLayout,
+        promptToRetry: String,
+        onRetry: (String) -> Unit
+    ) {
+        adviceTv.text = "Mất kết nối mạng. Chạm để thử lại"
+        adviceTv.setTextColor(Color.parseColor("#E2E8F0"))
+        adviceTv.isClickable = true
+        adviceTv.addMicroPressEffect()
+        adviceTv.setOnClickListener {
+            adviceTv.isClickable = false
+            onRetry(promptToRetry)
+        }
+
+        notesContainer.removeAllViews()
+        val retryBtn = TextView(this).apply {
+            text = "🔄 Thử lại"
+            setTextColor(Color.WHITE)
+            textSize = 12f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#1E3A5F"))
+                cornerRadius = dpToPx(8).toFloat()
+                setStroke(dpToPx(1), Color.parseColor("#38BDF8"))
+            }
+            setPadding(dpToPx(16), dpToPx(8), dpToPx(16), dpToPx(8))
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                dpToPx(36)
+            ).apply {
+                topMargin = dpToPx(8)
+            }
+            isClickable = true
+            addMicroPressEffect()
+            setOnClickListener {
+                isClickable = false
+                adviceTv.isClickable = false
+                onRetry(promptToRetry)
+            }
+        }
+        notesContainer.addView(retryBtn)
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -1806,7 +1858,8 @@ class FloatingBubbleService : Service() {
 
         var sendBtnRef: TextView? = null
 
-        val executeAiCall: (String) -> Unit = { queryText ->
+        lateinit var executeAiCall: (String) -> Unit
+        executeAiCall = { queryText ->
             if (!isCallingAi) {
                 isCallingAi = true
                 activeStreamingJob?.cancel()
@@ -1869,7 +1922,24 @@ class FloatingBubbleService : Service() {
                 }
 
                 targetNotesContainer.removeAllViews()
+                targetAdviceTv.isClickable = false
                 targetAdviceTv.text = "⏳ Đang kết nối AI và phân tích ca..."
+
+                val lastTokenReceivedAt = AtomicLong(System.currentTimeMillis())
+                val isWatchdogTimedOut = AtomicBoolean(false)
+
+                activeWatchdogJob?.cancel()
+                activeWatchdogJob = serviceScope.launch(Dispatchers.Main) {
+                    while (isActive) {
+                        delay(500)
+                        val elapsed = System.currentTimeMillis() - lastTokenReceivedAt.get()
+                        if (elapsed >= SSE_WATCHDOG_TIMEOUT_MS) {
+                            isWatchdogTimedOut.set(true)
+                            activeStreamingJob?.cancel(CancellationException("SSE_STREAM_WATCHDOG_TIMEOUT"))
+                            break
+                        }
+                    }
+                }
 
                 activeStreamingJob = serviceScope.launch(Dispatchers.Main) {
                     try {
@@ -1882,6 +1952,7 @@ class FloatingBubbleService : Service() {
                                 session = currentSession,
                                 userQueryOrInstruction = promptToSend,
                                 onTokenDelta = { delta ->
+                                    lastTokenReceivedAt.set(System.currentTimeMillis())
                                     accumulatedLive.append(delta)
                                     val raw = accumulatedLive.toString()
                                     val cleanLive = CommandStripper.cleanLive(raw)
@@ -1913,13 +1984,25 @@ class FloatingBubbleService : Service() {
                             }
                         } else {
                             val err = result.exceptionOrNull()
-                            targetAdviceTv.text = "Thất bại: ${err?.message ?: "Lỗi gọi AI"}"
+                            if (isWatchdogTimedOut.get() || isNetworkException(err)) {
+                                renderStreamTimeoutUi(targetAdviceTv, targetNotesContainer, promptToSend, executeAiCall)
+                            } else {
+                                targetAdviceTv.text = "Thất bại: ${err?.message ?: "Lỗi gọi AI"}"
+                            }
                         }
                     } catch (e: CancellationException) {
-                        // Clean cancellation
+                        if (isWatchdogTimedOut.get()) {
+                            renderStreamTimeoutUi(targetAdviceTv, targetNotesContainer, promptToSend, executeAiCall)
+                        }
                     } catch (t: Throwable) {
-                        targetAdviceTv.text = "Thất bại: ${t.message ?: "Lỗi gọi AI"}"
+                        if (isWatchdogTimedOut.get() || isNetworkException(t)) {
+                            renderStreamTimeoutUi(targetAdviceTv, targetNotesContainer, promptToSend, executeAiCall)
+                        } else {
+                            targetAdviceTv.text = "Thất bại: ${t.message ?: "Lỗi gọi AI"}"
+                        }
                     } finally {
+                        activeWatchdogJob?.cancel()
+                        activeWatchdogJob = null
                         isCallingAi = false
                         sendBtnRef?.text = "Gửi"
                         sendBtnRef?.isClickable = true
@@ -3481,6 +3564,8 @@ class FloatingBubbleService : Service() {
         super.onDestroy()
         activeStreamingJob?.cancel()
         activeStreamingJob = null
+        activeWatchdogJob?.cancel()
+        activeWatchdogJob = null
         sessionSwitchJob?.cancel()
         sessionSwitchJob = null
         try {
@@ -3579,12 +3664,34 @@ class FloatingBubbleService : Service() {
 
     companion object {
         private const val TAG = "FloatingBubble"
+        const val SSE_WATCHDOG_TIMEOUT_MS = 15_000L
         const val TAG_UNREAD_RED_DOT = "tag_unread_red_dot"
         const val ACTION_WAKE_TO_STATE_1 = "com.orca.orcaauto.action.WAKE_TO_STATE_1"
         const val EXTRA_WAKE_TO_STATE_1 = "extra_wake_to_state_1"
         const val EXTRA_SUMMARY_CONTENT = "extra_summary_content"
         const val EXTRA_MODEL_INFO = "extra_model_info"
         const val EXTRA_SESSION_ID = "extra_session_id"
+
+        fun isNetworkException(t: Throwable?): Boolean {
+            if (t == null) return false
+            var curr: Throwable? = t
+            while (curr != null) {
+                if (curr is java.net.UnknownHostException ||
+                    curr is java.net.SocketTimeoutException ||
+                    curr is java.net.ConnectException ||
+                    curr is java.util.concurrent.TimeoutException ||
+                    curr.message?.contains("timeout", ignoreCase = true) == true ||
+                    curr.message?.contains("Unable to resolve host", ignoreCase = true) == true ||
+                    curr.message?.contains("Failed to connect", ignoreCase = true) == true ||
+                    curr.message?.contains("Software caused connection abort", ignoreCase = true) == true ||
+                    curr.message?.contains("SSE_STREAM_WATCHDOG_TIMEOUT", ignoreCase = true) == true
+                ) {
+                    return true
+                }
+                curr = curr.cause
+            }
+            return false
+        }
 
         fun isOverlayPermissionGranted(context: Context): Boolean {
             return Settings.canDrawOverlays(context)
