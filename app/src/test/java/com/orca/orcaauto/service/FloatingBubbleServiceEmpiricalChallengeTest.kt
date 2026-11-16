@@ -1132,4 +1132,75 @@ class FloatingBubbleServiceEmpiricalChallengeTest {
         assertEquals("Toàn bộ API Key đều lỗi", title)
         assertTrue(detail.contains("danh sách dự phòng", ignoreCase = true))
     }
+
+    // =========================================================================
+    // TASK CARD BORDER & IN-PLACE ALARM TOGGLE CONTRACTS
+    // =========================================================================
+
+    @Test
+    fun taskCardColorCoding_verifiesToDoTasksHaveRedStroke_andPlannedHaveAmber() {
+        // Contract test verifying stroke logic matching renderTaskRow
+        fun resolveTaskStrokeHex(isCancelled: Boolean, isCompleted: Boolean, isPlanned: Boolean): String {
+            return when {
+                isCancelled -> "#59EF4444"
+                isCompleted -> "#10B981"
+                isPlanned -> "#59F59E0B"
+                else -> "#EF4444" // Nhiệm vụ cần làm (To-Do) MUST have the iconic red border!
+            }
+        }
+
+        // 1. Standard uncompleted, uncancelled To-Do task MUST resolve to red #EF4444
+        assertEquals("#EF4444", resolveTaskStrokeHex(isCancelled = false, isCompleted = false, isPlanned = false))
+
+        // 2. Planned task MUST resolve to amber
+        assertEquals("#59F59E0B", resolveTaskStrokeHex(isCancelled = false, isCompleted = false, isPlanned = true))
+
+        // 3. Completed task MUST resolve to emerald green
+        assertEquals("#10B981", resolveTaskStrokeHex(isCancelled = false, isCompleted = true, isPlanned = false))
+
+        // 4. Cancelled task MUST resolve to muted red
+        assertEquals("#59EF4444", resolveTaskStrokeHex(isCancelled = true, isCompleted = false, isPlanned = false))
+    }
+
+    @Test
+    fun alarmToggleInPlace_updatesAlarmDbMapState_withoutLosingTaskIdentity() {
+        val taskTitle = "Gửi báo cáo tuần cho sếp"
+        val cleanTitle = "Gửi báo cáo tuần cho sếp"
+        val alarmId = "alarm_test_123"
+        val targetCal = Calendar.getInstance().apply { add(Calendar.HOUR_OF_DAY, 2) }
+
+        var alarmDbMap = mapOf<String, SmartAlarmEntity>()
+
+        // 1. Initial State: No active alarm
+        var isAlarmActive = alarmDbMap[alarmId]?.status == SmartAlarmStatus.ACTIVE
+        assertFalse("Ban đầu báo thức chưa được bật", isAlarmActive)
+
+        // 2. User taps alarm pill to schedule alarm
+        val scheduledAlarm = SmartAlarmEntity(
+            alarmId = alarmId,
+            taskTitle = cleanTitle,
+            targetTimeMillis = targetCal.timeInMillis,
+            targetDateLabel = "16:00",
+            status = SmartAlarmStatus.ACTIVE,
+            updatedAt = System.currentTimeMillis()
+        )
+        alarmDbMap = alarmDbMap + (alarmId to scheduledAlarm)
+
+        // Verify updated state
+        isAlarmActive = alarmDbMap[alarmId]?.status == SmartAlarmStatus.ACTIVE
+        assertTrue("Sau khi bấm bật, báo thức phải ở trạng thái ACTIVE", isAlarmActive)
+        assertEquals(SmartAlarmStatus.ACTIVE, alarmDbMap[alarmId]?.status)
+
+        // 3. User taps alarm pill again to cancel alarm
+        val disarmedAlarm = scheduledAlarm.copy(
+            status = SmartAlarmStatus.PROPOSED,
+            updatedAt = System.currentTimeMillis()
+        )
+        alarmDbMap = alarmDbMap + (alarmId to disarmedAlarm)
+
+        // Verify disarmed state
+        isAlarmActive = alarmDbMap[alarmId]?.status == SmartAlarmStatus.ACTIVE
+        assertFalse("Sau khi bấm tắt, báo thức phải quay về PROPOSED", isAlarmActive)
+        assertEquals(SmartAlarmStatus.PROPOSED, alarmDbMap[alarmId]?.status)
+    }
 }

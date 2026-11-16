@@ -1141,7 +1141,6 @@ class FloatingBubbleService : Service() {
         val prefs = UserPreferences.getInstance(this)
         val path = prefs.getWallpaperPath()
         if (path.isNullOrBlank()) {
-            cachedWallpaperBmp?.recycle()
             cachedWallpaperBmp = null
             lastWallpaperPath = null
             return null
@@ -1149,7 +1148,6 @@ class FloatingBubbleService : Service() {
 
         val file = File(path)
         if (!file.exists()) {
-            cachedWallpaperBmp?.recycle()
             cachedWallpaperBmp = null
             lastWallpaperPath = null
             return null
@@ -1169,7 +1167,6 @@ class FloatingBubbleService : Service() {
             }
             val decodeOpts = BitmapFactory.Options().apply { inSampleSize = sample }
             val bmp = BitmapFactory.decodeFile(file.absolutePath, decodeOpts)
-            cachedWallpaperBmp?.recycle()
             cachedWallpaperBmp = bmp
             lastWallpaperPath = path
             lastWallpaperModified = modTime
@@ -1343,6 +1340,13 @@ class FloatingBubbleService : Service() {
         allTasksDone.forEach { task ->
             container.addView(renderTaskRow(task, isPlanned = false, cardLayout = cardLayout))
         }
+    }
+
+    private fun refreshTasksBoardOnly() {
+        val board = currentTasksBoardLayout ?: return
+        val card = currentCardLayoutRef ?: return
+        val hasAdvice = isCallingAi || !activeChatAnswer.isNullOrBlank() || latestSummaryText.isNotBlank()
+        populateTaskBoard(board, card, hasAdvice = hasAdvice)
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -2415,6 +2419,38 @@ class FloatingBubbleService : Service() {
             }
         }
 
+        val collapseAndRemoveRow: () -> Unit = {
+            val initialHeight = container.height.takeIf { it > 0 } ?: dpToPx(56)
+            val initialBottomMargin = (container.layoutParams as? ViewGroup.MarginLayoutParams)?.bottomMargin ?: 0
+            val collapseAnim = ValueAnimator.ofFloat(1f, 0f).apply {
+                duration = 140
+                interpolator = DecelerateInterpolator()
+                addUpdateListener { va ->
+                    val fraction = va.animatedValue as Float
+                    val lp = container.layoutParams as? ViewGroup.MarginLayoutParams
+                    if (lp != null) {
+                        lp.height = (initialHeight * fraction).toInt()
+                        lp.bottomMargin = (initialBottomMargin * fraction).toInt()
+                        container.layoutParams = lp
+                    }
+                }
+                addListener(object : AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: Animator) {
+                        container.visibility = View.GONE
+                        currentTasksBoardLayout?.removeView(container)
+                        val hasVisibleChild = currentTasksBoardLayout?.let { board ->
+                            (0 until board.childCount).any { idx -> board.getChildAt(idx).visibility == View.VISIBLE }
+                        } ?: false
+                        if (!hasVisibleChild) {
+                            currentTasksBoardLayout?.visibility = View.GONE
+                        }
+                        isSwipeAnimating = false
+                    }
+                })
+            }
+            collapseAnim.start()
+        }
+
         // Swipe Background Action View
         val bgSwipeLayout = FrameLayout(this).apply {
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
@@ -2473,12 +2509,11 @@ class FloatingBubbleService : Service() {
                     setStroke(dpToPx(1), Color.parseColor("#59EF4444"))
                 } else if (isCompleted) {
                     setStroke(dpToPx(1), Color.parseColor("#10B981"))
-                } else if (isAlarmActive) {
-                    setStroke(dpToPx(1), Color.parseColor("#0284C7"))
                 } else if (isPlanned) {
                     setStroke(dpToPx(1), Color.parseColor("#59F59E0B"))
                 } else {
-                    setStroke(dpToPx(1), Color.parseColor("#33FFFFFF"))
+                    // Nhiệm vụ cần làm (To-Do): Luôn có viền đỏ đặc trưng (#EF4444) theo đúng chuẩn thiết kế toàn hệ thống
+                    setStroke(dpToPx(1), Color.parseColor("#EF4444"))
                 }
             }
             setPadding(dpToPx(12), dpToPx(10), dpToPx(12), dpToPx(10))
@@ -2521,7 +2556,7 @@ class FloatingBubbleService : Service() {
                     )).copy(status = SmartAlarmStatus.PROPOSED, updatedAt = System.currentTimeMillis())
                     alarmDbMap = alarmDbMap + (alarmId to restoredAlarm) + (generatedAlarmId to restoredAlarm)
                     Toast.makeText(this@FloatingBubbleService, "✓ Đã khôi phục: ${cleanTitle.take(24)}...", Toast.LENGTH_SHORT).show()
-                    updateBubbleContent()
+                    currentTasksBoardLayout?.post { refreshTasksBoardOnly() }
                 } else if (isCompleted) {
                     showFloatingConfirmationDialog(
                         title = "Đưa về chưa hoàn thành?",
@@ -2539,9 +2574,10 @@ class FloatingBubbleService : Service() {
                         )).copy(status = SmartAlarmStatus.PROPOSED, updatedAt = System.currentTimeMillis())
                         alarmDbMap = alarmDbMap + (alarmId to uncompletedAlarm) + (generatedAlarmId to uncompletedAlarm)
                         Toast.makeText(this@FloatingBubbleService, "Đã đưa về trạng thái chưa hoàn thành!", Toast.LENGTH_SHORT).show()
-                        updateBubbleContent()
+                        currentTasksBoardLayout?.post { refreshTasksBoardOnly() }
                     }
                 } else {
+                    dismissedTaskTitles.add(cleanTitle)
                     SystemAlarmHelper.markTaskCompleted(this@FloatingBubbleService, cleanTitle, alarmId)
                     val completedAlarm = (existingAlarm ?: SmartAlarmEntity(
                         alarmId = alarmId,
@@ -2552,7 +2588,7 @@ class FloatingBubbleService : Service() {
                     )).copy(status = SmartAlarmStatus.COMPLETED, updatedAt = System.currentTimeMillis())
                     alarmDbMap = alarmDbMap + (alarmId to completedAlarm) + (generatedAlarmId to completedAlarm)
                     Toast.makeText(this@FloatingBubbleService, "✓ Đã hoàn thành: ${cleanTitle.take(24)}...", Toast.LENGTH_SHORT).show()
-                    updateBubbleContent()
+                    collapseAndRemoveRow()
                 }
             }
         }
@@ -2661,22 +2697,26 @@ class FloatingBubbleService : Service() {
             }
             actionRow.addView(cancelledPill)
         } else if (!isCompleted) {
+            var currentAlarmActive = isAlarmActive
             val pill = TextView(this).apply {
-                text = if (isAlarmActive) "✓ Đã đặt $proposedTime" else "🔔 Đặt $proposedTime"
-                setTextColor(if (isAlarmActive) Color.parseColor("#10B981") else Color.parseColor("#38BDF8"))
+                fun updatePillVisuals(active: Boolean) {
+                    text = if (active) "✓ Đã đặt $proposedTime" else "🔔 Đặt $proposedTime"
+                    setTextColor(if (active) Color.parseColor("#10B981") else Color.parseColor("#38BDF8"))
+                    background = GradientDrawable().apply {
+                        setColor(if (active) Color.parseColor("#062E24") else Color.parseColor("#082F49"))
+                        cornerRadius = dpToPx(4).toFloat()
+                        setStroke(dpToPx(1), if (active) Color.parseColor("#059669") else Color.parseColor("#0284C7"))
+                    }
+                }
+                updatePillVisuals(currentAlarmActive)
                 textSize = 10f
                 maxLines = 1
                 ellipsize = android.text.TextUtils.TruncateAt.END
                 typeface = Typeface.DEFAULT_BOLD
-                background = GradientDrawable().apply {
-                    setColor(if (isAlarmActive) Color.parseColor("#062E24") else Color.parseColor("#082F49"))
-                    cornerRadius = dpToPx(4).toFloat()
-                    setStroke(dpToPx(1), if (isAlarmActive) Color.parseColor("#059669") else Color.parseColor("#0284C7"))
-                }
                 setPadding(dpToPx(7), dpToPx(2), dpToPx(7), dpToPx(3))
                 isClickable = true
                 setOnClickListener {
-                    if (isAlarmActive) {
+                    if (currentAlarmActive) {
                         SystemAlarmHelper.cancelSmartAlarms(this@FloatingBubbleService, cleanTitle, alarmId)
                         val disarmed = (existingAlarm ?: SmartAlarmEntity(
                             alarmId = alarmId,
@@ -2685,7 +2725,9 @@ class FloatingBubbleService : Service() {
                             targetDateLabel = proposedTime,
                             status = SmartAlarmStatus.PROPOSED
                         )).copy(status = SmartAlarmStatus.PROPOSED, updatedAt = System.currentTimeMillis())
-                        alarmDbMap = alarmDbMap + (alarmId to disarmed)
+                        alarmDbMap = alarmDbMap + (alarmId to disarmed) + (generatedAlarmId to disarmed)
+                        currentAlarmActive = false
+                        updatePillVisuals(false)
                         Toast.makeText(this@FloatingBubbleService, "Đã tắt chuông báo: ${cleanTitle.take(24)}...", Toast.LENGTH_SHORT).show()
                     } else {
                         val result = SystemAlarmHelper.scheduleSmartAlarms(
@@ -2702,13 +2744,14 @@ class FloatingBubbleService : Service() {
                                 targetDateLabel = proposedTime,
                                 status = SmartAlarmStatus.ACTIVE
                             )).copy(status = SmartAlarmStatus.ACTIVE, updatedAt = System.currentTimeMillis())
-                            alarmDbMap = alarmDbMap + (alarmId to armed)
+                            alarmDbMap = alarmDbMap + (alarmId to armed) + (generatedAlarmId to armed)
+                            currentAlarmActive = true
+                            updatePillVisuals(true)
                             Toast.makeText(this@FloatingBubbleService, "🔔 Đã đặt chuông báo $proposedTime: ${cleanTitle.take(24)}...", Toast.LENGTH_SHORT).show()
                         }.onFailure { err ->
                             Toast.makeText(this@FloatingBubbleService, "Không thể đặt báo thức: ${err.message}", Toast.LENGTH_SHORT).show()
                         }
                     }
-                    updateBubbleContent()
                 }
             }
             alarmPill = pill
@@ -2947,7 +2990,7 @@ class FloatingBubbleService : Service() {
                                     )).copy(status = SmartAlarmStatus.PROPOSED, updatedAt = System.currentTimeMillis())
                                     alarmDbMap = alarmDbMap + (alarmId to restoredAlarm) + (generatedAlarmId to restoredAlarm)
                                     Toast.makeText(this@FloatingBubbleService, "Đã khôi phục nhiệm vụ thành công!", Toast.LENGTH_SHORT).show()
-                                    updateBubbleContent()
+                                    currentTasksBoardLayout?.post { refreshTasksBoardOnly() }
                                 }
                             } else if (isCompleted) {
                                 showFloatingConfirmationDialog(
@@ -2966,7 +3009,7 @@ class FloatingBubbleService : Service() {
                                     )).copy(status = SmartAlarmStatus.PROPOSED, updatedAt = System.currentTimeMillis())
                                     alarmDbMap = alarmDbMap + (alarmId to uncompletedAlarm) + (generatedAlarmId to uncompletedAlarm)
                                     Toast.makeText(this@FloatingBubbleService, "Đã đưa về trạng thái chưa hoàn thành!", Toast.LENGTH_SHORT).show()
-                                    updateBubbleContent()
+                                    currentTasksBoardLayout?.post { refreshTasksBoardOnly() }
                                 }
                             } else {
                                 showFloatingTaskConfigDialog(task, alarmId, existingAlarm)
@@ -2978,38 +3021,6 @@ class FloatingBubbleService : Service() {
                     if (isSwiping) {
                         isSwiping = false
                         val dx = event.rawX - startX
-
-                        val collapseAndRemoveRow = {
-                            val initialHeight = container.height
-                            val initialBottomMargin = (container.layoutParams as? ViewGroup.MarginLayoutParams)?.bottomMargin ?: 0
-                            val collapseAnim = ValueAnimator.ofFloat(1f, 0f).apply {
-                                duration = 140
-                                interpolator = DecelerateInterpolator()
-                                addUpdateListener { va ->
-                                    val fraction = va.animatedValue as Float
-                                    val lp = container.layoutParams as? ViewGroup.MarginLayoutParams
-                                    if (lp != null) {
-                                        lp.height = (initialHeight * fraction).toInt()
-                                        lp.bottomMargin = (initialBottomMargin * fraction).toInt()
-                                        container.layoutParams = lp
-                                    }
-                                }
-                                addListener(object : AnimatorListenerAdapter() {
-                                    override fun onAnimationEnd(animation: Animator) {
-                                        container.visibility = View.GONE
-                                        currentTasksBoardLayout?.removeView(container)
-                                        val hasVisibleChild = currentTasksBoardLayout?.let { board ->
-                                            (0 until board.childCount).any { idx -> board.getChildAt(idx).visibility == View.VISIBLE }
-                                        } ?: false
-                                        if (!hasVisibleChild) {
-                                            currentTasksBoardLayout?.visibility = View.GONE
-                                        }
-                                        isSwipeAnimating = false
-                                    }
-                                })
-                            }
-                            collapseAnim.start()
-                        }
 
                         if (dx > swipeThreshold && !isCompleted && !isCancelled) {
                             // Vuốt phải vượt 72dp -> Hoàn thành
@@ -3609,7 +3620,7 @@ class FloatingBubbleService : Service() {
                 }
 
                 root.removeView(modalScrim)
-                updateBubbleContent()
+                currentTasksBoardLayout?.post { refreshTasksBoardOnly() }
             }
         }
         bottomActions.addView(saveBtn)
