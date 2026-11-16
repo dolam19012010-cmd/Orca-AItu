@@ -18,12 +18,15 @@ sealed interface StreamUiEvent {
     /** Incremental answer content token displayed to the user */
     data class ContentDelta(val text: String) : StreamUiEvent
 
-    /** Watchdog detected latency spike; hedged backup worker launched */
+    /** Watchdog detected latency spike or error; failover backup worker launched */
     data class SpikeDetected(
         val delayMs: Long,
         val backupProvider: String,
         val backupModel: String,
-        val isInFlightReset: Boolean = false
+        val isInFlightReset: Boolean = false,
+        val failedKeyIndex: Int = 1,
+        val backupKeyIndex: Int = 2,
+        val failureReason: String = "Lỗi"
     ) : StreamUiEvent
 
     /** Entire stream completed successfully */

@@ -80,7 +80,8 @@ object LiveAiChatHelper {
         session: SummarySessionConfig,
         userQueryOrInstruction: String? = null,
         onTokenDelta: ((String) -> Unit)? = null,
-        nominalShiftTag: String? = null
+        nominalShiftTag: String? = null,
+        onStatusUpdate: ((String) -> Unit)? = null
     ): Result<SessionSummaryResult> = withContext(Dispatchers.IO) {
         val db = AppDatabase.getDatabase(context)
         val prefs = UserPreferences.getInstance(context)
@@ -216,7 +217,7 @@ object LiveAiChatHelper {
         // =========================================================================
         // Execution: SequentialAiQueue (FIFO with session key priorities)
         // =========================================================================
-        val result = SequentialAiQueue.execute(context, session, prompt, onTokenDelta)
+        val result = SequentialAiQueue.execute(context, session, prompt, onTokenDelta, onStatusUpdate)
 
         if (result.isSuccess) {
             val (rawAiOutput, usedKey) = result.getOrThrow()

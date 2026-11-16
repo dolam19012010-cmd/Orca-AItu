@@ -37,7 +37,8 @@ object SequentialAiQueue {
         context: Context,
         session: SummarySessionConfig,
         prompt: String,
-        onTokenDelta: ((String) -> Unit)? = null
+        onTokenDelta: ((String) -> Unit)? = null,
+        onStatusUpdate: ((String) -> Unit)? = null
     ): Result<Pair<String, ApiKeyConfig>> {
         val userPrefs = UserPreferences.getInstance(context)
         val globalKeyPool = userPrefs.getKeyPool()
@@ -77,6 +78,10 @@ object SequentialAiQueue {
                                 }
                                 is StreamUiEvent.Complete -> {
                                     usedKeyConfig = event.usedKey
+                                }
+                                is StreamUiEvent.SpikeDetected -> {
+                                    val statusMsg = "Key ${event.failedKeyIndex} ${event.failureReason} ➜ Đang kết nối Key ${event.backupKeyIndex}"
+                                    onStatusUpdate?.invoke(statusMsg)
                                 }
                                 is StreamUiEvent.Error -> {
                                     throw event.throwable

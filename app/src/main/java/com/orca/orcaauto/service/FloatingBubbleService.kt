@@ -17,6 +17,7 @@ import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorFilter
+import android.graphics.LinearGradient
 import android.graphics.Matrix
 import android.graphics.Outline
 import android.graphics.Paint
@@ -1246,6 +1247,7 @@ class FloatingBubbleService : Service() {
         activeStreamingJob = null
         activeWatchdogJob?.cancel()
         activeWatchdogJob = null
+        stopTextShimmer(null)
         activeChatAnswer = null
         currentTasksBoardLayout = null
         currentCardLayoutRef = null
@@ -1417,6 +1419,51 @@ class FloatingBubbleService : Service() {
             promptToRetry,
             onRetry
         )
+    }
+
+    private var liveStatusShimmerAnimator: ValueAnimator? = null
+
+    private fun startTextShimmer(textView: TextView?) {
+        if (textView == null) return
+        liveStatusShimmerAnimator?.cancel()
+        textView.post {
+            val textStr = textView.text?.toString().orEmpty()
+            if (textStr.isBlank()) return@post
+            val textWidth = textView.paint.measureText(textStr).coerceAtLeast(textView.width.toFloat()).coerceAtLeast(160f)
+            val gradientWidth = (textWidth * 0.45f).coerceAtLeast(100f)
+            val baseColor = Color.parseColor("#94A3B8")
+            val highlightColor = Color.parseColor("#38BDF8")
+
+            val gradient = LinearGradient(
+                -gradientWidth, 0f, 0f, 0f,
+                intArrayOf(baseColor, highlightColor, baseColor),
+                floatArrayOf(0f, 0.5f, 1f),
+                Shader.TileMode.CLAMP
+            )
+            val matrix = Matrix()
+            textView.paint.shader = gradient
+
+            liveStatusShimmerAnimator = ValueAnimator.ofFloat(0f, textWidth + gradientWidth * 1.5f).apply {
+                duration = 1400L
+                repeatCount = ValueAnimator.INFINITE
+                interpolator = android.view.animation.LinearInterpolator()
+                addUpdateListener { anim ->
+                    val v = anim.animatedValue as Float
+                    matrix.setTranslate(v, 0f)
+                    gradient.setLocalMatrix(matrix)
+                    textView.invalidate()
+                }
+                start()
+            }
+        }
+    }
+
+    private fun stopTextShimmer(textView: TextView?) {
+        liveStatusShimmerAnimator?.cancel()
+        liveStatusShimmerAnimator = null
+        textView?.paint?.shader = null
+        textView?.setTextColor(Color.WHITE)
+        textView?.invalidate()
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -1944,7 +1991,8 @@ class FloatingBubbleService : Service() {
 
                 targetNotesContainer.removeAllViews()
                 targetAdviceTv.isClickable = false
-                targetAdviceTv.text = "⏳ Đang kết nối AI và phân tích ca..."
+                targetAdviceTv.text = "⏳ Đang kết nối AI..."
+                startTextShimmer(targetAdviceTv)
 
                 val requestStartedAt = System.currentTimeMillis()
                 val hasReceivedFirstToken = AtomicBoolean(false)
@@ -1996,11 +2044,19 @@ class FloatingBubbleService : Service() {
                                     val liveAdvice = SummaryParser.cleanAdviceText(parsedLive.conciseAdvice)
                                     val displayText = if (liveAdvice.isNotBlank()) liveAdvice else if (cleanLive.isNotBlank()) cleanLive else "..."
                                     serviceScope.launch(Dispatchers.Main) {
+                                        stopTextShimmer(targetAdviceTv)
                                         targetAdviceTv.text = "$displayText ▌"
+                                    }
+                                },
+                                onStatusUpdate = { statusMsg ->
+                                    serviceScope.launch(Dispatchers.Main) {
+                                        targetAdviceTv.text = statusMsg
+                                        startTextShimmer(targetAdviceTv)
                                     }
                                 }
                             )
                         }
+                        stopTextShimmer(targetAdviceTv)
                         if (result.isSuccess) {
                             val (cleanSummary, usedKey, shownCards) = result.getOrThrow()
                             latestSummaryText = cleanSummary
@@ -2024,14 +2080,17 @@ class FloatingBubbleService : Service() {
                             renderAiErrorUi(targetAdviceTv, targetNotesContainer, title, detail, promptToSend, executeAiCall)
                         }
                     } catch (e: CancellationException) {
+                        stopTextShimmer(targetAdviceTv)
                         if (isWatchdogTimedOut.get()) {
                             val (title, detail) = buildAiErrorMessage(this@FloatingBubbleService, e, true)
                             renderAiErrorUi(targetAdviceTv, targetNotesContainer, title, detail, promptToSend, executeAiCall)
                         }
                     } catch (t: Throwable) {
+                        stopTextShimmer(targetAdviceTv)
                         val (title, detail) = buildAiErrorMessage(this@FloatingBubbleService, t, isWatchdogTimedOut.get())
                         renderAiErrorUi(targetAdviceTv, targetNotesContainer, title, detail, promptToSend, executeAiCall)
                     } finally {
+                        stopTextShimmer(targetAdviceTv)
                         activeWatchdogJob?.cancel()
                         activeWatchdogJob = null
                         isCallingAi = false

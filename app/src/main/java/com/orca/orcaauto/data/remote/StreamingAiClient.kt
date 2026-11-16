@@ -174,12 +174,26 @@ class StreamingAiClient(
                             fullContentAcc.setLength(0)
                             fullThoughtAcc.setLength(0)
                         }
+
+                        val failedKeyIdx = eligibleKeys.indexOfFirst { it.rawKey == key.rawKey } + 1
+                        val backupKeyIdx = eligibleKeys.indexOfFirst { it.rawKey == backupKey.rawKey } + 1
+                        val reasonTag = when {
+                            RateLimitDetector.isRateLimit(e) -> "Hết quota"
+                            e.message?.contains("503") == true || e.message?.contains("500") == true || e.message?.contains("502") == true || e.message?.contains("504") == true || e.message?.contains("overloaded", ignoreCase = true) == true -> "Quá tải"
+                            e.message?.contains("401") == true || e.message?.contains("403") == true -> "Sai key"
+                            e.message?.contains("timeout", ignoreCase = true) == true -> "Phản hồi chậm"
+                            else -> "Lỗi"
+                        }
+
                         send(
                             StreamUiEvent.SpikeDetected(
                                 delayMs = System.currentTimeMillis() - totalStartTime,
                                 backupProvider = backupKey.provider.displayName,
                                 backupModel = backupKey.modelName,
-                                isInFlightReset = true
+                                isInFlightReset = true,
+                                failedKeyIndex = if (failedKeyIdx > 0) failedKeyIdx else 1,
+                                backupKeyIndex = if (backupKeyIdx > 0) backupKeyIdx else (failedKeyIdx + 1),
+                                failureReason = reasonTag
                             )
                         )
                         lastHeartbeat.set(System.currentTimeMillis())
