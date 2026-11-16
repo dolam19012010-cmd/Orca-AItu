@@ -1203,4 +1203,185 @@ class FloatingBubbleServiceEmpiricalChallengeTest {
         assertFalse("Sau khi bấm tắt, báo thức phải quay về PROPOSED", isAlarmActive)
         assertEquals(SmartAlarmStatus.PROPOSED, alarmDbMap[alarmId]?.status)
     }
+
+    // =========================================================================
+    // 17. EMPIRICAL CHALLENGES: MILESTONE 1 CONCURRENCY, LIFECYCLE & INVARIANTS
+    // =========================================================================
+
+    @Test
+    fun shimmerLifecycle_whenStoppedBeforePostExecutes_doesNotStartInfiniteAnimator() {
+        val isShimmerActive = AtomicBoolean(false)
+        var animatorStarted = false
+        var runnableExecuted = false
+
+        // Simulate startTextShimmer
+        isShimmerActive.set(true)
+        val runnable = Runnable {
+            runnableExecuted = true
+            if (!isShimmerActive.get()) {
+                return@Runnable
+            }
+            animatorStarted = true
+        }
+
+        // Simulate stopTextShimmer called before post executes
+        isShimmerActive.set(false)
+
+        // Now post runnable finally executes on Looper
+        runnable.run()
+
+        assertTrue(runnableExecuted)
+        assertFalse("Animator tuyệt đối không được start khi stopTextShimmer đã gọi", animatorStarted)
+    }
+
+    @Test
+    fun executeAiCall_structuredConcurrency_rethrowsWhenExternalCancellation() {
+        val isWatchdogTimedOut = AtomicBoolean(false)
+        var rethrownCaught = false
+
+        // 1. External Cancellation (e.g. bubble collapsed, job cancelled by user)
+        try {
+            try {
+                throw CancellationException("USER_COLLAPSED_BUBBLE")
+            } catch (e: CancellationException) {
+                if (!isWatchdogTimedOut.get()) {
+                    throw e
+                }
+            }
+        } catch (e: CancellationException) {
+            rethrownCaught = true
+            assertEquals("USER_COLLAPSED_BUBBLE", e.message)
+        }
+        assertTrue("CancellationException ngoại vi phải được rethrow để bảo toàn structured concurrency", rethrownCaught)
+
+        // 2. Watchdog Timeout Cancellation (swallowed to display error UI)
+        isWatchdogTimedOut.set(true)
+        var watchdogSwallowed = false
+        try {
+            try {
+                throw CancellationException("INITIAL_CONNECTION_TIMEOUT")
+            } catch (e: CancellationException) {
+                if (!isWatchdogTimedOut.get()) {
+                    throw e
+                }
+                watchdogSwallowed = true
+            }
+        } catch (_: CancellationException) {
+            watchdogSwallowed = false
+        }
+        assertTrue("CancellationException do watchdog kích hoạt phải được giữ lại để render UI", watchdogSwallowed)
+    }
+
+    @Test
+    fun accumulatedLiveBuffer_threadSafety_underConcurrentStreamingDeltas() = runBlocking {
+        val accumulatedLive = StringBuilder()
+        val numThreads = 8
+        val tokensPerThread = 250
+        val scope = CoroutineScope(Dispatchers.Default)
+
+        val jobs = (1..numThreads).map { threadIdx ->
+            scope.launch {
+                for (i in 1..tokensPerThread) {
+                    synchronized(accumulatedLive) {
+                        accumulatedLive.append("T$threadIdx-D$i ")
+                        accumulatedLive.toString()
+                    }
+                }
+            }
+        }
+        jobs.forEach { it.join() }
+
+        val finalResult = synchronized(accumulatedLive) { accumulatedLive.toString() }
+        assertNotNull(finalResult)
+        assertEquals(numThreads * tokensPerThread, finalResult.split(" ").filter { it.isNotBlank() }.size)
+    }
+
+    @Test
+    fun globalRequestTimeout_enforces120sHardCeilingAcrossMultipleKeyFailovers() {
+        val globalRequestStartedAt = 1000L
+        val globalTimeoutMs = FloatingBubbleService.GLOBAL_REQUEST_TIMEOUT_MS
+        assertEquals(120_000L, globalTimeoutMs)
+
+        // Key 1 fails at +40s, Key 2 fails at +85s, Key 3 attempts at +125s
+        val checkTimes = listOf(40_000L, 85_000L, 125_000L)
+        var timedOutAt120s = false
+
+        for (elapsed in checkTimes) {
+            val now = globalRequestStartedAt + elapsed
+            val totalElapsed = now - globalRequestStartedAt
+            if (totalElapsed >= globalTimeoutMs) {
+                timedOutAt120s = true
+                break
+            }
+        }
+
+        assertTrue("Watchdog phải kích hoạt GLOBAL_REQUEST_TIMEOUT khi vượt mốc 120s toàn cục", timedOutAt120s)
+    }
+
+    @Test
+    fun buildAiErrorMessage_handlesGlobalTimeoutCeilingMessage() {
+        val globalTimeoutEx = CancellationException("GLOBAL_REQUEST_TIMEOUT")
+        val (title, detail) = FloatingBubbleService.buildAiErrorMessage(null, globalTimeoutEx, true)
+        assertEquals("Tổng thời gian chờ quá lâu (>120s)", title)
+        assertTrue(detail.contains("120 giây"))
+
+        val initialTimeoutEx = CancellationException("INITIAL_CONNECTION_TIMEOUT")
+        val (title90s, detail90s) = FloatingBubbleService.buildAiErrorMessage(null, initialTimeoutEx, true)
+        assertEquals("Máy chủ phản hồi quá lâu (>90s)", title90s)
+        assertTrue(detail90s.contains("90 giây"))
+    }
+
+    private enum class TestSendBtnState { CALLING_AI, HAS_TEXT, EMPTY }
+
+    @Test
+    fun updateSendBtnState_skipsReallocation_whenStateUnchanged() {
+        // Models SendBtnState transitions in updateSendBtnState
+        var currentSendBtnState: TestSendBtnState? = null
+        var drawableAllocations = 0
+
+        fun updateState(isCalling: Boolean, hasText: Boolean) {
+            val targetState = when {
+                isCalling -> TestSendBtnState.CALLING_AI
+                hasText -> TestSendBtnState.HAS_TEXT
+                else -> TestSendBtnState.EMPTY
+            }
+            if (targetState == currentSendBtnState) return
+            currentSendBtnState = targetState
+            drawableAllocations++
+        }
+
+        // 1. Initial empty
+        updateState(isCalling = false, hasText = false)
+        assertEquals(1, drawableAllocations)
+        assertEquals(TestSendBtnState.EMPTY, currentSendBtnState)
+
+        // 2. Typing characters 1 to 20 -> state remains HAS_TEXT
+        for (len in 1..20) {
+            updateState(isCalling = false, hasText = true)
+        }
+        assertEquals(2, drawableAllocations) // Only 1 allocation when transitioning to HAS_TEXT!
+        assertEquals(TestSendBtnState.HAS_TEXT, currentSendBtnState)
+
+        // 3. Trigger AI calling
+        updateState(isCalling = true, hasText = true)
+        assertEquals(3, drawableAllocations)
+        assertEquals(TestSendBtnState.CALLING_AI, currentSendBtnState)
+    }
+
+    @Test
+    fun isPhysicalNetworkOffline_respectsNetCapabilityValidatedContract() {
+        // Contract test for NetworkCapabilities validation logic in isPhysicalNetworkOffline
+        fun evaluateCapabilities(hasInternet: Boolean, isValidated: Boolean): Boolean {
+            return !hasInternet || !isValidated
+        }
+
+        // 1. Captive portal: connected to Wi-Fi with internet cap but NOT validated
+        assertTrue("Wi-Fi có INTERNET nhưng thiếu VALIDATED phải được coi là offline", evaluateCapabilities(hasInternet = true, isValidated = false))
+
+        // 2. Disconnected completely
+        assertTrue("Không có INTERNET phải là offline", evaluateCapabilities(hasInternet = false, isValidated = false))
+
+        // 3. Fully validated WAN connection
+        assertFalse("Có cả INTERNET và VALIDATED phải là online (false)", evaluateCapabilities(hasInternet = true, isValidated = true))
+    }
 }

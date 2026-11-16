@@ -43,6 +43,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.ui.platform.LocalTextToolbar
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -746,6 +747,7 @@ private fun ActionPendingIndicator(description: String) {
 @Composable
 private fun ReasoningAccordion(thoughtText: String) {
     var isExpanded by remember { mutableStateOf(false) }
+    val textToolbar = LocalTextToolbar.current
 
     Card(
         shape = RoundedCornerShape(10.dp),
@@ -761,7 +763,12 @@ private fun ReasoningAccordion(thoughtText: String) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { isExpanded = !isExpanded },
+                    .clickable {
+                        if (isExpanded) {
+                            textToolbar.hide()
+                        }
+                        isExpanded = !isExpanded
+                    },
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -795,7 +802,7 @@ private fun ReasoningAccordion(thoughtText: String) {
                 exit = shrinkVertically() + fadeOut()
             ) {
                 Column(modifier = Modifier.padding(top = 8.dp)) {
-                    SelectionContainer {
+                    val thoughtContent = @Composable {
                         Text(
                             text = thoughtText.trim(),
                             color = TextSecondaryDark,
@@ -803,6 +810,13 @@ private fun ReasoningAccordion(thoughtText: String) {
                             lineHeight = 17.sp,
                             fontFamily = FontFamily.Monospace
                         )
+                    }
+                    if (isExpanded) {
+                        SelectionContainer {
+                            thoughtContent()
+                        }
+                    } else {
+                        thoughtContent()
                     }
                 }
             }

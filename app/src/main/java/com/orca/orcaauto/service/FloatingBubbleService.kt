@@ -102,6 +102,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
+import java.lang.ref.WeakReference
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -126,13 +127,42 @@ class FloatingBubbleService : Service() {
     private var currentCardLayoutRef: View? = null
     private val dismissedTaskTitles = mutableSetOf<String>()
     @Volatile private var isSwipeAnimating: Boolean = false
-    private var alarmDbMap = mapOf<String, SmartAlarmEntity>()
+    @Volatile private var alarmDbMap = mapOf<String, SmartAlarmEntity>()
     private var currentAnimator: ValueAnimator? = null
     private var cachedWallpaperBmp: Bitmap? = null
     private var lastWallpaperPath: String? = null
     private var lastWallpaperModified: Long = 0L
     private var unreadDotView: View? = null
     private var lastKnownSummaryId: Long? = null
+
+    private enum class SendBtnState {
+        CALLING_AI,
+        HAS_TEXT,
+        EMPTY
+    }
+
+    private val sendBtnBgCallingAi by lazy {
+        GradientDrawable().apply {
+            setColor(Color.parseColor("#3327272A"))
+            cornerRadius = dpToPx(18).toFloat()
+            setStroke(dpToPx(1), Color.parseColor("#4DFFFFFF"))
+        }
+    }
+    private val sendBtnBgActive by lazy {
+        GradientDrawable().apply {
+            setColor(Color.parseColor("#38BDF8"))
+            cornerRadius = dpToPx(18).toFloat()
+            setStroke(dpToPx(1), Color.parseColor("#38BDF8"))
+        }
+    }
+    private val sendBtnBgInactive by lazy {
+        GradientDrawable().apply {
+            setColor(Color.parseColor("#27272A"))
+            cornerRadius = dpToPx(18).toFloat()
+            setStroke(dpToPx(1), Color.parseColor("#33FFFFFF"))
+        }
+    }
+    private var currentSendBtnState: SendBtnState? = null
 
     // 3-State Lifecycle for Floating Bubble (Chu trình 3 trạng thái duy nhất chuẩn mực)
     enum class BubbleState {
@@ -1252,6 +1282,7 @@ class FloatingBubbleService : Service() {
         currentCardLayoutRef = null
         dismissedTaskTitles.clear()
         isSwipeAnimating = false
+        currentSendBtnState = null
         try {
             com.orca.orcaauto.domain.voice.VoiceBriefingManager.getInstance(this).stop()
         } catch (_: Exception) {}
@@ -1428,13 +1459,22 @@ class FloatingBubbleService : Service() {
     }
 
     private var liveStatusShimmerAnimator: ValueAnimator? = null
+    private var shimmerRunnable: Runnable? = null
+    private val isShimmerActive = AtomicBoolean(false)
+    private var shimmerTextViewRef: WeakReference<TextView>? = null
 
     private fun startTextShimmer(textView: TextView?) {
         if (textView == null) return
+        isShimmerActive.set(true)
+        shimmerTextViewRef = WeakReference(textView)
         liveStatusShimmerAnimator?.cancel()
-        textView.post {
+        liveStatusShimmerAnimator = null
+        shimmerRunnable?.let { textView.removeCallbacks(it) }
+
+        val runnable = Runnable {
+            if (!isShimmerActive.get()) return@Runnable
             val textStr = textView.text?.toString().orEmpty()
-            if (textStr.isBlank()) return@post
+            if (textStr.isBlank()) return@Runnable
             val textWidth = textView.paint.measureText(textStr).coerceAtLeast(textView.width.toFloat()).coerceAtLeast(160f)
             val gradientWidth = (textWidth * 0.45f).coerceAtLeast(100f)
             val baseColor = Color.parseColor("#94A3B8")
@@ -1449,11 +1489,20 @@ class FloatingBubbleService : Service() {
             val matrix = Matrix()
             textView.paint.shader = gradient
 
+            if (!isShimmerActive.get()) {
+                textView.paint.shader = null
+                return@Runnable
+            }
+
             liveStatusShimmerAnimator = ValueAnimator.ofFloat(0f, textWidth + gradientWidth * 1.5f).apply {
                 duration = 1400L
                 repeatCount = ValueAnimator.INFINITE
                 interpolator = android.view.animation.LinearInterpolator()
                 addUpdateListener { anim ->
+                    if (!isShimmerActive.get()) {
+                        anim.cancel()
+                        return@addUpdateListener
+                    }
                     val v = anim.animatedValue as Float
                     matrix.setTranslate(v, 0f)
                     gradient.setLocalMatrix(matrix)
@@ -1462,14 +1511,22 @@ class FloatingBubbleService : Service() {
                 start()
             }
         }
+        shimmerRunnable = runnable
+        textView.post(runnable)
     }
 
     private fun stopTextShimmer(textView: TextView?) {
+        isShimmerActive.set(false)
+        val targetTv = textView ?: shimmerTextViewRef?.get()
+        shimmerRunnable?.let { runnable ->
+            targetTv?.removeCallbacks(runnable)
+            shimmerRunnable = null
+        }
         liveStatusShimmerAnimator?.cancel()
         liveStatusShimmerAnimator = null
-        textView?.paint?.shader = null
-        textView?.setTextColor(Color.WHITE)
-        textView?.invalidate()
+        targetTv?.paint?.shader = null
+        targetTv?.setTextColor(Color.WHITE)
+        targetTv?.invalidate()
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -1483,6 +1540,7 @@ class FloatingBubbleService : Service() {
         updateShakeDetectorState()
         dismissedTaskTitles.clear()
         isSwipeAnimating = false
+        currentSendBtnState = null
         root.removeAllViews()
         root.alpha = 1.0f
 
@@ -1922,10 +1980,13 @@ class FloatingBubbleService : Service() {
             gravity = Gravity.CENTER_VERTICAL or Gravity.START
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             isEnabled = !isCallingAi
-            setTextIsSelectable(true)
             highlightColor = Color.parseColor("#4D38BDF8")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 isForceDarkAllowed = false
+            }
+            setOnLongClickListener {
+                if (!isEnabled || isCallingAi) return@setOnLongClickListener false
+                pasteFromClipboard(this)
             }
             setOnFocusChangeListener { _, hasFocus ->
                 if (hasFocus) {
@@ -1940,29 +2001,29 @@ class FloatingBubbleService : Service() {
 
         fun updateSendBtnState(hasText: Boolean) {
             val btn = sendBtnRef ?: return
-            if (isCallingAi) {
-                btn.text = "..."
-                btn.setTextColor(Color.parseColor("#94A3B8"))
-                btn.background = GradientDrawable().apply {
-                    setColor(Color.parseColor("#3327272A"))
-                    cornerRadius = dpToPx(18).toFloat()
-                    setStroke(dpToPx(1), Color.parseColor("#4DFFFFFF"))
+            val targetState = when {
+                isCallingAi -> SendBtnState.CALLING_AI
+                hasText -> SendBtnState.HAS_TEXT
+                else -> SendBtnState.EMPTY
+            }
+            if (targetState == currentSendBtnState) return
+            currentSendBtnState = targetState
+
+            when (targetState) {
+                SendBtnState.CALLING_AI -> {
+                    btn.text = "..."
+                    btn.setTextColor(Color.parseColor("#94A3B8"))
+                    btn.background = sendBtnBgCallingAi
                 }
-            } else if (hasText) {
-                btn.text = "Gửi"
-                btn.setTextColor(Color.parseColor("#0F172A"))
-                btn.background = GradientDrawable().apply {
-                    setColor(Color.parseColor("#38BDF8"))
-                    cornerRadius = dpToPx(18).toFloat()
-                    setStroke(dpToPx(1), Color.parseColor("#38BDF8"))
+                SendBtnState.HAS_TEXT -> {
+                    btn.text = "Gửi"
+                    btn.setTextColor(Color.parseColor("#0F172A"))
+                    btn.background = sendBtnBgActive
                 }
-            } else {
-                btn.text = "Gửi"
-                btn.setTextColor(Color.parseColor("#94A3B8"))
-                btn.background = GradientDrawable().apply {
-                    setColor(Color.parseColor("#27272A"))
-                    cornerRadius = dpToPx(18).toFloat()
-                    setStroke(dpToPx(1), Color.parseColor("#33FFFFFF"))
+                SendBtnState.EMPTY -> {
+                    btn.text = "Gửi"
+                    btn.setTextColor(Color.parseColor("#94A3B8"))
+                    btn.background = sendBtnBgInactive
                 }
             }
         }
@@ -2046,6 +2107,7 @@ class FloatingBubbleService : Service() {
                 targetAdviceTv.text = "⏳ Đang kết nối AI..."
                 startTextShimmer(targetAdviceTv)
 
+                val globalRequestStartedAt = System.currentTimeMillis()
                 val requestStartedAt = AtomicLong(System.currentTimeMillis())
                 val hasReceivedFirstToken = AtomicBoolean(false)
                 val lastTokenReceivedAt = AtomicLong(0L)
@@ -2056,6 +2118,12 @@ class FloatingBubbleService : Service() {
                     while (isActive) {
                         delay(500)
                         val now = System.currentTimeMillis()
+                        val totalElapsed = now - globalRequestStartedAt
+                        if (totalElapsed >= GLOBAL_REQUEST_TIMEOUT_MS) {
+                            isWatchdogTimedOut.set(true)
+                            activeStreamingJob?.cancel(CancellationException("GLOBAL_REQUEST_TIMEOUT"))
+                            break
+                        }
                         if (hasReceivedFirstToken.get()) {
                             // Phase 2: In-flight streaming token stall watchdog (25s)
                             val elapsedSinceLastToken = now - lastTokenReceivedAt.get()
@@ -2089,8 +2157,10 @@ class FloatingBubbleService : Service() {
                                 onTokenDelta = { delta ->
                                     hasReceivedFirstToken.set(true)
                                     lastTokenReceivedAt.set(System.currentTimeMillis())
-                                    accumulatedLive.append(delta)
-                                    val raw = accumulatedLive.toString()
+                                    val raw = synchronized(accumulatedLive) {
+                                        accumulatedLive.append(delta)
+                                        accumulatedLive.toString()
+                                    }
                                     val cleanLive = CommandStripper.cleanLive(raw)
                                     val parsedLive = SummaryParser.parse(cleanLive)
                                     val liveAdvice = SummaryParser.cleanAdviceText(parsedLive.conciseAdvice)
@@ -2104,7 +2174,9 @@ class FloatingBubbleService : Service() {
                                     requestStartedAt.set(System.currentTimeMillis())
                                     hasReceivedFirstToken.set(false)
                                     lastTokenReceivedAt.set(0L)
-                                    accumulatedLive.setLength(0)
+                                    synchronized(accumulatedLive) {
+                                        accumulatedLive.setLength(0)
+                                    }
                                     serviceScope.launch(Dispatchers.Main) {
                                         targetAdviceTv.text = statusMsg
                                         startTextShimmer(targetAdviceTv)
@@ -2137,10 +2209,11 @@ class FloatingBubbleService : Service() {
                         }
                     } catch (e: CancellationException) {
                         stopTextShimmer(targetAdviceTv)
-                        if (isWatchdogTimedOut.get()) {
-                            val (title, detail) = buildAiErrorMessage(this@FloatingBubbleService, e, true)
-                            renderAiErrorUi(targetAdviceTv, targetNotesContainer, title, detail, promptToSend, executeAiCall)
+                        if (!isWatchdogTimedOut.get()) {
+                            throw e
                         }
+                        val (title, detail) = buildAiErrorMessage(this@FloatingBubbleService, e, true)
+                        renderAiErrorUi(targetAdviceTv, targetNotesContainer, title, detail, promptToSend, executeAiCall)
                     } catch (t: Throwable) {
                         stopTextShimmer(targetAdviceTv)
                         val (title, detail) = buildAiErrorMessage(this@FloatingBubbleService, t, isWatchdogTimedOut.get())
@@ -2254,6 +2327,7 @@ class FloatingBubbleService : Service() {
             }
         }
         sendBtnRef = sendBtn
+        currentSendBtnState = null
         updateSendBtnState(queryEt.text?.isNotBlank() == true)
         inputRow.addView(sendBtn)
         inputCard.addView(inputRow)
@@ -3749,7 +3823,8 @@ class FloatingBubbleService : Service() {
 
     /**
      * Reads clipboard directly for TYPE_APPLICATION_OVERLAY EditText fields, where Android
-     * often suppresses the native Activity-bound floating Paste popup toolbar.
+     * often suppresses the native Activity-bound floating Paste popup toolbar or throws BadTokenException
+     * on OEM ROMs (Xiaomi/Oppo/Samsung). Performs haptic feedback, cursor insertion, and Toast "✓ Đã dán".
      */
     private fun pasteFromClipboard(target: EditText): Boolean {
         return try {
@@ -3757,33 +3832,35 @@ class FloatingBubbleService : Service() {
             val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
             val clipData = clipboard?.primaryClip
             val clipText = if (clipData != null && clipData.itemCount > 0) {
-                clipData.getItemAt(0).coerceToText(this)?.toString()
+                clipData.getItemAt(0)?.coerceToText(this)?.toString()
             } else {
                 null
             }
-            if (!clipText.isNullOrBlank()) {
-                val editable = target.text
+            if (!clipText.isNullOrEmpty()) {
+                target.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                val editable = target.text ?: return false
                 val rawStart = target.selectionStart.coerceAtLeast(0)
                 val rawEnd = target.selectionEnd.coerceAtLeast(0)
                 val start = minOf(rawStart, rawEnd).coerceAtMost(editable.length)
                 val end = maxOf(rawStart, rawEnd).coerceAtMost(editable.length)
                 editable.replace(start, end, clipText)
-                val newCursor = (start + clipText.length).coerceAtMost(target.text.length)
+                val newCursor = (start + clipText.length).coerceAtMost(editable.length)
                 target.setSelection(newCursor)
-                Toast.makeText(this, "Đã dán từ bộ nhớ tạm", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "✓ Đã dán", Toast.LENGTH_SHORT).show()
                 true
             } else {
                 Toast.makeText(this, "Bộ nhớ tạm đang trống", Toast.LENGTH_SHORT).show()
-                false
+                true
             }
         } catch (e: Exception) {
-            Toast.makeText(this, "Không thể dán: ${e.message}", Toast.LENGTH_SHORT).show()
-            false
+            Log.e(TAG, "Lỗi dán từ clipboard: ${e.message}", e)
+            true
         }
     }
 
     companion object {
         private const val TAG = "FloatingBubble"
+        const val GLOBAL_REQUEST_TIMEOUT_MS = 120_000L
         const val SSE_WATCHDOG_TIMEOUT_MS = 28_000L
         const val INITIAL_CONNECTION_TIMEOUT_MS = 95_000L
         const val TAG_UNREAD_RED_DOT = "tag_unread_red_dot"
@@ -3801,7 +3878,10 @@ class FloatingBubbleService : Service() {
                         val activeNet = cm.activeNetwork
                         if (activeNet == null) return true
                         val caps = cm.getNetworkCapabilities(activeNet)
-                        if (caps == null || !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
+                        if (caps == null ||
+                            !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) ||
+                            !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                        ) {
                             return true
                         }
                     }
@@ -3831,6 +3911,11 @@ class FloatingBubbleService : Service() {
             }
 
             val msg = t?.message.orEmpty()
+
+            // 2b. Global timeout ceiling across all failovers (120s)
+            if (msg.contains("GLOBAL_REQUEST_TIMEOUT", ignoreCase = true)) {
+                return Pair("Tổng thời gian chờ quá lâu (>120s)", "Toàn bộ phiên kết nối AI vượt quá 120 giây. Chạm để thử lại.")
+            }
 
             // 3. All keys in fallback pool failed
             if (msg.contains("danh sách dự phòng đều thất bại", ignoreCase = true) ||
