@@ -63,7 +63,7 @@ Mọi báo cáo nghiệm thu hoặc đề xuất thay đổi liên quan đến m
   - Lỗi hết hạn mức API (`429 Too Many Requests`, `RateLimitDetector`).
   - Lỗi API Key từ chối / sai cấu hình (`HTTP 401/403`).
   - Lỗi từ phía model/server AI (`HTTP 500/502/503/504`).
-  - Lỗi timeout phản hồi quá 60s (`INITIAL_CONNECTION_TIMEOUT`).
+  - Lỗi timeout phản hồi quá 90s (`INITIAL_CONNECTION_TIMEOUT`).
   - Lỗi do người dùng chủ động thao tác (hủy bỏ, đóng thẻ).
 
 ---

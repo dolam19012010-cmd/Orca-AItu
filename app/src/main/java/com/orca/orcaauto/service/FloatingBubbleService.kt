@@ -2013,7 +2013,7 @@ class FloatingBubbleService : Service() {
                                 break
                             }
                         } else {
-                            // Phase 1: TTFB & Round 1 connection window (60s)
+                            // Phase 1: TTFB & Round 1 connection window (90s)
                             val elapsedSinceStart = now - requestStartedAt.get()
                             if (elapsedSinceStart >= INITIAL_CONNECTION_TIMEOUT_MS) {
                                 isWatchdogTimedOut.set(true)
@@ -3759,7 +3759,7 @@ class FloatingBubbleService : Service() {
     companion object {
         private const val TAG = "FloatingBubble"
         const val SSE_WATCHDOG_TIMEOUT_MS = 25_000L
-        const val INITIAL_CONNECTION_TIMEOUT_MS = 60_000L
+        const val INITIAL_CONNECTION_TIMEOUT_MS = 90_000L
         const val TAG_UNREAD_RED_DOT = "tag_unread_red_dot"
         const val ACTION_WAKE_TO_STATE_1 = "com.orca.orcaauto.action.WAKE_TO_STATE_1"
         const val EXTRA_WAKE_TO_STATE_1 = "extra_wake_to_state_1"
@@ -3813,9 +3813,9 @@ class FloatingBubbleService : Service() {
                 return Pair("Toàn bộ API Key đều lỗi", "Tất cả các Key trong danh sách dự phòng đều thất bại hoặc phản hồi quá lâu. Vui lòng kiểm tra lại Key trong Cài đặt.")
             }
 
-            // 4. Watchdog connection window timeout (60s)
+            // 4. Watchdog connection window timeout (90s)
             if (isWatchdogTimedOut || msg.contains("INITIAL_CONNECTION_TIMEOUT", ignoreCase = true)) {
-                return Pair("Máy chủ phản hồi quá lâu (>60s)", "Không nhận được phản hồi từ AI sau 60 giây. Chạm để thử lại.")
+                return Pair("Máy chủ phản hồi quá lâu (>90s)", "Không nhận được phản hồi từ AI sau 90 giây. Chạm để thử lại.")
             }
 
             // 4b. AI provider timeout / slow response

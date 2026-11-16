@@ -1120,7 +1120,7 @@ class FloatingBubbleServiceEmpiricalChallengeTest {
         val watchdogEx = java.util.concurrent.CancellationException("INITIAL_CONNECTION_TIMEOUT")
         val (title, detail) = FloatingBubbleService.buildAiErrorMessage(null, watchdogEx, true)
 
-        assertEquals("Máy chủ phản hồi quá lâu (>60s)", title)
+        assertEquals("Máy chủ phản hồi quá lâu (>90s)", title)
         assertTrue(detail.contains("Không nhận được phản hồi", ignoreCase = true))
     }
 
