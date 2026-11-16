@@ -73,18 +73,18 @@ class StreamingAiClient(
      * @param keyPool List of candidate API keys, ordered by priority.
      * @param prompt User prompt text.
      * @param systemInstruction Optional persona or system instruction.
-     * @param spikeThresholdMs Initial wait threshold before failing over to backup worker (default 15s).
+     * @param spikeThresholdMs Initial wait threshold before failing over to backup worker (default 90s).
      * @param stallThresholdMs In-flight stall threshold before failing over to backup worker (default 25s).
-     * @param hardTimeoutMs Overall hard timeout limit for the entire streaming flow (default 120s).
+     * @param hardTimeoutMs Overall hard timeout limit for the entire streaming flow (default 300s).
      */
     @OptIn(ExperimentalCoroutinesApi::class)
     fun streamWithSpikeRacing(
         keyPool: List<ApiKeyConfig>,
         prompt: String,
         systemInstruction: String = "",
-        spikeThresholdMs: Long = 15_000L,
+        spikeThresholdMs: Long = 90_000L,
         stallThresholdMs: Long = 25_000L,
-        hardTimeoutMs: Long = 120_000L,
+        hardTimeoutMs: Long = 300_000L,
         thinkingLevel: AssistantThinkingLevel = AssistantThinkingLevel.BALANCED
     ): Flow<StreamUiEvent> = channelFlow {
         if (prompt.isBlank()) {

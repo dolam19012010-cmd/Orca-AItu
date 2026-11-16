@@ -1829,6 +1829,8 @@ class FloatingBubbleService : Service() {
                 setTextColor(Color.WHITE)
                 textSize = 12.5f
                 setLineSpacing(dpToPx(2).toFloat(), 1.15f)
+                setTextIsSelectable(true)
+                highlightColor = Color.parseColor("#4D38BDF8")
             }
             sec1Box.addView(adviceTv)
 
@@ -1919,9 +1921,6 @@ class FloatingBubbleService : Service() {
                     }, 200L)
                 }
             }
-            setOnLongClickListener {
-                pasteFromClipboard(this)
-            }
         }
 
         var sendBtnRef: TextView? = null
@@ -1970,6 +1969,8 @@ class FloatingBubbleService : Service() {
                         setTextColor(Color.WHITE)
                         textSize = 12.5f
                         setLineSpacing(dpToPx(2).toFloat(), 1.15f)
+                        setTextIsSelectable(true)
+                        highlightColor = Color.parseColor("#4D38BDF8")
                     }
                     newSec1Box.addView(newAdviceTv)
 
@@ -3308,9 +3309,6 @@ class FloatingBubbleService : Service() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 isForceDarkAllowed = false
             }
-            setOnLongClickListener {
-                pasteFromClipboard(this)
-            }
         }
         bodyLayout.addView(noteEt)
 
@@ -3758,8 +3756,8 @@ class FloatingBubbleService : Service() {
 
     companion object {
         private const val TAG = "FloatingBubble"
-        const val SSE_WATCHDOG_TIMEOUT_MS = 25_000L
-        const val INITIAL_CONNECTION_TIMEOUT_MS = 90_000L
+        const val SSE_WATCHDOG_TIMEOUT_MS = 28_000L
+        const val INITIAL_CONNECTION_TIMEOUT_MS = 95_000L
         const val TAG_UNREAD_RED_DOT = "tag_unread_red_dot"
         const val ACTION_WAKE_TO_STATE_1 = "com.orca.orcaauto.action.WAKE_TO_STATE_1"
         const val EXTRA_WAKE_TO_STATE_1 = "extra_wake_to_state_1"

@@ -429,12 +429,14 @@ private fun UserChatBubble(message: AssistantChatMessage) {
                 )
                 .padding(horizontal = 14.dp, vertical = 10.dp)
         ) {
-            Text(
-                text = message.text,
-                color = TextPrimaryDark,
-                fontSize = 14.5.sp,
-                lineHeight = 20.sp
-            )
+            SelectionContainer {
+                Text(
+                    text = message.text,
+                    color = TextPrimaryDark,
+                    fontSize = 14.5.sp,
+                    lineHeight = 20.sp
+                )
+            }
         }
     }
 }
@@ -793,13 +795,15 @@ private fun ReasoningAccordion(thoughtText: String) {
                 exit = shrinkVertically() + fadeOut()
             ) {
                 Column(modifier = Modifier.padding(top = 8.dp)) {
-                    Text(
-                        text = thoughtText.trim(),
-                        color = TextSecondaryDark,
-                        fontSize = 12.sp,
-                        lineHeight = 17.sp,
-                        fontFamily = FontFamily.Monospace
-                    )
+                    SelectionContainer {
+                        Text(
+                            text = thoughtText.trim(),
+                            color = TextSecondaryDark,
+                            fontSize = 12.sp,
+                            lineHeight = 17.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
                 }
             }
         }
