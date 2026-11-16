@@ -155,70 +155,50 @@ class StreamingAiClient(
                     activeWorkers.remove(workerId)
                     if (isCompleted.get()) return@launch
 
-                    val isRateLimit = RateLimitDetector.isRateLimit(e)
-                    if (isRateLimit) {
-                        exhaustedKeyIds.add(key.rawKey)
-                        // Cancel any active workers that share this exhausted rawKey
-                        val sameKeyWorkers = activeWorkers.filterValues { it.config.rawKey == key.rawKey }
-                        for ((id, w) in sameKeyWorkers) {
-                            w.cancel()
-                            activeWorkers.remove(id)
-                        }
+                    // Always mark this key as exhausted for the current request to ensure failover to next key
+                    exhaustedKeyIds.add(key.rawKey)
 
-                        val backupKey = findNextAvailableKey()
-                        if (backupKey != null) {
-                            // Multiple keys exist and healthy backup key available -> Failover immediately!
-                            val currentLeader = leaderId.get()
-                            if (currentLeader == workerId) {
-                                leaderId.set(null)
-                                fullContentAcc.setLength(0)
-                                fullThoughtAcc.setLength(0)
-                            }
-                            send(
-                                StreamUiEvent.SpikeDetected(
-                                    delayMs = System.currentTimeMillis() - totalStartTime,
-                                    backupProvider = backupKey.provider.displayName,
-                                    backupModel = backupKey.modelName,
-                                    isInFlightReset = true
-                                )
-                            )
-                            lastHeartbeat.set(System.currentTimeMillis())
-                            launchWorker(backupKey)
-                            return@launch
-                        } else {
-                            // Only 1 key configured OR all keys exhausted -> Cancel all workers immediately
-                            if (!isCompleted.getAndSet(true)) {
-                                val friendlyMsg = "Tài khoản AI đã chạm hạn mức sử dụng (HTTP 429 / RESOURCE_EXHAUSTED). Vui lòng thêm API Key dự phòng trong Cài đặt hoặc thử lại sau."
-                                send(StreamUiEvent.Error(RateLimitException(friendlyMsg, e)))
-                                cancelAllWorkers()
-                                completionSignal.complete(Unit)
-                            }
-                            return@launch
-                        }
+                    // Cancel any active workers that share this failed rawKey
+                    val sameKeyWorkers = activeWorkers.filterValues { it.config.rawKey == key.rawKey }
+                    for ((id, w) in sameKeyWorkers) {
+                        w.cancel()
+                        activeWorkers.remove(id)
                     }
 
-                    val currentLeader = leaderId.get()
-                    if (currentLeader == workerId) {
-                        // Leader failed mid-stream after emitting content
+                    val backupKey = findNextAvailableKey()
+                    if (backupKey != null) {
+                        // Healthy backup key available -> Failover immediately!
+                        val currentLeader = leaderId.get()
+                        if (currentLeader == workerId) {
+                            leaderId.set(null)
+                            fullContentAcc.setLength(0)
+                            fullThoughtAcc.setLength(0)
+                        }
+                        send(
+                            StreamUiEvent.SpikeDetected(
+                                delayMs = System.currentTimeMillis() - totalStartTime,
+                                backupProvider = backupKey.provider.displayName,
+                                backupModel = backupKey.modelName,
+                                isInFlightReset = true
+                            )
+                        )
+                        lastHeartbeat.set(System.currentTimeMillis())
+                        launchWorker(backupKey)
+                        return@launch
+                    } else {
+                        // Only 1 key configured OR all keys exhausted -> Terminate cleanly without runaway retries
                         if (!isCompleted.getAndSet(true)) {
-                            send(StreamUiEvent.Error(e))
+                            val isRateLimit = RateLimitDetector.isRateLimit(e)
+                            if (isRateLimit) {
+                                val friendlyMsg = "Tài khoản AI đã chạm hạn mức sử dụng (HTTP 429 / RESOURCE_EXHAUSTED). Toàn bộ API Key dự phòng đều đã hết hạn."
+                                send(StreamUiEvent.Error(RateLimitException(friendlyMsg, e)))
+                            } else {
+                                send(StreamUiEvent.Error(e))
+                            }
                             cancelAllWorkers()
                             completionSignal.complete(Unit)
                         }
-                    } else if (currentLeader == null) {
-                        // Failed before any leader was elected
-                        if (activeWorkers.isEmpty()) {
-                            val backupKey = findNextAvailableKey()
-                            if (backupKey != null) {
-                                launchWorker(backupKey)
-                            } else {
-                                if (!isCompleted.getAndSet(true)) {
-                                    send(StreamUiEvent.Error(e))
-                                    cancelAllWorkers()
-                                    completionSignal.complete(Unit)
-                                }
-                            }
-                        }
+                        return@launch
                     }
                 } finally {
                     activeWorkers.remove(workerId)

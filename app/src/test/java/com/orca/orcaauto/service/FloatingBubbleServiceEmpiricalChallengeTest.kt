@@ -1074,4 +1074,62 @@ class FloatingBubbleServiceEmpiricalChallengeTest {
         assertFalse(FloatingBubbleService.isNetworkException(illegalArg))
         assertFalse(FloatingBubbleService.isNetworkException(null))
     }
+
+    // =========================================================================
+    // 7. PRECISE AI ERROR DISAMBIGUATION TESTS (NO FALSE NETWORK DROP LABELS)
+    // =========================================================================
+
+    @Test
+    fun buildAiErrorMessage_whenPhysicalDnsResolutionFails_returnsTrueNetworkDrop() {
+        val unknownHost = java.net.UnknownHostException("Unable to resolve host api.gemini.google.com")
+        val (title, detail) = FloatingBubbleService.buildAiErrorMessage(null, unknownHost, false)
+
+        assertEquals("Mất kết nối mạng", title)
+        assertTrue(detail.contains("chưa có kết nối Internet", ignoreCase = true))
+    }
+
+    @Test
+    fun buildAiErrorMessage_whenRateLimited_returnsExplicit429Message() {
+        val rateLimitEx = com.orca.orcaauto.data.remote.RateLimitException("HTTP 429: RESOURCE_EXHAUSTED")
+        val (title, detail) = FloatingBubbleService.buildAiErrorMessage(null, rateLimitEx, false)
+
+        assertEquals("Hết hạn mức AI (HTTP 429)", title)
+        assertTrue(detail.contains("hạn mức", ignoreCase = true))
+    }
+
+    @Test
+    fun buildAiErrorMessage_whenApiKeyUnauthorized_returnsExplicitKeyErrorMessage() {
+        val authEx = java.io.IOException("HTTP 401 (OpenRouter - openrouter/free): Unauthorized key")
+        val (title, detail) = FloatingBubbleService.buildAiErrorMessage(null, authEx, false)
+
+        assertEquals("API Key không hợp lệ (401/403)", title)
+        assertTrue(detail.contains("từ chối", ignoreCase = true))
+    }
+
+    @Test
+    fun buildAiErrorMessage_whenServerOverloaded_returnsExplicit50xMessage() {
+        val serverEx = java.io.IOException("HTTP 503 (OpenRouter): Service Unavailable")
+        val (title, detail) = FloatingBubbleService.buildAiErrorMessage(null, serverEx, false)
+
+        assertEquals("Máy chủ AI quá tải (50x)", title)
+        assertTrue(detail.contains("bảo trì", ignoreCase = true))
+    }
+
+    @Test
+    fun buildAiErrorMessage_whenWatchdogTimedOut_returnsTimeoutMessageWithoutClaimingNetworkOffline() {
+        val watchdogEx = java.util.concurrent.CancellationException("INITIAL_CONNECTION_TIMEOUT")
+        val (title, detail) = FloatingBubbleService.buildAiErrorMessage(null, watchdogEx, true)
+
+        assertEquals("Máy chủ phản hồi quá lâu (>60s)", title)
+        assertTrue(detail.contains("Không nhận được phản hồi", ignoreCase = true))
+    }
+
+    @Test
+    fun buildAiErrorMessage_whenAllKeysFailed_returnsAllKeysFailedMessage() {
+        val allKeysEx = java.io.IOException("Toàn bộ 2 API Key trong danh sách dự phòng đều thất bại:\nKey 1: HTTP 401\nKey 2: HTTP 503")
+        val (title, detail) = FloatingBubbleService.buildAiErrorMessage(null, allKeysEx, false)
+
+        assertEquals("Toàn bộ API Key đều lỗi", title)
+        assertTrue(detail.contains("danh sách dự phòng", ignoreCase = true))
+    }
 }

@@ -643,6 +643,80 @@ class StreamingAiClientTest {
     }
 
     @Test
+    fun streamWithSpikeRacing_whenPrimaryReturns503AndBackupKeyExists_failsOverImmediatelyToBackupKey() = runBlocking {
+        val key1 = ApiKeyConfig(
+            id = "key_1",
+            provider = AiProviderType.OPENROUTER,
+            rawKey = "sk-or-primary-503",
+            modelName = "openrouter/free",
+            endpointUrl = "https://openrouter.ai/api/v1/chat/completions",
+            isEnabled = true
+        )
+        val key2 = ApiKeyConfig(
+            id = "key_2",
+            provider = AiProviderType.GEMINI,
+            rawKey = "AIzaSyBackup_Gemini",
+            modelName = "gemini-2.5-flash",
+            endpointUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=AIzaSyBackup_Gemini",
+            isEnabled = true
+        )
+
+        val requestCountKey1 = AtomicInteger(0)
+        val requestCountKey2 = AtomicInteger(0)
+
+        val geminiBackupSse = """
+            data: {"candidates":[{"content":{"parts":[{"text":"Phản hồi từ Gemini dự phòng"}]}}]}
+            data: [DONE]
+        """.trimIndent()
+
+        val okHttpClient = OkHttpClient.Builder()
+            .addInterceptor(Interceptor { chain ->
+                val auth = chain.request().header("Authorization").orEmpty()
+                val url = chain.request().url.toString()
+
+                if (auth.contains("sk-or-primary-503")) {
+                    requestCountKey1.incrementAndGet()
+                    val errJson = """{"error":{"code":503,"message":"No available provider for this model"}}"""
+                    Response.Builder()
+                        .request(chain.request())
+                        .protocol(Protocol.HTTP_1_1)
+                        .code(503)
+                        .message("Service Unavailable")
+                        .body(errJson.toResponseBody("application/json".toMediaType()))
+                        .build()
+                } else {
+                    requestCountKey2.incrementAndGet()
+                    Response.Builder()
+                        .request(chain.request())
+                        .protocol(Protocol.HTTP_1_1)
+                        .code(200)
+                        .message("OK")
+                        .body(geminiBackupSse.toResponseBody("text/event-stream".toMediaType()))
+                        .build()
+                }
+            })
+            .build()
+
+        val client = StreamingAiClient(httpClient = okHttpClient)
+        val events = client.streamWithSpikeRacing(
+            keyPool = listOf(key1, key2),
+            prompt = "Test 503 failover"
+        ).toList()
+
+        assertEquals("Key 1 chỉ gửi duy nhất 1 request khi bị 503, không được lặp lại chính nó", 1, requestCountKey1.get())
+        assertEquals("Key 2 phải được kích hoạt tự động", 1, requestCountKey2.get())
+
+        val spikeEvent = events.filterIsInstance<StreamUiEvent.SpikeDetected>().firstOrNull()
+        assertNotNull("Phải emit SpikeDetected khi failover sang Key 2", spikeEvent)
+        assertEquals("Google Gemini", spikeEvent?.backupProvider)
+
+        val completeEvent = events.filterIsInstance<StreamUiEvent.Complete>().firstOrNull()
+        assertNotNull("Stream phải hoàn thành qua backup key", completeEvent)
+        assertEquals("key_2", completeEvent?.usedKey?.id)
+        assertEquals("Phản hồi từ Gemini dự phòng", completeEvent?.fullContent)
+    }
+
+    @Test
     fun rateLimitDetector_correctlyIdentifiesHttp429AndQuotaKeywords() {
         assertTrue(RateLimitDetector.isRateLimit(429))
         assertTrue(RateLimitDetector.isRateLimit(200, "error: RESOURCE_EXHAUSTED"))

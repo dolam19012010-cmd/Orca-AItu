@@ -59,7 +59,29 @@ Mọi báo cáo nghiệm thu hoặc đề xuất thay đổi liên quan đến m
 #### Quy tắc 4: Phân định thông báo lỗi minh bạch (Explicit Error Disambiguation)
 * Tuyệt đối không quy chụp mọi lỗi streaming thành "Mất kết nối mạng".
 * Phải phân định rõ ràng giữa:
-  - Lỗi mạng thực sự (`UnknownHostException`, `SocketTimeoutException`, `ConnectException`).
+  - Lỗi mạng thực sự (`UnknownHostException`, hoặc `ConnectivityManager` báo ngắt Internet).
   - Lỗi hết hạn mức API (`429 Too Many Requests`, `RateLimitDetector`).
-  - Lỗi từ phía model AI (`500/503`, JSON malformed).
+  - Lỗi API Key từ chối / sai cấu hình (`HTTP 401/403`).
+  - Lỗi từ phía model/server AI (`HTTP 500/502/503/504`).
+  - Lỗi timeout phản hồi quá 60s (`INITIAL_CONNECTION_TIMEOUT`).
   - Lỗi do người dùng chủ động thao tác (hủy bỏ, đóng thẻ).
+
+---
+
+## Sự Cố #002: Lỗi Kẹt Failover Khi Stream & Chụp Mũ Lỗi Mạng Thay Vì Tự Động Chuyển Key Dự Phòng
+
+- **Ngày ghi nhận:** 16/11/2026
+- **Mức độ nghiêm trọng:** P1 (Key chính gặp sự cố thì không tự động chuyển sang Key dự phòng khi đang stream, gom mọi lỗi server thành "Mất kết nối mạng")
+
+### 1. Phân tích nguyên nhân gốc rễ
+1. **Lỗi kẹt chọn lại Key hỏng trong `StreamingAiClient`:**
+   - Khi gọi stream, `exhaustedKeyIds` chỉ ghi nhận key nếu `isRateLimit == true` (HTTP 429).
+   - Nếu key chết vì HTTP 401, 404, 500, 503, hoặc SocketTimeout, key đó **không bị đưa vào `exhaustedKeyIds`**.
+   - Khi gọi `findNextAvailableKey()`, hệ thống lại bốc trúng đúng cái key vừa chết đó để thử lại, không bao giờ chuyển sang key dự phòng thứ 2 trong luồng stream!
+2. **"Chụp mũ" toàn bộ lỗi thành "Mất kết nối mạng":**
+   - Hàm `isNetworkException` kiểm tra `curr.message?.contains("timeout")`. Bất kỳ lỗi nào từ server AI như `504 Gateway Timeout` hay OkHttp ReadTimeout đều bị hàm này coi là "Mất mạng".
+   - Giao diện `renderStreamTimeoutUi` gán cứng dòng chữ *"Mất kết nối mạng. Chạm để thử lại"*, khiến người dùng lầm tưởng điện thoại rớt mạng trong khi mạng vẫn căng sóng.
+
+### 2. Quy tắc kỹ thuật đúc kết
+1. **Toàn diện hóa Failover khi Stream:** Mọi worker thất bại vì bất kỳ ngoại lệ nào (401, 404, 429, 500, 503, Timeout) đều phải lập tức đưa key đó vào `exhaustedKeyIds` cho phiên gọi hiện tại, tự động chuyển ngay sang key dự phòng tiếp theo mà không bắt người dùng can thiệp thủ công.
+2. **Xác thực Mạng Vật Lý Thực Sự:** Chỉ được hiển thị *"Mất kết nối mạng"* khi `ConnectivityManager` xác nhận thiết bị mất kết nối Internet hoặc lỗi DNS `UnknownHostException`. Toàn bộ các lỗi khác phải hiển thị đúng bản chất kèm nút thử lại.

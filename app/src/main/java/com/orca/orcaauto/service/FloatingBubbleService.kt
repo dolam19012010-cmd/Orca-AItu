@@ -28,6 +28,8 @@ import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.hardware.SensorManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
@@ -71,6 +73,7 @@ import com.orca.orcaauto.data.local.SmartAlarmStatus
 import com.orca.orcaauto.data.local.getBestSummaryForSession
 import com.orca.orcaauto.data.preferences.AssistantThinkingLevel
 import com.orca.orcaauto.data.preferences.UserPreferences
+import com.orca.orcaauto.data.remote.RateLimitDetector
 import com.orca.orcaauto.domain.LiveAiChatHelper
 import com.orca.orcaauto.domain.alarm.AlarmCascadeMode
 import com.orca.orcaauto.domain.alarm.SystemAlarmHelper
@@ -1353,13 +1356,15 @@ class FloatingBubbleService : Service() {
         }
     }
 
-    private fun renderStreamTimeoutUi(
+    private fun renderAiErrorUi(
         adviceTv: TextView,
         notesContainer: LinearLayout,
+        title: String,
+        detail: String,
         promptToRetry: String,
         onRetry: (String) -> Unit
     ) {
-        adviceTv.text = "Mất kết nối mạng. Chạm để thử lại"
+        adviceTv.text = "⚠️ $title\n$detail"
         adviceTv.setTextColor(Color.parseColor("#E2E8F0"))
         adviceTv.isClickable = true
         adviceTv.addMicroPressEffect()
@@ -1396,6 +1401,22 @@ class FloatingBubbleService : Service() {
             }
         }
         notesContainer.addView(retryBtn)
+    }
+
+    private fun renderStreamTimeoutUi(
+        adviceTv: TextView,
+        notesContainer: LinearLayout,
+        promptToRetry: String,
+        onRetry: (String) -> Unit
+    ) {
+        renderAiErrorUi(
+            adviceTv,
+            notesContainer,
+            "Mất kết nối mạng",
+            "Chạm để thử lại",
+            promptToRetry,
+            onRetry
+        )
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -1999,22 +2020,17 @@ class FloatingBubbleService : Service() {
                             }
                         } else {
                             val err = result.exceptionOrNull()
-                            if (isWatchdogTimedOut.get() || isNetworkException(err)) {
-                                renderStreamTimeoutUi(targetAdviceTv, targetNotesContainer, promptToSend, executeAiCall)
-                            } else {
-                                targetAdviceTv.text = "Thất bại: ${err?.message ?: "Lỗi gọi AI"}"
-                            }
+                            val (title, detail) = buildAiErrorMessage(this@FloatingBubbleService, err, isWatchdogTimedOut.get())
+                            renderAiErrorUi(targetAdviceTv, targetNotesContainer, title, detail, promptToSend, executeAiCall)
                         }
                     } catch (e: CancellationException) {
                         if (isWatchdogTimedOut.get()) {
-                            renderStreamTimeoutUi(targetAdviceTv, targetNotesContainer, promptToSend, executeAiCall)
+                            val (title, detail) = buildAiErrorMessage(this@FloatingBubbleService, e, true)
+                            renderAiErrorUi(targetAdviceTv, targetNotesContainer, title, detail, promptToSend, executeAiCall)
                         }
                     } catch (t: Throwable) {
-                        if (isWatchdogTimedOut.get() || isNetworkException(t)) {
-                            renderStreamTimeoutUi(targetAdviceTv, targetNotesContainer, promptToSend, executeAiCall)
-                        } else {
-                            targetAdviceTv.text = "Thất bại: ${t.message ?: "Lỗi gọi AI"}"
-                        }
+                        val (title, detail) = buildAiErrorMessage(this@FloatingBubbleService, t, isWatchdogTimedOut.get())
+                        renderAiErrorUi(targetAdviceTv, targetNotesContainer, title, detail, promptToSend, executeAiCall)
                     } finally {
                         activeWatchdogJob?.cancel()
                         activeWatchdogJob = null
@@ -3687,6 +3703,75 @@ class FloatingBubbleService : Service() {
         const val EXTRA_SUMMARY_CONTENT = "extra_summary_content"
         const val EXTRA_MODEL_INFO = "extra_model_info"
         const val EXTRA_SESSION_ID = "extra_session_id"
+
+        fun isPhysicalNetworkOffline(context: Context?, t: Throwable?): Boolean {
+            if (context != null) {
+                try {
+                    val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                    if (cm != null) {
+                        val activeNet = cm.activeNetwork
+                        if (activeNet == null) return true
+                        val caps = cm.getNetworkCapabilities(activeNet)
+                        if (caps == null || !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
+                            return true
+                        }
+                    }
+                } catch (_: Throwable) {}
+            }
+            var curr = t
+            while (curr != null) {
+                if (curr is java.net.UnknownHostException ||
+                    curr.message?.contains("Unable to resolve host", ignoreCase = true) == true
+                ) {
+                    return true
+                }
+                curr = curr.cause
+            }
+            return false
+        }
+
+        fun buildAiErrorMessage(context: Context?, t: Throwable?, isWatchdogTimedOut: Boolean): Pair<String, String> {
+            // 1. Device is physically offline or DNS failure
+            if (isPhysicalNetworkOffline(context, t)) {
+                return Pair("Mất kết nối mạng", "Thiết bị chưa có kết nối Internet. Chạm để thử lại.")
+            }
+
+            // 2. Rate limit / Quota exhausted
+            if (RateLimitDetector.isRateLimit(t)) {
+                return Pair("Hết hạn mức AI (HTTP 429)", "Tài khoản AI hoặc toàn bộ Key dự phòng đã chạm hạn mức. Vui lòng thêm Key mới trong Cài đặt.")
+            }
+
+            val msg = t?.message.orEmpty()
+
+            // 3. All keys in fallback pool failed
+            if (msg.contains("danh sách dự phòng đều thất bại", ignoreCase = true)) {
+                return Pair("Toàn bộ API Key đều lỗi", "Tất cả các Key trong danh sách dự phòng đều thất bại. Vui lòng kiểm tra lại Key trong Cài đặt.")
+            }
+
+            // 4. Watchdog connection window timeout (60s)
+            if (isWatchdogTimedOut || msg.contains("INITIAL_CONNECTION_TIMEOUT", ignoreCase = true)) {
+                return Pair("Máy chủ phản hồi quá lâu (>60s)", "Không nhận được phản hồi từ AI sau 60 giây. Chạm để thử lại.")
+            }
+
+            // 5. In-flight streaming stall timeout (25s)
+            if (msg.contains("SSE_STREAM_WATCHDOG_TIMEOUT", ignoreCase = true)) {
+                return Pair("Gián đoạn dữ liệu AI", "Dòng phản hồi AI bị ngắt quãng quá 25 giây. Chạm để thử lại.")
+            }
+
+            // 6. HTTP 401 / 403 API Key unauthorized / rejected
+            if (msg.contains("401") || msg.contains("403") || msg.contains("Unauthorized", ignoreCase = true) || msg.contains("Forbidden", ignoreCase = true)) {
+                return Pair("API Key không hợp lệ (401/403)", "Khóa API bị từ chối hoặc hết hạn. Vui lòng kiểm tra lại Key trong Cài đặt.")
+            }
+
+            // 7. HTTP 500 / 502 / 503 / 504 Server Error
+            if (msg.contains("500") || msg.contains("502") || msg.contains("503") || msg.contains("504") || msg.contains("Bad Gateway", ignoreCase = true) || msg.contains("Service Unavailable", ignoreCase = true)) {
+                return Pair("Máy chủ AI quá tải (50x)", "Nhà cung cấp AI đang bận hoặc bảo trì. Chạm để thử lại.")
+            }
+
+            // 8. General AI error with clean extracted message
+            val cleanErr = msg.ifBlank { "Lỗi không xác định khi gọi AI" }
+            return Pair("Lỗi gọi AI", "$cleanErr. Chạm để thử lại.")
+        }
 
         fun isNetworkException(t: Throwable?): Boolean {
             if (t == null) return false
