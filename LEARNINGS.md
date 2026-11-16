@@ -49,7 +49,7 @@ Mọi cơ chế Watchdog hoặc phát hiện nghẽn dòng (stream stall detecto
 1. **Pha 1: Thời gian chờ chữ đầu tiên (TTFB / Connection Window):**
    - Phải dành một khoảng thời gian kết nối rộng rãi (**tối thiểu 45–60 giây**, tương thích với cấu hình `readTimeout(60, SECONDS)` của OkHttp) để chờ đóng gói context, gọi Vòng 1 Router và xếp hàng server AI.
 2. **Pha 2: Canh chừng đứt nghẽn giữa dòng (In-Flight Stream Stall Watchdog):**
-   - Bộ đếm thời gian chết giữa chừng (ví dụ 15 giây) **TUYỆT ĐỐI KHÔNG ĐƯỢC PHÉP BẤM GIỜ** cho đến khi token đầu tiên đã thực sự xuất hiện trên màn hình (`hasReceivedFirstToken == true`).
+   - Bộ đếm thời gian chết giữa chừng (chuẩn hóa 25 giây) **TUYỆT ĐỐI KHÔNG ĐƯỢC PHÉP BẤM GIỜ** cho đến khi token đầu tiên đã thực sự xuất hiện trên màn hình (`hasReceivedFirstToken == true`).
 
 #### Quy tắc 3: Bắt buộc giải trình Latency Budget trong nghiệm thu (Latency Budget in Handoff)
 Mọi báo cáo nghiệm thu hoặc đề xuất thay đổi liên quan đến mạng/concurrency phải giải trình rõ ràng:

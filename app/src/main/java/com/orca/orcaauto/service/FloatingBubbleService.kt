@@ -1936,7 +1936,7 @@ class FloatingBubbleService : Service() {
                         delay(500)
                         val now = System.currentTimeMillis()
                         if (hasReceivedFirstToken.get()) {
-                            // Phase 2: In-flight streaming token stall watchdog (15s)
+                            // Phase 2: In-flight streaming token stall watchdog (25s)
                             val elapsedSinceLastToken = now - lastTokenReceivedAt.get()
                             if (elapsedSinceLastToken >= SSE_WATCHDOG_TIMEOUT_MS) {
                                 isWatchdogTimedOut.set(true)
@@ -3679,7 +3679,7 @@ class FloatingBubbleService : Service() {
 
     companion object {
         private const val TAG = "FloatingBubble"
-        const val SSE_WATCHDOG_TIMEOUT_MS = 15_000L
+        const val SSE_WATCHDOG_TIMEOUT_MS = 25_000L
         const val INITIAL_CONNECTION_TIMEOUT_MS = 60_000L
         const val TAG_UNREAD_RED_DOT = "tag_unread_red_dot"
         const val ACTION_WAKE_TO_STATE_1 = "com.orca.orcaauto.action.WAKE_TO_STATE_1"
