@@ -73,8 +73,8 @@ class StreamingAiClient(
      * @param keyPool List of candidate API keys, ordered by priority.
      * @param prompt User prompt text.
      * @param systemInstruction Optional persona or system instruction.
-     * @param spikeThresholdMs Initial wait threshold before launching a hedged backup worker (default 10s).
-     * @param stallThresholdMs In-flight stall threshold before launching a hedged backup worker (default 15s).
+     * @param spikeThresholdMs Initial wait threshold before failing over to backup worker (default 15s).
+     * @param stallThresholdMs In-flight stall threshold before failing over to backup worker (default 25s).
      * @param hardTimeoutMs Overall hard timeout limit for the entire streaming flow (default 120s).
      */
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -82,8 +82,8 @@ class StreamingAiClient(
         keyPool: List<ApiKeyConfig>,
         prompt: String,
         systemInstruction: String = "",
-        spikeThresholdMs: Long = 10_000L,
-        stallThresholdMs: Long = 15_000L,
+        spikeThresholdMs: Long = 15_000L,
+        stallThresholdMs: Long = 25_000L,
         hardTimeoutMs: Long = 120_000L,
         thinkingLevel: AssistantThinkingLevel = AssistantThinkingLevel.BALANCED
     ): Flow<StreamUiEvent> = channelFlow {
@@ -200,7 +200,14 @@ class StreamingAiClient(
                         launchWorker(backupKey)
                         return@launch
                     } else {
-                        // Only 1 key configured OR all keys exhausted -> Terminate cleanly without runaway retries
+                        // No unstarted backup key to launch.
+                        // Check if another worker is already actively running (e.g. from spike racing)
+                        if (activeWorkers.isNotEmpty()) {
+                            // Another worker is running -> Let it continue without killing it!
+                            return@launch
+                        }
+
+                        // All workers finished and all keys exhausted -> Terminate cleanly without runaway retries
                         if (!isCompleted.getAndSet(true)) {
                             val isRateLimit = RateLimitDetector.isRateLimit(e)
                             if (isRateLimit) {
@@ -238,43 +245,78 @@ class StreamingAiClient(
                 if (currentLeader == null) {
                     // Initial connection spike detected: primary worker took longer than spikeThresholdMs
                     if (timeSinceHeartbeat >= spikeThresholdMs) {
-                        val backupKey = findNextAvailableKey()
-                        if (backupKey != null) {
-                            send(
-                                StreamUiEvent.SpikeDetected(
-                                    delayMs = timeSinceHeartbeat,
-                                    backupProvider = backupKey.provider.displayName,
-                                    backupModel = backupKey.modelName
-                                )
-                            )
-                            lastHeartbeat.set(now)
-                            launchWorker(backupKey)
+                        val stalledEntries = activeWorkers.entries.toList()
+                        val stalledKey = stalledEntries.firstOrNull()?.value?.config
+                        for ((id, handle) in stalledEntries) {
+                            exhaustedKeyIds.add(handle.config.rawKey)
+                            handle.cancel()
+                            activeWorkers.remove(id)
                         }
-                    }
-                } else {
-                    // In-flight stall detected: leader stopped yielding tokens for longer than stallThresholdMs
-                    if (timeSinceHeartbeat >= stallThresholdMs) {
+
                         val backupKey = findNextAvailableKey()
                         if (backupKey != null) {
+                            val failedKeyIdx = eligibleKeys.indexOfFirst { it.rawKey == stalledKey?.rawKey } + 1
+                            val backupKeyIdx = eligibleKeys.indexOfFirst { it.rawKey == backupKey.rawKey } + 1
                             send(
                                 StreamUiEvent.SpikeDetected(
                                     delayMs = timeSinceHeartbeat,
                                     backupProvider = backupKey.provider.displayName,
                                     backupModel = backupKey.modelName,
-                                    isInFlightReset = true
+                                    isInFlightReset = true,
+                                    failedKeyIndex = if (failedKeyIdx > 0) failedKeyIdx else 1,
+                                    backupKeyIndex = if (backupKeyIdx > 0) backupKeyIdx else (failedKeyIdx + 1),
+                                    failureReason = "Phản hồi chậm"
                                 )
                             )
                             lastHeartbeat.set(now)
-
-                            // Cancel stalled leader and re-open leader slot for backup worker
-                            val stalledWorker = activeWorkers[currentLeader]
-                            stalledWorker?.cancel()
-                            activeWorkers.remove(currentLeader)
-                            leaderId.set(null)
-                            fullContentAcc.setLength(0)
-                            fullThoughtAcc.setLength(0)
-
                             launchWorker(backupKey)
+                        } else {
+                            if (!isCompleted.getAndSet(true)) {
+                                val friendlyMsg = if (eligibleKeys.size > 1) {
+                                    "Toàn bộ ${eligibleKeys.size} API Key trong danh sách dự phòng đều phản hồi quá lâu (>${spikeThresholdMs / 1000}s)."
+                                } else {
+                                    "Máy chủ AI phản hồi quá lâu (>${spikeThresholdMs / 1000}s)."
+                                }
+                                send(StreamUiEvent.Error(java.util.concurrent.TimeoutException(friendlyMsg)))
+                                cancelAllWorkers()
+                                completionSignal.complete(Unit)
+                            }
+                        }
+                    }
+                } else {
+                    // In-flight stall detected: leader stopped yielding tokens for longer than stallThresholdMs
+                    if (timeSinceHeartbeat >= stallThresholdMs) {
+                        val stalledWorker = activeWorkers[currentLeader]
+                        stalledWorker?.let { exhaustedKeyIds.add(it.config.rawKey) }
+                        stalledWorker?.cancel()
+                        activeWorkers.remove(currentLeader)
+                        leaderId.set(null)
+                        fullContentAcc.setLength(0)
+                        fullThoughtAcc.setLength(0)
+
+                        val backupKey = findNextAvailableKey()
+                        if (backupKey != null) {
+                            val failedKeyIdx = eligibleKeys.indexOfFirst { it.rawKey == stalledWorker?.config?.rawKey } + 1
+                            val backupKeyIdx = eligibleKeys.indexOfFirst { it.rawKey == backupKey.rawKey } + 1
+                            send(
+                                StreamUiEvent.SpikeDetected(
+                                    delayMs = timeSinceHeartbeat,
+                                    backupProvider = backupKey.provider.displayName,
+                                    backupModel = backupKey.modelName,
+                                    isInFlightReset = true,
+                                    failedKeyIndex = if (failedKeyIdx > 0) failedKeyIdx else 1,
+                                    backupKeyIndex = if (backupKeyIdx > 0) backupKeyIdx else (failedKeyIdx + 1),
+                                    failureReason = "Gián đoạn"
+                                )
+                            )
+                            lastHeartbeat.set(now)
+                            launchWorker(backupKey)
+                        } else {
+                            if (!isCompleted.getAndSet(true)) {
+                                send(StreamUiEvent.Error(java.util.concurrent.TimeoutException("Dòng phản hồi AI bị gián đoạn quá ${stallThresholdMs / 1000}s và không còn Key dự phòng nào khác.")))
+                                cancelAllWorkers()
+                                completionSignal.complete(Unit)
+                            }
                         }
                     }
                 }

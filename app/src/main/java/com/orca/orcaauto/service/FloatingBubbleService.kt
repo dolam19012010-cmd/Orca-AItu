@@ -1994,7 +1994,7 @@ class FloatingBubbleService : Service() {
                 targetAdviceTv.text = "⏳ Đang kết nối AI..."
                 startTextShimmer(targetAdviceTv)
 
-                val requestStartedAt = System.currentTimeMillis()
+                val requestStartedAt = AtomicLong(System.currentTimeMillis())
                 val hasReceivedFirstToken = AtomicBoolean(false)
                 val lastTokenReceivedAt = AtomicLong(0L)
                 val isWatchdogTimedOut = AtomicBoolean(false)
@@ -2014,7 +2014,7 @@ class FloatingBubbleService : Service() {
                             }
                         } else {
                             // Phase 1: TTFB & Round 1 connection window (60s)
-                            val elapsedSinceStart = now - requestStartedAt
+                            val elapsedSinceStart = now - requestStartedAt.get()
                             if (elapsedSinceStart >= INITIAL_CONNECTION_TIMEOUT_MS) {
                                 isWatchdogTimedOut.set(true)
                                 activeStreamingJob?.cancel(CancellationException("INITIAL_CONNECTION_TIMEOUT"))
@@ -2049,6 +2049,10 @@ class FloatingBubbleService : Service() {
                                     }
                                 },
                                 onStatusUpdate = { statusMsg ->
+                                    requestStartedAt.set(System.currentTimeMillis())
+                                    hasReceivedFirstToken.set(false)
+                                    lastTokenReceivedAt.set(0L)
+                                    accumulatedLive.setLength(0)
                                     serviceScope.launch(Dispatchers.Main) {
                                         targetAdviceTv.text = statusMsg
                                         startTextShimmer(targetAdviceTv)
@@ -3803,13 +3807,20 @@ class FloatingBubbleService : Service() {
             val msg = t?.message.orEmpty()
 
             // 3. All keys in fallback pool failed
-            if (msg.contains("danh sách dự phòng đều thất bại", ignoreCase = true)) {
-                return Pair("Toàn bộ API Key đều lỗi", "Tất cả các Key trong danh sách dự phòng đều thất bại. Vui lòng kiểm tra lại Key trong Cài đặt.")
+            if (msg.contains("danh sách dự phòng đều thất bại", ignoreCase = true) ||
+                msg.contains("đều phản hồi quá lâu", ignoreCase = true)
+            ) {
+                return Pair("Toàn bộ API Key đều lỗi", "Tất cả các Key trong danh sách dự phòng đều thất bại hoặc phản hồi quá lâu. Vui lòng kiểm tra lại Key trong Cài đặt.")
             }
 
             // 4. Watchdog connection window timeout (60s)
             if (isWatchdogTimedOut || msg.contains("INITIAL_CONNECTION_TIMEOUT", ignoreCase = true)) {
                 return Pair("Máy chủ phản hồi quá lâu (>60s)", "Không nhận được phản hồi từ AI sau 60 giây. Chạm để thử lại.")
+            }
+
+            // 4b. AI provider timeout / slow response
+            if (msg.contains("phản hồi quá lâu", ignoreCase = true)) {
+                return Pair("Máy chủ phản hồi quá lâu", "$msg. Chạm để thử lại.")
             }
 
             // 5. In-flight streaming stall timeout (25s)

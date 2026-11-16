@@ -425,4 +425,155 @@ class StreamingAiClientEmpiricalChallengeTest {
         assertNotNull(complete)
         assertEquals("Backup thắng cuộc!", complete?.fullContent)
     }
+
+    // =========================================================================
+    // 6. PER-KEY TIMEOUT FAILOVER WITH EXPLICIT "Phản hồi chậm" TAG
+    // =========================================================================
+
+    @Test
+    fun spikeRacing_primaryTimesOut_failsOverToBackupWithExplicitReasonTag() = runBlocking {
+        val primaryCallCancelled = AtomicBoolean(false)
+        val backupCallExecuted = AtomicBoolean(false)
+
+        val okHttpClient = OkHttpClient.Builder()
+            .addInterceptor(Interceptor { chain ->
+                val request = chain.request()
+                val isPrimary = request.url.toString().contains("primary")
+
+                if (isPrimary) {
+                    val hangingSource = object : Source {
+                        override fun read(sink: Buffer, byteCount: Long): Long {
+                            try {
+                                Thread.sleep(5000L)
+                            } catch (_: InterruptedException) {
+                                throw IOException("Primary timeout cancelled")
+                            }
+                            return -1L
+                        }
+                        override fun timeout(): Timeout = Timeout.NONE
+                        override fun close() {
+                            primaryCallCancelled.set(true)
+                        }
+                    }
+                    Response.Builder()
+                        .request(request)
+                        .protocol(Protocol.HTTP_1_1)
+                        .code(200)
+                        .message("OK")
+                        .body(object : ResponseBody() {
+                            override fun contentType() = "text/event-stream".toMediaType()
+                            override fun contentLength() = -1L
+                            override fun source() = hangingSource.buffer()
+                        })
+                        .build()
+                } else {
+                    backupCallExecuted.set(true)
+                    val backupPayload = "data: {\"choices\":[{\"delta\":{\"content\":\"Key 2 cứu vãn thành công!\"}}]}\ndata: [DONE]\n"
+                    Response.Builder()
+                        .request(request)
+                        .protocol(Protocol.HTTP_1_1)
+                        .code(200)
+                        .message("OK")
+                        .body(backupPayload.toResponseBody("text/event-stream".toMediaType()))
+                        .build()
+                }
+            })
+            .build()
+
+        val client = StreamingAiClient(httpClient = okHttpClient)
+        val primaryKey = ApiKeyConfig(
+            provider = AiProviderType.OPENROUTER,
+            endpointUrl = "https://primary.ai/chat/completions",
+            modelName = "deepseek/deepseek-r1",
+            rawKey = "key_primary",
+            isEnabled = true
+        )
+        val backupKey = ApiKeyConfig(
+            provider = AiProviderType.OPENROUTER,
+            endpointUrl = "https://backup.ai/chat/completions",
+            modelName = "deepseek/deepseek-r1",
+            rawKey = "key_backup",
+            isEnabled = true
+        )
+
+        val events = client.streamWithSpikeRacing(
+            keyPool = listOf(primaryKey, backupKey),
+            prompt = "Slow primary test",
+            spikeThresholdMs = 200L
+        ).toList()
+
+        val spikeEvent = events.filterIsInstance<StreamUiEvent.SpikeDetected>().firstOrNull()
+        assertNotNull("Phải phát hiện spike và phát sự kiện SpikeDetected", spikeEvent)
+        assertEquals("Phản hồi chậm", spikeEvent?.failureReason)
+        assertEquals(1, spikeEvent?.failedKeyIndex)
+        assertEquals(2, spikeEvent?.backupKeyIndex)
+
+        assertTrue("Key dự phòng phải được kích hoạt ngay", backupCallExecuted.get())
+        assertTrue("Key chính bị timeout phải được giải phóng và hủy kết nối", primaryCallCancelled.get())
+
+        val complete = events.filterIsInstance<StreamUiEvent.Complete>().firstOrNull()
+        assertNotNull(complete)
+        assertEquals("Key 2 cứu vãn thành công!", complete?.fullContent)
+    }
+
+    @Test
+    fun spikeRacing_allKeysTimeOut_terminatesWithCleanAllKeysTimedOutError() = runBlocking {
+        val okHttpClient = OkHttpClient.Builder()
+            .addInterceptor(Interceptor { chain ->
+                val hangingSource = object : Source {
+                    override fun read(sink: Buffer, byteCount: Long): Long {
+                        try {
+                            Thread.sleep(5000L)
+                        } catch (_: InterruptedException) {
+                            throw IOException("Cancelled")
+                        }
+                        return -1L
+                    }
+                    override fun timeout(): Timeout = Timeout.NONE
+                    override fun close() {}
+                }
+                Response.Builder()
+                    .request(chain.request())
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(200)
+                    .message("OK")
+                    .body(object : ResponseBody() {
+                        override fun contentType() = "text/event-stream".toMediaType()
+                        override fun contentLength() = -1L
+                        override fun source() = hangingSource.buffer()
+                    })
+                    .build()
+            })
+            .build()
+
+        val client = StreamingAiClient(httpClient = okHttpClient)
+        val primaryKey = ApiKeyConfig(
+            provider = AiProviderType.OPENROUTER,
+            endpointUrl = "https://k1.ai/chat/completions",
+            modelName = "m1",
+            rawKey = "k1",
+            isEnabled = true
+        )
+        val backupKey = ApiKeyConfig(
+            provider = AiProviderType.OPENROUTER,
+            endpointUrl = "https://k2.ai/chat/completions",
+            modelName = "m2",
+            rawKey = "k2",
+            isEnabled = true
+        )
+
+        val events = client.streamWithSpikeRacing(
+            keyPool = listOf(primaryKey, backupKey),
+            prompt = "All hang test",
+            spikeThresholdMs = 150L
+        ).toList()
+
+        val errorEvent = events.filterIsInstance<StreamUiEvent.Error>().firstOrNull()
+        assertNotNull("Khi toàn bộ key đều timeout phải trả về StreamUiEvent.Error", errorEvent)
+        assertTrue(errorEvent?.throwable is java.util.concurrent.TimeoutException)
+        assertTrue(
+            "Thông báo lỗi phải thể hiện rõ toàn bộ key đều phản hồi quá lâu",
+            errorEvent?.throwable?.message?.contains("đều phản hồi quá lâu") == true
+        )
+    }
 }
