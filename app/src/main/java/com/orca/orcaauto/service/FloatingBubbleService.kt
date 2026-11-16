@@ -42,6 +42,8 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.provider.Settings
+import android.text.InputType
+import android.text.TextWatcher
 import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
@@ -1904,13 +1906,20 @@ class FloatingBubbleService : Service() {
             textSize = 12.5f
             background = GradientDrawable().apply {
                 setColor(Color.parseColor("#18181B"))
-                cornerRadius = dpToPx(8).toFloat()
+                cornerRadius = dpToPx(18).toFloat()
                 setStroke(dpToPx(1), Color.parseColor("#33FFFFFF"))
             }
-            setPadding(dpToPx(10), dpToPx(9), dpToPx(10), dpToPx(9))
-            setSingleLine(true)
+            setPadding(dpToPx(14), dpToPx(8), dpToPx(14), dpToPx(8))
+            maxLines = 4
+            minLines = 1
+            isSingleLine = false
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            setHorizontallyScrolling(false)
+            gravity = Gravity.CENTER_VERTICAL or Gravity.START
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             isEnabled = !isCallingAi
+            setTextIsSelectable(true)
+            highlightColor = Color.parseColor("#4D38BDF8")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 isForceDarkAllowed = false
             }
@@ -1925,6 +1934,43 @@ class FloatingBubbleService : Service() {
 
         var sendBtnRef: TextView? = null
 
+        fun updateSendBtnState(hasText: Boolean) {
+            val btn = sendBtnRef ?: return
+            if (isCallingAi) {
+                btn.text = "..."
+                btn.setTextColor(Color.parseColor("#94A3B8"))
+                btn.background = GradientDrawable().apply {
+                    setColor(Color.parseColor("#3327272A"))
+                    cornerRadius = dpToPx(18).toFloat()
+                    setStroke(dpToPx(1), Color.parseColor("#4DFFFFFF"))
+                }
+            } else if (hasText) {
+                btn.text = "Gửi"
+                btn.setTextColor(Color.parseColor("#0F172A"))
+                btn.background = GradientDrawable().apply {
+                    setColor(Color.parseColor("#38BDF8"))
+                    cornerRadius = dpToPx(18).toFloat()
+                    setStroke(dpToPx(1), Color.parseColor("#38BDF8"))
+                }
+            } else {
+                btn.text = "Gửi"
+                btn.setTextColor(Color.parseColor("#94A3B8"))
+                btn.background = GradientDrawable().apply {
+                    setColor(Color.parseColor("#27272A"))
+                    cornerRadius = dpToPx(18).toFloat()
+                    setStroke(dpToPx(1), Color.parseColor("#33FFFFFF"))
+                }
+            }
+        }
+
+        queryEt.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                updateSendBtnState(!s.isNullOrBlank())
+            }
+            override fun afterTextChanged(s: android.text.Editable?) {}
+        })
+
         lateinit var executeAiCall: (String) -> Unit
         executeAiCall = { queryText ->
             if (!isCallingAi) {
@@ -1935,6 +1981,7 @@ class FloatingBubbleService : Service() {
                 queryEt.setText("")
                 queryEt.isEnabled = false
                 queryEt.hint = "AI đang xử lý..."
+                updateSendBtnState(false)
 
                 sendBtnRef?.text = "..."
                 sendBtnRef?.isClickable = false
@@ -2099,16 +2146,9 @@ class FloatingBubbleService : Service() {
                         activeWatchdogJob?.cancel()
                         activeWatchdogJob = null
                         isCallingAi = false
-                        sendBtnRef?.text = "Gửi"
-                        sendBtnRef?.isClickable = true
-                        sendBtnRef?.setTextColor(Color.BLACK)
-                        sendBtnRef?.background = GradientDrawable().apply {
-                            setColor(Color.WHITE)
-                            cornerRadius = dpToPx(8).toFloat()
-                            setStroke(dpToPx(1), Color.WHITE)
-                        }
                         queryEt.isEnabled = true
                         queryEt.hint = "Nhập lệnh hoặc câu hỏi..."
+                        updateSendBtnState(queryEt.text?.isNotBlank() == true)
                         activeStreamingJob = null
                     }
                 }
@@ -2180,49 +2220,25 @@ class FloatingBubbleService : Service() {
 
         val inputRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+            gravity = Gravity.BOTTOM
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
         inputRow.addView(queryEt)
 
-        val pasteBtn = TextView(this).apply {
-            text = "Dán"
-            setTextColor(Color.parseColor("#38BDF8"))
-            textSize = 11.5f
-            gravity = Gravity.CENTER
-            typeface = Typeface.DEFAULT_BOLD
-            background = GradientDrawable().apply {
-                setColor(Color.parseColor("#1E293B"))
-                cornerRadius = dpToPx(8).toFloat()
-                setStroke(dpToPx(1), Color.parseColor("#3338BDF8"))
-            }
-            setPadding(dpToPx(10), 0, dpToPx(10), 0)
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dpToPx(38)).apply {
-                leftMargin = dpToPx(6)
-            }
-            isClickable = !isCallingAi
-            addMicroPressEffect()
-            setOnClickListener {
-                if (!isCallingAi) {
-                    pasteFromClipboard(queryEt)
-                }
-            }
-        }
-        inputRow.addView(pasteBtn)
-
         val sendBtn = TextView(this).apply {
             text = if (isCallingAi) "..." else "Gửi"
-            setTextColor(if (isCallingAi) Color.parseColor("#94A3B8") else Color.BLACK)
+            setTextColor(Color.parseColor("#94A3B8"))
             textSize = 12f
             gravity = Gravity.CENTER
             typeface = Typeface.DEFAULT_BOLD
             background = GradientDrawable().apply {
-                setColor(if (isCallingAi) Color.parseColor("#3327272A") else Color.WHITE)
-                cornerRadius = dpToPx(8).toFloat()
-                setStroke(dpToPx(1), if (isCallingAi) Color.parseColor("#4DFFFFFF") else Color.WHITE)
+                setColor(Color.parseColor("#27272A"))
+                cornerRadius = dpToPx(18).toFloat()
+                setStroke(dpToPx(1), Color.parseColor("#33FFFFFF"))
             }
-            layoutParams = LinearLayout.LayoutParams(dpToPx(60), dpToPx(38)).apply {
+            layoutParams = LinearLayout.LayoutParams(dpToPx(56), dpToPx(36)).apply {
                 leftMargin = dpToPx(8)
+                bottomMargin = dpToPx(1)
             }
             isClickable = !isCallingAi
             addMicroPressEffect()
@@ -2234,6 +2250,7 @@ class FloatingBubbleService : Service() {
             }
         }
         sendBtnRef = sendBtn
+        updateSendBtnState(queryEt.text?.isNotBlank() == true)
         inputRow.addView(sendBtn)
         inputCard.addView(inputRow)
         cardLayout.addView(inputCard)
