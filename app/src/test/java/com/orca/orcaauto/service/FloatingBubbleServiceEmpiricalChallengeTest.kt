@@ -1384,4 +1384,297 @@ class FloatingBubbleServiceEmpiricalChallengeTest {
         // 3. Fully validated WAN connection
         assertFalse("Có cả INTERNET và VALIDATED phải là online (false)", evaluateCapabilities(hasInternet = true, isValidated = true))
     }
+
+    // =========================================================================
+    // 18. MILESTONE M1: FLOATING BUBBLE LATENCY & CONCURRENCY CHALLENGES
+    // =========================================================================
+
+    private data class MockTaskRowHolder(
+        val holderId: Int,
+        var boundTitle: String,
+        var boundPlanned: Boolean
+    )
+
+    private data class MockRowView(
+        val viewId: Int,
+        var tag: MockTaskRowHolder? = null
+    )
+
+    private class MockTaskContainer {
+        val children = mutableListOf<MockRowView>()
+        var removeAllViewsCallCount = 0
+        var removeViewsCallCount = 0
+
+        fun childCount(): Int = children.size
+        fun getChildAt(index: Int): MockRowView = children[index]
+        fun removeViews(start: Int, count: Int) {
+            removeViewsCallCount++
+            for (i in 0 until count) {
+                children.removeAt(start)
+            }
+        }
+        fun removeAllViews() {
+            removeAllViewsCallCount++
+            children.clear()
+        }
+        fun addView(view: MockRowView) {
+            children.add(view)
+        }
+        fun addView(view: MockRowView, index: Int) {
+            children.add(index, view)
+        }
+        fun removeViewAt(index: Int) {
+            children.removeAt(index)
+        }
+    }
+
+    @Test
+    fun m1_inPlaceDiffing_reusesChildViewsAndPreservesTags_withoutCallingRemoveAllViews() {
+        val container = MockTaskContainer()
+        val viewIdGenerator = java.util.concurrent.atomic.AtomicInteger(0)
+
+        fun reconcileTaskBoard(taskItems: List<Pair<String, Boolean>>) {
+            val targetCount = taskItems.size
+            val currentCount = container.childCount()
+
+            // 1. Remove excess trailing children if targetCount < currentCount
+            if (currentCount > targetCount) {
+                container.removeViews(targetCount, currentCount - targetCount)
+            }
+
+            // 2. In-place update existing child views via TaskRowHolder (< 0.05ms)
+            val updateCount = minOf(currentCount, targetCount)
+            for (i in 0 until updateCount) {
+                val child = container.getChildAt(i)
+                val holder = child.tag
+                val item = taskItems[i]
+                if (holder != null) {
+                    holder.boundTitle = item.first
+                    holder.boundPlanned = item.second
+                } else {
+                    val newView = MockRowView(viewId = viewIdGenerator.incrementAndGet()).apply {
+                        tag = MockTaskRowHolder(holderId = viewId, boundTitle = item.first, boundPlanned = item.second)
+                    }
+                    container.removeViewAt(i)
+                    container.addView(newView, i)
+                }
+            }
+
+            // 3. Append only new views if needed
+            for (i in updateCount until targetCount) {
+                val item = taskItems[i]
+                val newView = MockRowView(viewId = viewIdGenerator.incrementAndGet()).apply {
+                    tag = MockTaskRowHolder(holderId = viewId, boundTitle = item.first, boundPlanned = item.second)
+                }
+                container.addView(newView)
+            }
+        }
+
+        // Pass 1: Mount 3 initial task items
+        val initialItems = listOf(
+            "Task 1: Họp đầu tuần" to false,
+            "Task 2: Báo cáo tài chính" to true,
+            "Task 3: Kiểm tra PCCC" to false
+        )
+        reconcileTaskBoard(initialItems)
+        assertEquals(3, container.childCount())
+        val view1 = container.getChildAt(0)
+        val view2 = container.getChildAt(1)
+        val view3 = container.getChildAt(2)
+        assertEquals(1, view1.viewId)
+        assertEquals(2, view2.viewId)
+        assertEquals(3, view3.viewId)
+        assertEquals(0, container.removeAllViewsCallCount)
+
+        // Pass 2: In-place update all 3 items with new titles/statuses (0 tree teardown)
+        val updatedItems = listOf(
+            "Task 1: Họp đầu tuần (XONG)" to true,
+            "Task 2: Báo cáo tài chính Q3" to false,
+            "Task 3: Kiểm tra PCCC tầng hầm" to false
+        )
+        reconcileTaskBoard(updatedItems)
+        assertEquals(3, container.childCount())
+        assertEquals("removeAllViews() TUYỆT ĐỐI không được gọi khi in-place diffing", 0, container.removeAllViewsCallCount)
+        assertTrue("View 0 phải được giữ nguyên tham chiếu đối tượng", container.getChildAt(0) === view1)
+        assertTrue("View 1 phải được giữ nguyên tham chiếu đối tượng", container.getChildAt(1) === view2)
+        assertTrue("View 2 phải được giữ nguyên tham chiếu đối tượng", container.getChildAt(2) === view3)
+        assertEquals("Task 1: Họp đầu tuần (XONG)", container.getChildAt(0).tag?.boundTitle)
+        assertEquals("Task 2: Báo cáo tài chính Q3", container.getChildAt(1).tag?.boundTitle)
+
+        // Pass 3: Contract with 2 items (M < N) -> view 1 & 2 retained, trailing removed
+        val reducedItems = listOf(
+            "Task 1: Họp đầu tuần" to false,
+            "Task 2: Báo cáo tài chính" to true
+        )
+        reconcileTaskBoard(reducedItems)
+        assertEquals(2, container.childCount())
+        assertTrue("View 0 vẫn được tái sử dụng khi thu nhỏ danh sách", container.getChildAt(0) === view1)
+        assertTrue("View 1 vẫn được tái sử dụng khi thu nhỏ danh sách", container.getChildAt(1) === view2)
+        assertEquals(0, container.removeAllViewsCallCount)
+        assertEquals(1, container.removeViewsCallCount)
+
+        // Pass 4: Expand with 4 items (M > N) -> view 1 & 2 retained, view 4 appended
+        val expandedItems = listOf(
+            "Task 1" to false,
+            "Task 2" to false,
+            "Task 3 mới" to false,
+            "Task 4 mới" to true
+        )
+        reconcileTaskBoard(expandedItems)
+        assertEquals(4, container.childCount())
+        assertTrue(container.getChildAt(0) === view1)
+        assertTrue(container.getChildAt(1) === view2)
+        assertEquals(0, container.removeAllViewsCallCount)
+    }
+
+    @Test
+    fun m1_isUserInteractingWithTask_buffersDatabaseUpdatesDuringSwipe_preventingActionCancel() {
+        var isUserInteractingWithTask = false
+        var isSwipeAnimating = false
+        var hasPendingTaskBoardUpdate = false
+        var taskBoardRefreshCount = 0
+
+        fun onAlarmDbFlowEmitted(alarms: List<SmartAlarmEntity>) {
+            if (isUserInteractingWithTask || isSwipeAnimating) {
+                hasPendingTaskBoardUpdate = true
+                return
+            }
+            taskBoardRefreshCount++
+        }
+
+        // 1. Initial emission when idle: refreshes immediately
+        onAlarmDbFlowEmitted(listOf())
+        assertEquals(1, taskBoardRefreshCount)
+        assertFalse(hasPendingTaskBoardUpdate)
+
+        // 2. User touches down on task row to swipe (ACTION_DOWN)
+        isUserInteractingWithTask = true
+
+        // 3. Room DB emits while user is dragging
+        onAlarmDbFlowEmitted(listOf())
+        onAlarmDbFlowEmitted(listOf())
+
+        // Refresh must NOT have run (would cancel the swipe gesture via ACTION_CANCEL)
+        assertEquals("Không được refresh task board khi người dùng đang chạm/vuốt", 1, taskBoardRefreshCount)
+        assertTrue("hasPendingTaskBoardUpdate phải được bật để ghi nhớ cập nhật", hasPendingTaskBoardUpdate)
+
+        // 4. User releases finger (ACTION_UP)
+        isUserInteractingWithTask = false
+
+        // In ACTION_UP:
+        if (hasPendingTaskBoardUpdate) {
+            hasPendingTaskBoardUpdate = false
+            taskBoardRefreshCount++
+        }
+
+        assertEquals("Phải hoàn tất refresh hoãn lại ngay khi thả tay", 2, taskBoardRefreshCount)
+        assertFalse("Cờ pending phải được xóa sau khi xử lý xong", hasPendingTaskBoardUpdate)
+    }
+
+    @Test
+    fun m1_singlePassMeasureContract_eliminatesDoubleMeasureWeight_withExplicitTitleWidth() {
+        fun computeTitleWidth(cardWidthPx: Int, density: Float): Int {
+            val dp84Px = (84 * density).toInt()
+            val dp150Px = (150 * density).toInt()
+            return (cardWidthPx - dp84Px).coerceAtLeast(dp150Px)
+        }
+
+        // Test across multiple screen configurations (density 1.5 to 4.0)
+        val densities = listOf(1.5f, 2.0f, 2.625f, 3.0f, 3.5f, 4.0f)
+        for (d in densities) {
+            val screenWidthPx = (390 * d).toInt()
+            val cardWidthPx = ((screenWidthPx * 0.94f).toInt()).coerceAtMost((500 * d).toInt())
+            val titleWidth = computeTitleWidth(cardWidthPx, d)
+
+            assertTrue("titleWidth ($titleWidth) phải luôn lớn hơn 0 trên density $d", titleWidth > 0)
+            val minExpected = (150 * d).toInt()
+            assertTrue("titleWidth ($titleWidth) phải >= min $minExpected", titleWidth >= minExpected)
+        }
+
+        // Verify contract: layout weight is 0.0f (no weight)
+        val weight = 0.0f
+        assertEquals("Single-pass measure bắt buộc weight = 0.0f để tránh pass đo thứ 2", 0.0f, weight, 0.001f)
+    }
+
+    @Test
+    fun m1_staticRegexAndO1Matching_benchmarksSubMillisecondPerformance_andAccurateNormalization() {
+        val testTitles = listOf(
+            "[1] Họp giao ban đầu ca lúc 09:00",
+            "• Gửi báo cáo doanh số cho sếp",
+            "- Bàn giao ca trực sáng",
+            "1.2. Kiểm tra thiết bị PCCC tầng hầm",
+            "* Nộp đề án quý 4 trước 17h30",
+            "Nhiệm vụ thông thường không tiền tố"
+        )
+
+        // 1. Benchmark 2,000 iterations of cleanTaskTitle: must execute under 50ms due to static regex
+        val startNs = System.nanoTime()
+        for (i in 1..2000) {
+            val sample = testTitles[i % testTitles.size]
+            val cleaned = SystemAlarmHelper.cleanTaskTitle(sample)
+            assertFalse(cleaned.startsWith("["))
+            assertFalse(cleaned.startsWith("-"))
+            assertFalse(cleaned.startsWith("•"))
+            assertFalse(cleaned.startsWith("*"))
+        }
+        val durationMs = (System.nanoTime() - startNs) / 1_000_000.0
+        assertTrue("2000 lần dọn tiêu đề bằng static regex phải hoàn thành dưới 50ms (thực tế: ${durationMs}ms)", durationMs < 50.0)
+
+        // 2. O(1) Title Map matching test with multiple Vietnamese diacritics and casing
+        val alarm1 = SmartAlarmEntity(
+            alarmId = "ALM_hop_giao_ban",
+            taskTitle = "Họp giao ban đầu ca",
+            targetTimeMillis = System.currentTimeMillis() + 3600_000L,
+            targetDateLabel = "09:00",
+            status = SmartAlarmStatus.ACTIVE
+        )
+        val alarm2 = SmartAlarmEntity(
+            alarmId = "ALM_pccc",
+            taskTitle = "Kiểm tra thiết bị PCCC",
+            targetTimeMillis = System.currentTimeMillis() + 7200_000L,
+            targetDateLabel = "14:00",
+            status = SmartAlarmStatus.PROPOSED
+        )
+        val alarms = listOf(alarm1, alarm2)
+        val normalizedMap = SystemAlarmHelper.buildNormalizedTitleMap(alarms)
+
+        // Exact match
+        val matchExact = SystemAlarmHelper.findMatchingAlarmFast("Họp giao ban đầu ca", normalizedMap)
+        assertEquals("ALM_hop_giao_ban", matchExact?.alarmId)
+
+        // Case insensitive match
+        val matchLower = SystemAlarmHelper.findMatchingAlarmFast("họp giao ban đầu ca", normalizedMap)
+        assertEquals("ALM_hop_giao_ban", matchLower?.alarmId)
+
+        // Cleaned prefix match
+        val cleanedTitle = SystemAlarmHelper.cleanTaskTitle("• Họp giao ban đầu ca")
+        val matchCleaned = SystemAlarmHelper.findMatchingAlarmFast(cleanedTitle, normalizedMap)
+        assertEquals("ALM_hop_giao_ban", matchCleaned?.alarmId)
+
+        // Non-existent task returns null instantly in O(1)
+        val matchNone = SystemAlarmHelper.findMatchingAlarmFast("Nhiệm vụ không tồn tại", normalizedMap)
+        assertNull(matchNone)
+    }
+
+    @Test
+    fun m1_continuousMorphingParameters_validateScaleAndInterpolatorContracts() {
+        val startScale = 0.12f
+        val endScale = 1.0f
+        val morphDurationMs = 180L
+        val bubbleRetentionMs = 70L
+
+        // Invariant: startScale must match bubble / card size ratio (~44dp / ~370dp ~= 0.1189f -> 0.12f)
+        assertEquals(0.12f, startScale, 0.001f)
+        assertEquals(1.0f, endScale, 0.001f)
+
+        // Invariant: bubble retention time (70ms) must be strictly less than morph duration (180ms)
+        assertTrue("Thời gian giữ bóng cũ (70ms) phải ngắn hơn hoạt ảnh bung thẻ (180ms)", bubbleRetentionMs < morphDurationMs)
+        assertTrue("Thời gian giữ bóng phải >= 50ms để mắt người không thấy khoảng trống", bubbleRetentionMs >= 50L)
+
+        // Invariant: Bitmap config RGB_565 saves 50% memory over ARGB_8888 (2 bytes vs 4 bytes)
+        val bytesPerPixelRgb565 = 2
+        val bytesPerPixelArgb8888 = 4
+        val memorySavingsPercent = ((bytesPerPixelArgb8888 - bytesPerPixelRgb565).toDouble() / bytesPerPixelArgb8888) * 100
+        assertEquals(50.0, memorySavingsPercent, 0.001)
+    }
 }

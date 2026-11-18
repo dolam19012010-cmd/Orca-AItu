@@ -1,4 +1,4 @@
-package com.orca.orcaauto.service
+﻿package com.orca.orcaauto.service
 
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
@@ -42,6 +42,7 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.provider.Settings
+import android.os.SystemClock
 import android.text.InputType
 import android.text.TextWatcher
 import android.util.Log
@@ -54,6 +55,7 @@ import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
+import android.view.ViewTreeObserver
 import android.view.WindowManager
 import android.view.animation.AccelerateInterpolator
 import android.view.animation.DecelerateInterpolator
@@ -83,6 +85,7 @@ import com.orca.orcaauto.domain.alarm.SystemAlarmHelper
 import com.orca.orcaauto.domain.assistant.AssistantPipeline
 import com.orca.orcaauto.domain.assistant.AssistantStep
 import com.orca.orcaauto.domain.assistant.CommandStripper
+import com.orca.orcaauto.domain.filter.ParsedSummary
 import com.orca.orcaauto.domain.filter.SummaryParser
 import com.orca.orcaauto.domain.filter.TaskItem
 import com.orca.orcaauto.domain.filter.TaskStatus
@@ -128,12 +131,72 @@ class FloatingBubbleService : Service() {
     private val dismissedTaskTitles = mutableSetOf<String>()
     @Volatile private var isSwipeAnimating: Boolean = false
     @Volatile private var alarmDbMap = mapOf<String, SmartAlarmEntity>()
+    @Volatile private var alarmNormalizedTitleMap = mapOf<String, SmartAlarmEntity>()
+    @Volatile private var cachedParsedSummary: ParsedSummary? = null
+    @Volatile private var isUserInteractingWithTask: Boolean = false
+    @Volatile private var hasPendingTaskBoardUpdate: Boolean = false
     private var currentAnimator: ValueAnimator? = null
-    private var cachedWallpaperBmp: Bitmap? = null
+    @Volatile private var cachedWallpaperBmp: Bitmap? = null
     private var lastWallpaperPath: String? = null
     private var lastWallpaperModified: Long = 0L
     private var unreadDotView: View? = null
     private var lastKnownSummaryId: Long? = null
+    private var prewarmedCardShell: CardShellHolder? = null
+
+    private class CardShellHolder(
+        val cardLayout: LinearLayout,
+        val headerRow: LinearLayout,
+        val titleTv: TextView,
+        val modelTv: TextView,
+        val openAppBtn: TextView,
+        val sessionsScroll: HorizontalScrollView,
+        val sessionsLayout: LinearLayout,
+        val addSessionBtn: TextView,
+        val scrollView: ScrollView,
+        val contentLayout: LinearLayout,
+        val sec1Box: LinearLayout,
+        val adviceTv: TextView,
+        val notesContainer: LinearLayout,
+        val tasksBoardLayout: LinearLayout,
+        val inputCard: LinearLayout,
+        val queryEt: EditText,
+        val sendBtn: TextView
+    )
+
+    private class TaskRowHolder(
+        val container: FrameLayout,
+        val bgSwipeLayout: FrameLayout,
+        val leftSwipeAction: LinearLayout,
+        val rightSwipeAction: LinearLayout,
+        val taskRow: LinearLayout,
+        val titleRow: LinearLayout,
+        val checkCircle: TextView,
+        val title: TextView,
+        val badgeRow: LinearLayout,
+        var deadlinePill: TextView? = null,
+        var sourcePill: TextView? = null,
+        val actionRow: LinearLayout,
+        var alarmPill: TextView? = null,
+        var cancelledPill: TextView? = null,
+        var boundTask: TaskItem? = null,
+        var boundAlarmId: String? = null,
+        var boundAlarm: SmartAlarmEntity? = null
+    )
+
+    private fun updateSummaryTextAndParseEagerly(newSummary: String, scope: CoroutineScope = serviceScope) {
+        latestSummaryText = newSummary
+        if (newSummary.isBlank()) {
+            cachedParsedSummary = ParsedSummary(
+                rawCleanText = "", reasoningNotes = null, conciseAdvice = "",
+                criticalQuestions = emptyList(), tasksToDo = emptyList(),
+                tasksDone = emptyList(), tasksPlanned = emptyList()
+            )
+            return
+        }
+        scope.launch(Dispatchers.Default) {
+            cachedParsedSummary = SummaryParser.parse(newSummary)
+        }
+    }
 
     private enum class SendBtnState {
         CALLING_AI,
@@ -262,11 +325,16 @@ class FloatingBubbleService : Service() {
                     .getAllAlarmsFlow()
                     .collect { alarms ->
                         alarmDbMap = alarms.associateBy { it.alarmId }
-                        if (isExpanded && !isSwipeAnimating) {
-                            currentTasksBoardLayout?.let { board ->
-                                currentCardLayoutRef?.let { card ->
-                                    populateTaskBoard(board, card, hasAdvice = isCallingAi || !activeChatAnswer.isNullOrBlank() || latestSummaryText.isNotBlank())
+                        alarmNormalizedTitleMap = SystemAlarmHelper.buildNormalizedTitleMap(alarms)
+                        if (isExpanded) {
+                            if (!isSwipeAnimating && !isUserInteractingWithTask) {
+                                currentTasksBoardLayout?.let { board ->
+                                    currentCardLayoutRef?.let { card ->
+                                        populateTaskBoard(board, card, hasAdvice = isCallingAi || !activeChatAnswer.isNullOrBlank() || latestSummaryText.isNotBlank())
+                                    }
                                 }
+                            } else {
+                                hasPendingTaskBoardUpdate = true
                             }
                         }
                     }
@@ -308,6 +376,7 @@ class FloatingBubbleService : Service() {
                             val currentHasTasks = latestSummaryText.isNotBlank() && SummaryParser.parse(latestSummaryText).totalTaskCount > 0
                             if (hasTasks || !currentHasTasks) {
                                 latestSummaryText = latest.summaryContent
+                                cachedParsedSummary = parsedLatest
                                 activeChatAnswer = null
                             }
                             if (latest.modelInfo.isNotBlank()) {
@@ -484,6 +553,7 @@ class FloatingBubbleService : Service() {
             Log.e(TAG, "Lỗi thêm bubbleRootView: ${e.message}")
         }
         transitionToBubbleState(BubbleState.STATE_1_ACTIVE, animate = false)
+        bubbleLifecycleHandler.postDelayed({ preWarmCardShell() }, 400L)
     }
 
     private fun updateShakeDetectorState() {
@@ -704,7 +774,7 @@ class FloatingBubbleService : Service() {
             } catch (e: Exception) {}
         }
 
-        val parsed = SummaryParser.parse(latestSummaryText)
+        val parsed = cachedParsedSummary ?: SummaryParser.parse(latestSummaryText).also { cachedParsedSummary = it }
         val urgentCount = parsed.tasksToDo.size
 
         // Bubble Container: 44dp compact circle with sleek indigo-purple gradient
@@ -775,8 +845,8 @@ class FloatingBubbleService : Service() {
         val bubbleLongPressRunnable = Runnable {
             if (!isDragging && isClick) {
                 isLongPressTriggered = true
-                // Nhấn giữ 550ms trên quả bóng chat -> Mở thẻ AI mở rộng ngay lập tức!
-                expandFloatingCard(root)
+                val tapTimestampNs = SystemClock.elapsedRealtimeNanos()
+                expandFloatingCard(root, tapTimestampNs = tapTimestampNs)
             }
         }
 
@@ -877,8 +947,8 @@ class FloatingBubbleService : Service() {
                                 transitionToBubbleState(BubbleState.STATE_1_ACTIVE)
                             }
                             BubbleState.STATE_1_ACTIVE -> {
-                                // Đang ở State 1 sáng rõ và click -> Mở thẻ AI mở rộng!
-                                expandFloatingCard(root)
+                                val tapTimestampNs = SystemClock.elapsedRealtimeNanos()
+                                expandFloatingCard(root, tapTimestampNs = tapTimestampNs)
                             }
                             BubbleState.STATE_3_HIDDEN -> {}
                         }
@@ -925,6 +995,7 @@ class FloatingBubbleService : Service() {
                                 lastCollapsedX = targetX
                                 lastCollapsedY = p.y.coerceIn(minY, maxY)
                                 transitionToBubbleState(BubbleState.STATE_1_ACTIVE, animate = false)
+                                if (prewarmedCardShell == null) preWarmCardShell()
                             }
                         })
                         currentAnimator = animator
@@ -1162,8 +1233,17 @@ class FloatingBubbleService : Service() {
                 val dm = resources.displayMetrics
                 val cardWidth = (dm.widthPixels * 0.94f).toInt().coerceAtMost(dpToPx(500))
                 val cardHeight = (dm.heightPixels * 0.74f).toInt().coerceAtMost(dpToPx(620))
-                loadWallpaperBitmapOptimized(cardWidth, cardHeight)
-            } catch (_: Exception) {}
+                val bmp = loadWallpaperBitmapOptimized(cardWidth, cardHeight)
+                if (bmp != null) {
+                    withContext(Dispatchers.Main) {
+                        if (isExpanded) {
+                            currentCardLayoutRef?.let { card ->
+                                applyCardBackground(card, bmp)
+                            }
+                        }
+                    }
+                }
+            } catch (_: Throwable) {}
         }
     }
 
@@ -1195,14 +1275,18 @@ class FloatingBubbleService : Service() {
             while (boundsOpts.outWidth / sample > maxWidth * 2 || boundsOpts.outHeight / sample > maxHeight * 2) {
                 sample *= 2
             }
-            val decodeOpts = BitmapFactory.Options().apply { inSampleSize = sample }
+            val decodeOpts = BitmapFactory.Options().apply {
+                inSampleSize = sample
+                inPreferredConfig = Bitmap.Config.RGB_565
+            }
             val bmp = BitmapFactory.decodeFile(file.absolutePath, decodeOpts)
             cachedWallpaperBmp = bmp
             lastWallpaperPath = path
             lastWallpaperModified = modTime
             bmp
-        } catch (e: Throwable) {
-            Log.e(TAG, "Lỗi tải ảnh nền: ${e.message}")
+        } catch (t: Throwable) {
+            Log.e(TAG, "Lỗi tải ảnh nền: ${t.message}")
+            cachedWallpaperBmp = null
             null
         }
     }
@@ -1271,6 +1355,31 @@ class FloatingBubbleService : Service() {
         override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
     }
 
+    private fun applyCardBackground(card: View, wallpaperBmp: Bitmap?) {
+        val prefs = UserPreferences.getInstance(this)
+        val wpMode = prefs.getWallpaperMode()
+        if (wallpaperBmp != null) {
+            val scrimColor = when (wpMode) {
+                WallpaperMode.CLEAR -> Color.parseColor("#7309090B")
+                WallpaperMode.DYNAMIC -> Color.parseColor("#8009090B")
+                WallpaperMode.BLURRED -> Color.parseColor("#8C09090B")
+            }
+            card.background = FrostedWallpaperDrawable(
+                bitmap = wallpaperBmp,
+                cornerRadius = dpToPx(24).toFloat(),
+                scrimColor = scrimColor,
+                strokeColor = Color.parseColor("#4DFFFFFF"),
+                strokeWidth = dpToPx(1).toFloat()
+            )
+        } else {
+            card.background = GradientDrawable().apply {
+                setColor(Color.parseColor("#F509090B"))
+                cornerRadius = dpToPx(24).toFloat()
+                setStroke(dpToPx(1), Color.parseColor("#33FFFFFF"))
+            }
+        }
+    }
+
     private fun collapseExpandedCard(root: FrameLayout) {
         activeStreamingJob?.cancel()
         activeStreamingJob = null
@@ -1325,26 +1434,28 @@ class FloatingBubbleService : Service() {
             .withEndAction {
                 isCollapsing = false
                 currentBubbleState = BubbleState.STATE_1_ACTIVE
+                prewarmedCardShell?.cardLayout?.let { cl ->
+                    (cl.parent as? ViewGroup)?.removeView(cl)
+                }
                 renderCollapsedBubble(root)
                 transitionToBubbleState(BubbleState.STATE_1_ACTIVE)
+                if (prewarmedCardShell == null) preWarmCardShell()
             }
             .start()
     }
 
     private fun populateTaskBoard(container: LinearLayout, cardLayout: View, hasAdvice: Boolean = false) {
-        container.removeAllViews()
-
-        val parsed = SummaryParser.parse(latestSummaryText)
-        val speakableParsed = SystemAlarmHelper.filterOutCancelled(parsed, alarmDbMap)
+        val parsed = cachedParsedSummary ?: SummaryParser.parse(latestSummaryText).also { cachedParsedSummary = it }
+        val speakableParsed = SystemAlarmHelper.filterOutCancelledFast(parsed, alarmNormalizedTitleMap)
 
         // Filter out dismissed tasks and completed tasks from parsed TODO/Planned
         val parsedTasksToDo = speakableParsed.tasksToDo.filterNot { task ->
             dismissedTaskTitles.any { SystemAlarmHelper.isTitleMatching(task.title, it) } ||
-            SystemAlarmHelper.isTaskCompleted(task.title, alarmDbMap)
+            SystemAlarmHelper.isTaskCompletedFast(task.title, alarmNormalizedTitleMap)
         }
         val parsedTasksPlanned = speakableParsed.tasksPlanned.filterNot { task ->
             dismissedTaskTitles.any { SystemAlarmHelper.isTitleMatching(task.title, it) } ||
-            SystemAlarmHelper.isTaskCompleted(task.title, alarmDbMap)
+            SystemAlarmHelper.isTaskCompletedFast(task.title, alarmNormalizedTitleMap)
         }
         val parsedTasksDone = speakableParsed.tasksDone.filterNot { task ->
             dismissedTaskTitles.any { SystemAlarmHelper.isTitleMatching(task.title, it) }
@@ -1353,23 +1464,50 @@ class FloatingBubbleService : Service() {
         val allTasksToDo = parsedTasksToDo
         val allTasksPlanned = parsedTasksPlanned
         val allTasksDone = parsedTasksDone
-        val allTasks = allTasksToDo + allTasksPlanned + allTasksDone
 
-        if (allTasks.isEmpty()) {
-            container.removeAllViews()
+        class TaskRowItem(val task: TaskItem, val isPlanned: Boolean)
+        val taskItems = ArrayList<TaskRowItem>(allTasksToDo.size + allTasksPlanned.size + allTasksDone.size)
+        allTasksToDo.forEach { taskItems.add(TaskRowItem(it, isPlanned = false)) }
+        allTasksPlanned.forEach { taskItems.add(TaskRowItem(it, isPlanned = true)) }
+        allTasksDone.forEach { taskItems.add(TaskRowItem(it, isPlanned = false)) }
+
+        if (taskItems.isEmpty()) {
+            if (container.childCount > 0) {
+                container.removeAllViews()
+            }
             container.visibility = View.GONE
             return
         }
 
         container.visibility = View.VISIBLE
-        allTasksToDo.forEach { task ->
-            container.addView(renderTaskRow(task, isPlanned = false, cardLayout = cardLayout))
+        val targetCount = taskItems.size
+        val currentCount = container.childCount
+
+        // In-Place Diff:
+        // 1. Remove excess trailing children if targetCount < currentCount
+        if (currentCount > targetCount) {
+            container.removeViews(targetCount, currentCount - targetCount)
         }
-        allTasksPlanned.forEach { task ->
-            container.addView(renderTaskRow(task, isPlanned = true, cardLayout = cardLayout))
+
+        // 2. In-place update existing child views via TaskRowHolder (< 0.05ms)
+        val updateCount = minOf(currentCount, targetCount)
+        for (i in 0 until updateCount) {
+            val child = container.getChildAt(i)
+            val holder = child.tag as? TaskRowHolder
+            val item = taskItems[i]
+            if (holder != null) {
+                bindTaskRow(holder, item.task, item.isPlanned, cardLayout)
+            } else {
+                val newView = renderTaskRow(item.task, item.isPlanned, cardLayout)
+                container.removeViewAt(i)
+                container.addView(newView, i)
+            }
         }
-        allTasksDone.forEach { task ->
-            container.addView(renderTaskRow(task, isPlanned = false, cardLayout = cardLayout))
+
+        // 3. Append only new views if needed
+        for (i in updateCount until targetCount) {
+            val item = taskItems[i]
+            container.addView(renderTaskRow(item.task, item.isPlanned, cardLayout))
         }
     }
 
@@ -1529,70 +1667,102 @@ class FloatingBubbleService : Service() {
         targetTv?.invalidate()
     }
 
-    @SuppressLint("ClickableViewAccessibility")
-    private fun expandFloatingCard(root: FrameLayout, animate: Boolean = true) {
-        UserPreferences.getInstance(this).setHasUnreadSummary(false)
-        bubbleLifecycleHandler.removeCallbacks(toState2Runnable)
-        bubbleLifecycleHandler.removeCallbacks(toState3Runnable)
-        hideDismissTarget(immediate = true)
-        currentAnimator?.cancel()
-        isCollapsing = false
-        updateShakeDetectorState()
-        dismissedTaskTitles.clear()
-        isSwipeAnimating = false
-        currentSendBtnState = null
-        root.removeAllViews()
-        root.alpha = 1.0f
-
-        val parsed = SummaryParser.parse(latestSummaryText)
-
+    private fun preWarmCardShell() {
+        if (prewarmedCardShell != null) return
         val dm = resources.displayMetrics
-        val screenWidth = dm.widthPixels
-        val screenHeight = dm.heightPixels
+        val cardWidth = (dm.widthPixels * 0.94f).toInt().coerceAtMost(dpToPx(500))
+        val cardHeight = (dm.heightPixels * 0.74f).toInt().coerceAtMost(dpToPx(620))
+        prewarmedCardShell = buildCardShell(cardWidth, cardHeight)
+    }
 
-        // Enlarge expanded card: covers comfortable viewing area (~94% width, ~74% height for keyboard clearance)
-        val cardWidth = (screenWidth * 0.94f).toInt().coerceAtMost(dpToPx(500))
-        val cardHeight = (screenHeight * 0.74f).toInt().coerceAtMost(dpToPx(620))
-
-        // Make window focusable so soft keyboard opens for query input, expand root to MATCH_PARENT
-        val p = windowParams
-        if (p != null) {
-            if (!isExpanded) {
-                lastCollapsedX = p.x
-                lastCollapsedY = p.y
-            }
-            p.gravity = Gravity.CENTER
-            p.width = WindowManager.LayoutParams.MATCH_PARENT
-            p.height = WindowManager.LayoutParams.MATCH_PARENT
-            p.x = 0
-            p.y = 0
-            p.flags = (p.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()) and
-                      WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS.inv() and
-                      WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv() or
-                      WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-            @Suppress("DEPRECATION")
-            p.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN or WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN
-            try {
-                if (bubbleRootView?.isAttachedToWindow == true) {
-                    windowManager.updateViewLayout(bubbleRootView, p)
-                }
-            } catch (e: Exception) {}
-        }
-        isExpanded = true
-        updateShakeDetectorState()
-        // Tắt chuông báo thức nếu người dùng mở thẻ AI xem
-        com.orca.orcaauto.receiver.AlarmRingtonePlayer.stop()
-
-        // Clean transparent backdrop without black wash spilling outside
-        root.setBackgroundColor(Color.TRANSPARENT)
-        root.isClickable = false
-        root.isFocusable = false
-
-        val wallpaperBmp = loadWallpaperBitmapOptimized(cardWidth, cardHeight)
+    private fun renderSessionChips(sessionsLayout: LinearLayout, addSessionBtn: TextView, root: FrameLayout) {
+        sessionsLayout.removeAllViews()
         val prefs = UserPreferences.getInstance(this)
-        val wpMode = prefs.getWallpaperMode()
+        val sessionsList = prefs.loadSessions()
+        val currentSessionId = prefs.getSelectedSessionId()
 
-        // Card Container (Translucent Liquid Glass Modal)
+        for (session in sessionsList) {
+            val isSelected = session.id == currentSessionId
+            val chipView = TextView(this).apply {
+                text = "${session.iconEmoji} ${session.name}"
+                textSize = 12f
+                typeface = if (isSelected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+                setTextColor(if (isSelected) Color.WHITE else Color.parseColor("#E4E4E7"))
+                background = GradientDrawable().apply {
+                    if (isSelected) {
+                        setColor(Color.parseColor("#2563EB"))
+                        cornerRadius = dpToPx(14).toFloat()
+                        setStroke(dpToPx(1), Color.parseColor("#93C5FD"))
+                    } else {
+                        setColor(Color.parseColor("#27272A"))
+                        cornerRadius = dpToPx(14).toFloat()
+                        setStroke(dpToPx(1), Color.parseColor("#52525B"))
+                    }
+                }
+                setPadding(dpToPx(12), dpToPx(5), dpToPx(12), dpToPx(5))
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    rightMargin = dpToPx(6)
+                }
+                addMicroPressEffect()
+
+                setOnClickListener {
+                    val targetSessionId = session.id
+                    if (prefs.getSelectedSessionId() != targetSessionId) {
+                        prefs.setSelectedSessionId(targetSessionId)
+
+                        // Hot Cache Check: RAM hit -> 0ms immediate UI update
+                        val cached = sessionSummaryCache[targetSessionId]
+                        if (cached != null && cached.first.isNotBlank()) {
+                            updateSummaryTextAndParseEagerly(cached.first)
+                            latestModelInfo = cached.second
+                            activeChatAnswer = null
+                            updateBubbleContent()
+                        }
+
+                        sessionSwitchJob?.cancel()
+                        sessionSwitchJob = serviceScope.launch {
+                            try {
+                                val db = AppDatabase.getDatabase(this@FloatingBubbleService)
+                                val sessionSummary = db.summaryDao().getBestSummaryForSession(targetSessionId)
+                                if (prefs.getSelectedSessionId() != targetSessionId) return@launch
+
+                                val newSummaryText: String
+                                val newModelInfo: String
+                                if (sessionSummary != null && sessionSummary.summaryContent.isNotBlank()) {
+                                    newSummaryText = sessionSummary.summaryContent
+                                    newModelInfo = sessionSummary.modelInfo
+                                } else {
+                                    newSummaryText = "Chưa có báo cáo cho '${session.name}'.\n\nNhấn nút 'Gửi' bên dưới để tóm tắt các tin nhắn thuộc phiên này."
+                                    newModelInfo = "${session.iconEmoji} ${session.name}"
+                                }
+
+                                sessionSummaryCache[targetSessionId] = Pair(newSummaryText, newModelInfo)
+
+                                if (latestSummaryText != newSummaryText || latestModelInfo != newModelInfo) {
+                                    updateSummaryTextAndParseEagerly(newSummaryText)
+                                    latestModelInfo = newModelInfo
+                                    activeChatAnswer = null
+                                    withContext(Dispatchers.Main) {
+                                        if (prefs.getSelectedSessionId() == targetSessionId) {
+                                            updateBubbleContent()
+                                        }
+                                    }
+                                }
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Lỗi chuyển phiên trên bóng chat: ${e.message}")
+                            }
+                        }
+                    }
+                }
+            }
+            sessionsLayout.addView(chipView)
+        }
+        sessionsLayout.addView(addSessionBtn)
+    }
+
+    private fun buildCardShell(cardWidth: Int, cardHeight: Int): CardShellHolder {
         val cardLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = FrameLayout.LayoutParams(cardWidth, cardHeight).apply {
@@ -1602,44 +1772,9 @@ class FloatingBubbleService : Service() {
             setPadding(dpToPx(16), dpToPx(14), dpToPx(16), dpToPx(14))
             isClickable = true
             isFocusable = true
-
-            if (wallpaperBmp != null) {
-                val scrimColor = when (wpMode) {
-                    WallpaperMode.CLEAR -> Color.parseColor("#7309090B")
-                    WallpaperMode.DYNAMIC -> Color.parseColor("#8009090B")
-                    WallpaperMode.BLURRED -> Color.parseColor("#8C09090B")
-                }
-                background = FrostedWallpaperDrawable(
-                    bitmap = wallpaperBmp,
-                    cornerRadius = dpToPx(24).toFloat(),
-                    scrimColor = scrimColor,
-                    strokeColor = Color.parseColor("#4DFFFFFF"),
-                    strokeWidth = dpToPx(1).toFloat()
-                )
-            } else {
-                background = GradientDrawable().apply {
-                    setColor(Color.parseColor("#F509090B"))
-                    cornerRadius = dpToPx(24).toFloat()
-                    setStroke(dpToPx(1), Color.parseColor("#33FFFFFF"))
-                }
-            }
         }
-        currentCardLayoutRef = cardLayout
+        applyCardBackground(cardLayout, cachedWallpaperBmp)
 
-        // Outside-tap detector: tapping empty space above/below collapses back to floating bubble
-        root.setOnTouchListener { _, event ->
-            if (event.action == MotionEvent.ACTION_DOWN) {
-                val cardRect = Rect()
-                cardLayout.getGlobalVisibleRect(cardRect)
-                if (!cardRect.contains(event.rawX.toInt(), event.rawY.toInt())) {
-                    collapseExpandedCard(root)
-                    return@setOnTouchListener true
-                }
-            }
-            false
-        }
-
-        // Header: Sparkle + Title + Model Info + Translucent "Mở app ↗" Button (Zero close X button!)
         val headerRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -1696,16 +1831,12 @@ class FloatingBubbleService : Service() {
                     putExtra("navigate_to", "history")
                 }
                 startActivity(intent)
-                collapseExpandedCard(root)
+                val root = bubbleRootView
+                if (root != null) collapseExpandedCard(root)
             }
         }
         headerRow.addView(openAppBtn)
-
         cardLayout.addView(headerRow)
-
-        // Horizontal Session Tabs Bar
-        val sessionsList = prefs.loadSessions()
-        val currentSessionId = prefs.getSelectedSessionId()
 
         val sessionsScroll = HorizontalScrollView(this).apply {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
@@ -1722,86 +1853,6 @@ class FloatingBubbleService : Service() {
             setPadding(0, dpToPx(1), 0, dpToPx(1))
         }
 
-        for (session in sessionsList) {
-            val isSelected = session.id == currentSessionId
-            val chipView = TextView(this).apply {
-                text = "${session.iconEmoji} ${session.name}"
-                textSize = 12f
-                typeface = if (isSelected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-                setTextColor(if (isSelected) Color.WHITE else Color.parseColor("#E4E4E7"))
-                background = GradientDrawable().apply {
-                    if (isSelected) {
-                        setColor(Color.parseColor("#2563EB"))
-                        cornerRadius = dpToPx(14).toFloat()
-                        setStroke(dpToPx(1), Color.parseColor("#93C5FD"))
-                    } else {
-                        setColor(Color.parseColor("#27272A"))
-                        cornerRadius = dpToPx(14).toFloat()
-                        setStroke(dpToPx(1), Color.parseColor("#52525B"))
-                    }
-                }
-                setPadding(dpToPx(12), dpToPx(5), dpToPx(12), dpToPx(5))
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    rightMargin = dpToPx(6)
-                }
-                addMicroPressEffect()
-
-                setOnClickListener {
-                    val targetSessionId = session.id
-                    if (prefs.getSelectedSessionId() != targetSessionId) {
-                        prefs.setSelectedSessionId(targetSessionId)
-
-                        // Hot Cache Check: RAM hit -> 0ms immediate UI update
-                        val cached = sessionSummaryCache[targetSessionId]
-                        if (cached != null && cached.first.isNotBlank()) {
-                            latestSummaryText = cached.first
-                            latestModelInfo = cached.second
-                            activeChatAnswer = null
-                            updateBubbleContent()
-                        }
-
-                        sessionSwitchJob?.cancel()
-                        sessionSwitchJob = serviceScope.launch {
-                            try {
-                                val db = AppDatabase.getDatabase(this@FloatingBubbleService)
-                                val sessionSummary = db.summaryDao().getBestSummaryForSession(targetSessionId)
-                                if (prefs.getSelectedSessionId() != targetSessionId) return@launch
-
-                                val newSummaryText: String
-                                val newModelInfo: String
-                                if (sessionSummary != null && sessionSummary.summaryContent.isNotBlank()) {
-                                    newSummaryText = sessionSummary.summaryContent
-                                    newModelInfo = sessionSummary.modelInfo
-                                } else {
-                                    newSummaryText = "Chưa có báo cáo cho '${session.name}'.\n\nNhấn nút 'Gửi' bên dưới để tóm tắt các tin nhắn thuộc phiên này."
-                                    newModelInfo = "${session.iconEmoji} ${session.name}"
-                                }
-
-                                sessionSummaryCache[targetSessionId] = Pair(newSummaryText, newModelInfo)
-
-                                if (latestSummaryText != newSummaryText || latestModelInfo != newModelInfo) {
-                                    latestSummaryText = newSummaryText
-                                    latestModelInfo = newModelInfo
-                                    activeChatAnswer = null
-                                    withContext(Dispatchers.Main) {
-                                        if (prefs.getSelectedSessionId() == targetSessionId) {
-                                            updateBubbleContent()
-                                        }
-                                    }
-                                }
-                            } catch (e: CancellationException) {
-                                throw e
-                            } catch (e: Exception) {
-                                Log.w(TAG, "Lỗi chuyển phiên trên bóng chat: ${e.message}")
-                            }
-                        }
-                    }
-                }
-            }
-            sessionsLayout.addView(chipView)
-        }
-
-        // Add [+] Button to navigate to session settings
         val addSessionBtn = TextView(this).apply {
             text = "＋"
             textSize = 13f
@@ -1820,14 +1871,13 @@ class FloatingBubbleService : Service() {
                     putExtra("navigate_to", "advanced_sessions")
                 }
                 startActivity(intent)
-                collapseExpandedCard(root)
+                val root = bubbleRootView
+                if (root != null) collapseExpandedCard(root)
             }
         }
-        sessionsLayout.addView(addSessionBtn)
         sessionsScroll.addView(sessionsLayout)
         cardLayout.addView(sessionsScroll)
 
-        // Flexible Center ScrollView: expands to take all available height
         val scrollView = ScrollView(this).apply {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply {
                 topMargin = dpToPx(4)
@@ -1842,112 +1892,63 @@ class FloatingBubbleService : Service() {
             setPadding(0, dpToPx(2), 0, dpToPx(4))
         }
 
-        // Section 1: Clean Advice Box or Direct Message View
-        val cleanAdvice = SummaryParser.cleanAdviceText(parsed.conciseAdvice)
-        val speakableParsed = SystemAlarmHelper.filterOutCancelled(parsed, alarmDbMap)
-        val effectiveAdvice = when {
-            !activeChatAnswer.isNullOrBlank() -> activeChatAnswer!!
-            cleanAdvice.isNotBlank() -> cleanAdvice
-            parsed.totalTaskCount == 0 && latestSummaryText.isNotBlank() -> latestSummaryText
-            else -> ""
+        val sec1Box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#1F18181B"))
+                cornerRadius = dpToPx(12).toFloat()
+                setStroke(dpToPx(1), Color.parseColor("#33FFFFFF"))
+            }
+            setPadding(dpToPx(12), dpToPx(10), dpToPx(12), dpToPx(10))
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                bottomMargin = dpToPx(8)
+            }
+            isClickable = true
+            isLongClickable = true
+            setOnLongClickListener {
+                try {
+                    performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                    val p = cachedParsedSummary ?: SummaryParser.parse(latestSummaryText)
+                    val sp = SystemAlarmHelper.filterOutCancelledFast(p, alarmNormalizedTitleMap)
+                    com.orca.orcaauto.domain.voice.VoiceBriefingManager.getInstance(this@FloatingBubbleService)
+                        .speakSummary(0L, sp)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Voice briefing failed", e)
+                }
+                true
+            }
+            setOnClickListener {
+                val vm = com.orca.orcaauto.domain.voice.VoiceBriefingManager.getInstance(this@FloatingBubbleService)
+                if (vm.isSpeakingFlow.value) {
+                    vm.stop()
+                }
+            }
         }
 
-        var currentAdviceTv: TextView? = null
-        var currentSec1Box: LinearLayout? = null
-        var currentNotesContainer: LinearLayout? = null
-
-        if (effectiveAdvice.isNotBlank()) {
-            val sec1Box = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                background = GradientDrawable().apply {
-                    setColor(Color.parseColor("#1F18181B"))
-                    cornerRadius = dpToPx(12).toFloat()
-                    setStroke(dpToPx(1), Color.parseColor("#33FFFFFF"))
-                }
-                setPadding(dpToPx(12), dpToPx(10), dpToPx(12), dpToPx(10))
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    bottomMargin = dpToPx(8)
-                }
-                isClickable = true
-                isLongClickable = true
-                setOnLongClickListener {
-                    try {
-                        performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
-                        com.orca.orcaauto.domain.voice.VoiceBriefingManager.getInstance(this@FloatingBubbleService)
-                            .speakSummary(0L, speakableParsed)
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Voice briefing failed", e)
-                    }
-                    true
-                }
-                setOnClickListener {
-                    val vm = com.orca.orcaauto.domain.voice.VoiceBriefingManager.getInstance(this@FloatingBubbleService)
-                    if (vm.isSpeakingFlow.value) {
-                        vm.stop()
-                    }
-                }
-            }
-
-            val adviceTv = TextView(this).apply {
-                text = effectiveAdvice
-                setTextColor(Color.WHITE)
-                textSize = 12.5f
-                setLineSpacing(dpToPx(2).toFloat(), 1.15f)
-                setTextIsSelectable(true)
-                highlightColor = Color.parseColor("#4D38BDF8")
-            }
-            sec1Box.addView(adviceTv)
-
-            val notesContainer = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-            }
-            sec1Box.addView(notesContainer)
-
-            contentLayout.addView(sec1Box)
-            currentAdviceTv = adviceTv
-            currentSec1Box = sec1Box
-            currentNotesContainer = notesContainer
+        val adviceTv = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            textSize = 12.5f
+            setLineSpacing(dpToPx(2).toFloat(), 1.15f)
+            setTextIsSelectable(true)
+            highlightColor = Color.parseColor("#4D38BDF8")
         }
+        sec1Box.addView(adviceTv)
 
-        // Section 2: TaskBoard (Preserved & Loaded from Room DB smart_alarms)
+        val notesContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        sec1Box.addView(notesContainer)
+        contentLayout.addView(sec1Box)
+
         val tasksBoardLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
         contentLayout.addView(tasksBoardLayout)
-        currentTasksBoardLayout = tasksBoardLayout
-
-        populateTaskBoard(tasksBoardLayout, cardLayout, hasAdvice = effectiveAdvice.isNotBlank())
-
-        // Ensure active tasks from Room DB smart_alarms are rendered even if initial flow was delayed
-        if (alarmDbMap.isEmpty()) {
-            serviceScope.launch(Dispatchers.IO) {
-                try {
-                    val alarms = AppDatabase.getDatabase(this@FloatingBubbleService)
-                        .smartAlarmDao()
-                        .getAllAlarms()
-                    if (alarms.isNotEmpty()) {
-                        alarmDbMap = alarms.associateBy { it.alarmId }
-                        withContext(Dispatchers.Main) {
-                            currentTasksBoardLayout?.let { board ->
-                                currentCardLayoutRef?.let { card ->
-                                    populateTaskBoard(board, card, hasAdvice = effectiveAdvice.isNotBlank())
-                                }
-                            }
-                        }
-                    }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    Log.w(TAG, "Lỗi nạp danh sách alarm dự phòng: ${e.message}")
-                }
-            }
-        }
 
         scrollView.addView(contentLayout)
         cardLayout.addView(scrollView)
 
-        // Interactive Live AI Input Bar at the BOTTOM edge (ergonomic thumb reach)
         val inputCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = GradientDrawable().apply {
@@ -1961,278 +1962,7 @@ class FloatingBubbleService : Service() {
             }
         }
 
-        val queryEt = EditText(this).apply {
-            hint = if (isCallingAi) "AI đang xử lý..." else "Nhập lệnh hoặc câu hỏi..."
-            setHintTextColor(Color.parseColor("#71717A"))
-            setTextColor(Color.WHITE)
-            textSize = 12.5f
-            background = GradientDrawable().apply {
-                setColor(Color.parseColor("#18181B"))
-                cornerRadius = dpToPx(18).toFloat()
-                setStroke(dpToPx(1), Color.parseColor("#33FFFFFF"))
-            }
-            setPadding(dpToPx(14), dpToPx(8), dpToPx(14), dpToPx(8))
-            maxLines = 4
-            minLines = 1
-            isSingleLine = false
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES or InputType.TYPE_TEXT_FLAG_MULTI_LINE
-            setHorizontallyScrolling(false)
-            gravity = Gravity.CENTER_VERTICAL or Gravity.START
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            isEnabled = !isCallingAi
-            highlightColor = Color.parseColor("#4D38BDF8")
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                isForceDarkAllowed = false
-            }
-            setOnLongClickListener {
-                if (!isEnabled || isCallingAi) return@setOnLongClickListener false
-                pasteFromClipboard(this)
-            }
-            setOnFocusChangeListener { _, hasFocus ->
-                if (hasFocus) {
-                    scrollView.postDelayed({
-                        scrollView.fullScroll(View.FOCUS_DOWN)
-                    }, 200L)
-                }
-            }
-        }
-
-        var sendBtnRef: TextView? = null
-
-        fun updateSendBtnState(hasText: Boolean) {
-            val btn = sendBtnRef ?: return
-            val targetState = when {
-                isCallingAi -> SendBtnState.CALLING_AI
-                hasText -> SendBtnState.HAS_TEXT
-                else -> SendBtnState.EMPTY
-            }
-            if (targetState == currentSendBtnState) return
-            currentSendBtnState = targetState
-
-            when (targetState) {
-                SendBtnState.CALLING_AI -> {
-                    btn.text = "..."
-                    btn.setTextColor(Color.parseColor("#94A3B8"))
-                    btn.background = sendBtnBgCallingAi
-                }
-                SendBtnState.HAS_TEXT -> {
-                    btn.text = "Gửi"
-                    btn.setTextColor(Color.parseColor("#0F172A"))
-                    btn.background = sendBtnBgActive
-                }
-                SendBtnState.EMPTY -> {
-                    btn.text = "Gửi"
-                    btn.setTextColor(Color.parseColor("#94A3B8"))
-                    btn.background = sendBtnBgInactive
-                }
-            }
-        }
-
-        queryEt.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                updateSendBtnState(!s.isNullOrBlank())
-            }
-            override fun afterTextChanged(s: android.text.Editable?) {}
-        })
-
-        lateinit var executeAiCall: (String) -> Unit
-        executeAiCall = { queryText ->
-            if (!isCallingAi) {
-                isCallingAi = true
-                activeStreamingJob?.cancel()
-
-                val promptToSend = queryText.ifBlank { "Tóm tắt các tin nhắn quan trọng gần đây" }
-                queryEt.setText("")
-                queryEt.isEnabled = false
-                queryEt.hint = "AI đang xử lý..."
-                updateSendBtnState(false)
-
-                sendBtnRef?.text = "..."
-                sendBtnRef?.isClickable = false
-                sendBtnRef?.setTextColor(Color.parseColor("#94A3B8"))
-                sendBtnRef?.background = GradientDrawable().apply {
-                    setColor(Color.parseColor("#3327272A"))
-                    cornerRadius = dpToPx(8).toFloat()
-                    setStroke(dpToPx(1), Color.parseColor("#4DFFFFFF"))
-                }
-
-                // Remove emptyBox if present
-                currentTasksBoardLayout?.findViewWithTag<View>("EMPTY_BOX_TAG")?.let { currentTasksBoardLayout?.removeView(it) }
-
-                var targetAdviceTv = currentAdviceTv
-                var targetNotesContainer = currentNotesContainer
-                var targetSec1Box = currentSec1Box
-
-                if (targetAdviceTv == null || targetNotesContainer == null || targetSec1Box == null) {
-                    val newSec1Box = LinearLayout(this@FloatingBubbleService).apply {
-                        orientation = LinearLayout.VERTICAL
-                        background = GradientDrawable().apply {
-                            setColor(Color.parseColor("#1F18181B"))
-                            cornerRadius = dpToPx(12).toFloat()
-                            setStroke(dpToPx(1), Color.parseColor("#33FFFFFF"))
-                        }
-                        setPadding(dpToPx(12), dpToPx(10), dpToPx(12), dpToPx(10))
-                        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                            bottomMargin = dpToPx(8)
-                        }
-                    }
-                    val newAdviceTv = TextView(this@FloatingBubbleService).apply {
-                        setTextColor(Color.WHITE)
-                        textSize = 12.5f
-                        setLineSpacing(dpToPx(2).toFloat(), 1.15f)
-                        setTextIsSelectable(true)
-                        highlightColor = Color.parseColor("#4D38BDF8")
-                    }
-                    newSec1Box.addView(newAdviceTv)
-
-                    val newNotesContainer = LinearLayout(this@FloatingBubbleService).apply {
-                        orientation = LinearLayout.VERTICAL
-                    }
-                    newSec1Box.addView(newNotesContainer)
-
-                    contentLayout.addView(newSec1Box, 0)
-                    currentSec1Box = newSec1Box
-                    currentAdviceTv = newAdviceTv
-                    currentNotesContainer = newNotesContainer
-                    targetAdviceTv = newAdviceTv
-                    targetNotesContainer = newNotesContainer
-                    targetSec1Box = newSec1Box
-                } else {
-                    targetSec1Box.visibility = View.VISIBLE
-                }
-
-                targetNotesContainer.removeAllViews()
-                targetAdviceTv.isClickable = false
-                targetAdviceTv.text = "⏳ Đang kết nối AI..."
-                startTextShimmer(targetAdviceTv)
-
-                val globalRequestStartedAt = System.currentTimeMillis()
-                val requestStartedAt = AtomicLong(System.currentTimeMillis())
-                val hasReceivedFirstToken = AtomicBoolean(false)
-                val lastTokenReceivedAt = AtomicLong(0L)
-                val isWatchdogTimedOut = AtomicBoolean(false)
-
-                activeWatchdogJob?.cancel()
-                activeWatchdogJob = serviceScope.launch(Dispatchers.Main) {
-                    while (isActive) {
-                        delay(500)
-                        val now = System.currentTimeMillis()
-                        val totalElapsed = now - globalRequestStartedAt
-                        if (totalElapsed >= GLOBAL_REQUEST_TIMEOUT_MS) {
-                            isWatchdogTimedOut.set(true)
-                            activeStreamingJob?.cancel(CancellationException("GLOBAL_REQUEST_TIMEOUT"))
-                            break
-                        }
-                        if (hasReceivedFirstToken.get()) {
-                            // Phase 2: In-flight streaming token stall watchdog (25s)
-                            val elapsedSinceLastToken = now - lastTokenReceivedAt.get()
-                            if (elapsedSinceLastToken >= SSE_WATCHDOG_TIMEOUT_MS) {
-                                isWatchdogTimedOut.set(true)
-                                activeStreamingJob?.cancel(CancellationException("SSE_STREAM_WATCHDOG_TIMEOUT"))
-                                break
-                            }
-                        } else {
-                            // Phase 1: TTFB & Round 1 connection window (90s)
-                            val elapsedSinceStart = now - requestStartedAt.get()
-                            if (elapsedSinceStart >= INITIAL_CONNECTION_TIMEOUT_MS) {
-                                isWatchdogTimedOut.set(true)
-                                activeStreamingJob?.cancel(CancellationException("INITIAL_CONNECTION_TIMEOUT"))
-                                break
-                            }
-                        }
-                    }
-                }
-
-                activeStreamingJob = serviceScope.launch(Dispatchers.Main) {
-                    try {
-                        val currentSession = prefs.getSelectedSession()
-                        val accumulatedLive = StringBuilder()
-
-                        val result = withContext(Dispatchers.IO) {
-                            LiveAiChatHelper.summarizeSession(
-                                context = this@FloatingBubbleService,
-                                session = currentSession,
-                                userQueryOrInstruction = promptToSend,
-                                onTokenDelta = { delta ->
-                                    hasReceivedFirstToken.set(true)
-                                    lastTokenReceivedAt.set(System.currentTimeMillis())
-                                    val raw = synchronized(accumulatedLive) {
-                                        accumulatedLive.append(delta)
-                                        accumulatedLive.toString()
-                                    }
-                                    val cleanLive = CommandStripper.cleanLive(raw)
-                                    val parsedLive = SummaryParser.parse(cleanLive)
-                                    val liveAdvice = SummaryParser.cleanAdviceText(parsedLive.conciseAdvice)
-                                    val displayText = if (liveAdvice.isNotBlank()) liveAdvice else if (cleanLive.isNotBlank()) cleanLive else "..."
-                                    serviceScope.launch(Dispatchers.Main) {
-                                        stopTextShimmer(targetAdviceTv)
-                                        targetAdviceTv.text = "$displayText ▌"
-                                    }
-                                },
-                                onStatusUpdate = { statusMsg ->
-                                    requestStartedAt.set(System.currentTimeMillis())
-                                    hasReceivedFirstToken.set(false)
-                                    lastTokenReceivedAt.set(0L)
-                                    synchronized(accumulatedLive) {
-                                        accumulatedLive.setLength(0)
-                                    }
-                                    serviceScope.launch(Dispatchers.Main) {
-                                        targetAdviceTv.text = statusMsg
-                                        startTextShimmer(targetAdviceTv)
-                                    }
-                                }
-                            )
-                        }
-                        stopTextShimmer(targetAdviceTv)
-                        if (result.isSuccess) {
-                            val (cleanSummary, usedKey, shownCards) = result.getOrThrow()
-                            latestSummaryText = cleanSummary
-                            activeChatAnswer = null
-                            latestModelInfo = "${usedKey.provider.displayName} • ${usedKey.modelName}"
-                            sessionSummaryCache[currentSession.id] = Pair(cleanSummary, latestModelInfo)
-                            modelTv.text = latestModelInfo
-
-                            val parsed = SummaryParser.parse(cleanSummary)
-                            val cleanAdvice = SummaryParser.cleanAdviceText(parsed.conciseAdvice)
-                            targetAdviceTv.text = if (cleanAdvice.isNotBlank()) cleanAdvice else parsed.conciseAdvice.ifBlank { cleanSummary }
-
-                            renderLocalNoteCardsInBubble(targetNotesContainer, shownCards)
-
-                            currentTasksBoardLayout?.let { board ->
-                                populateTaskBoard(board, cardLayout, hasAdvice = true)
-                            }
-                        } else {
-                            val err = result.exceptionOrNull()
-                            val (title, detail) = buildAiErrorMessage(this@FloatingBubbleService, err, isWatchdogTimedOut.get())
-                            renderAiErrorUi(targetAdviceTv, targetNotesContainer, title, detail, promptToSend, executeAiCall)
-                        }
-                    } catch (e: CancellationException) {
-                        stopTextShimmer(targetAdviceTv)
-                        if (!isWatchdogTimedOut.get()) {
-                            throw e
-                        }
-                        val (title, detail) = buildAiErrorMessage(this@FloatingBubbleService, e, true)
-                        renderAiErrorUi(targetAdviceTv, targetNotesContainer, title, detail, promptToSend, executeAiCall)
-                    } catch (t: Throwable) {
-                        stopTextShimmer(targetAdviceTv)
-                        val (title, detail) = buildAiErrorMessage(this@FloatingBubbleService, t, isWatchdogTimedOut.get())
-                        renderAiErrorUi(targetAdviceTv, targetNotesContainer, title, detail, promptToSend, executeAiCall)
-                    } finally {
-                        stopTextShimmer(targetAdviceTv)
-                        activeWatchdogJob?.cancel()
-                        activeWatchdogJob = null
-                        isCallingAi = false
-                        queryEt.isEnabled = true
-                        queryEt.hint = "Nhập lệnh hoặc câu hỏi..."
-                        updateSendBtnState(queryEt.text?.isNotBlank() == true)
-                        activeStreamingJob = null
-                    }
-                }
-            }
-        }
-
-        // 3-Level Thinking Mode Selector Row (⚡ Nhanh, ⚖ Cân bằng, 🧠 Sâu sắc)
+        val prefs = UserPreferences.getInstance(this)
         var activeThinkingLevel = prefs.getAssistantThinkingLevel()
         val thinkingChipViews = mutableMapOf<AssistantThinkingLevel, TextView>()
 
@@ -2300,7 +2030,82 @@ class FloatingBubbleService : Service() {
             gravity = Gravity.BOTTOM
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
+
+        val queryEt = EditText(this).apply {
+            hint = if (isCallingAi) "AI đang xử lý..." else "Nhập lệnh hoặc câu hỏi..."
+            setHintTextColor(Color.parseColor("#71717A"))
+            setTextColor(Color.WHITE)
+            textSize = 12.5f
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#18181B"))
+                cornerRadius = dpToPx(18).toFloat()
+                setStroke(dpToPx(1), Color.parseColor("#33FFFFFF"))
+            }
+            setPadding(dpToPx(14), dpToPx(8), dpToPx(14), dpToPx(8))
+            maxLines = 4
+            minLines = 1
+            isSingleLine = false
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            setHorizontallyScrolling(false)
+            gravity = Gravity.CENTER_VERTICAL or Gravity.START
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            isEnabled = !isCallingAi
+            highlightColor = Color.parseColor("#4D38BDF8")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                isForceDarkAllowed = false
+            }
+            setOnLongClickListener {
+                if (!isEnabled || isCallingAi) return@setOnLongClickListener false
+                pasteFromClipboard(this)
+            }
+            setOnFocusChangeListener { _, hasFocus ->
+                if (hasFocus) {
+                    scrollView.postDelayed({
+                        scrollView.fullScroll(View.FOCUS_DOWN)
+                    }, 200L)
+                }
+            }
+        }
         inputRow.addView(queryEt)
+
+        var sendBtnRef: TextView? = null
+
+        fun updateSendBtnState(hasText: Boolean) {
+            val btn = sendBtnRef ?: return
+            val targetState = when {
+                isCallingAi -> SendBtnState.CALLING_AI
+                hasText -> SendBtnState.HAS_TEXT
+                else -> SendBtnState.EMPTY
+            }
+            if (targetState == currentSendBtnState) return
+            currentSendBtnState = targetState
+
+            when (targetState) {
+                SendBtnState.CALLING_AI -> {
+                    btn.text = "..."
+                    btn.setTextColor(Color.parseColor("#94A3B8"))
+                    btn.background = sendBtnBgCallingAi
+                }
+                SendBtnState.HAS_TEXT -> {
+                    btn.text = "Gửi"
+                    btn.setTextColor(Color.parseColor("#0F172A"))
+                    btn.background = sendBtnBgActive
+                }
+                SendBtnState.EMPTY -> {
+                    btn.text = "Gửi"
+                    btn.setTextColor(Color.parseColor("#94A3B8"))
+                    btn.background = sendBtnBgInactive
+                }
+            }
+        }
+
+        queryEt.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                updateSendBtnState(!s.isNullOrBlank())
+            }
+            override fun afterTextChanged(s: android.text.Editable?) {}
+        })
 
         val sendBtn = TextView(this).apply {
             text = if (isCallingAi) "..." else "Gửi"
@@ -2319,62 +2124,362 @@ class FloatingBubbleService : Service() {
             }
             isClickable = !isCallingAi
             addMicroPressEffect()
-            setOnClickListener {
-                if (!isCallingAi) {
-                    val q = queryEt.text.toString().trim()
-                    executeAiCall(q)
+        }
+        sendBtnRef = sendBtn
+        updateSendBtnState(false)
+
+        lateinit var executeAiCall: (String) -> Unit
+        executeAiCall = { queryText ->
+            if (!isCallingAi) {
+                isCallingAi = true
+                activeStreamingJob?.cancel()
+
+                val promptToSend = queryText.ifBlank { "Tóm tắt các tin nhắn quan trọng gần đây" }
+                queryEt.setText("")
+                queryEt.isEnabled = false
+                queryEt.hint = "AI đang xử lý..."
+                updateSendBtnState(false)
+
+                sendBtnRef?.text = "..."
+                sendBtnRef?.isClickable = false
+                sendBtnRef?.setTextColor(Color.parseColor("#94A3B8"))
+                sendBtnRef?.background = GradientDrawable().apply {
+                    setColor(Color.parseColor("#3327272A"))
+                    cornerRadius = dpToPx(8).toFloat()
+                    setStroke(dpToPx(1), Color.parseColor("#4DFFFFFF"))
+                }
+
+                currentTasksBoardLayout?.findViewWithTag<View>("EMPTY_BOX_TAG")?.let { currentTasksBoardLayout?.removeView(it) }
+
+                val targetAdviceTv = adviceTv
+                val targetNotesContainer = notesContainer
+                val targetSec1Box = sec1Box
+
+                targetSec1Box.visibility = View.VISIBLE
+                targetNotesContainer.removeAllViews()
+                targetAdviceTv.isClickable = false
+                targetAdviceTv.text = "⏳ Đang kết nối AI..."
+                startTextShimmer(targetAdviceTv)
+
+                val globalRequestStartedAt = System.currentTimeMillis()
+                val requestStartedAt = AtomicLong(System.currentTimeMillis())
+                val hasReceivedFirstToken = AtomicBoolean(false)
+                val lastTokenReceivedAt = AtomicLong(0L)
+                val isWatchdogTimedOut = AtomicBoolean(false)
+
+                activeWatchdogJob?.cancel()
+                activeWatchdogJob = serviceScope.launch(Dispatchers.Main) {
+                    while (isActive) {
+                        delay(500)
+                        val now = System.currentTimeMillis()
+                        val totalElapsed = now - globalRequestStartedAt
+                        if (totalElapsed >= GLOBAL_REQUEST_TIMEOUT_MS) {
+                            isWatchdogTimedOut.set(true)
+                            activeStreamingJob?.cancel(CancellationException("GLOBAL_REQUEST_TIMEOUT"))
+                            break
+                        }
+                        if (hasReceivedFirstToken.get()) {
+                            val elapsedSinceLastToken = now - lastTokenReceivedAt.get()
+                            if (elapsedSinceLastToken >= SSE_WATCHDOG_TIMEOUT_MS) {
+                                isWatchdogTimedOut.set(true)
+                                activeStreamingJob?.cancel(CancellationException("SSE_STREAM_WATCHDOG_TIMEOUT"))
+                                break
+                            }
+                        } else {
+                            val elapsedSinceStart = now - requestStartedAt.get()
+                            if (elapsedSinceStart >= INITIAL_CONNECTION_TIMEOUT_MS) {
+                                isWatchdogTimedOut.set(true)
+                                activeStreamingJob?.cancel(CancellationException("INITIAL_CONNECTION_TIMEOUT"))
+                                break
+                            }
+                        }
+                    }
+                }
+
+                activeStreamingJob = serviceScope.launch(Dispatchers.Main) {
+                    try {
+                        val currentSession = prefs.getSelectedSession()
+                        val accumulatedLive = StringBuilder()
+
+                        val result = withContext(Dispatchers.IO) {
+                            LiveAiChatHelper.summarizeSession(
+                                context = this@FloatingBubbleService,
+                                session = currentSession,
+                                userQueryOrInstruction = promptToSend,
+                                onTokenDelta = { delta ->
+                                    hasReceivedFirstToken.set(true)
+                                    lastTokenReceivedAt.set(System.currentTimeMillis())
+                                    val raw = synchronized(accumulatedLive) {
+                                        accumulatedLive.append(delta)
+                                        accumulatedLive.toString()
+                                    }
+                                    val cleanLive = CommandStripper.cleanLive(raw)
+                                    val parsedLive = SummaryParser.parse(cleanLive)
+                                    val liveAdvice = SummaryParser.cleanAdviceText(parsedLive.conciseAdvice)
+                                    val displayText = if (liveAdvice.isNotBlank()) liveAdvice else if (cleanLive.isNotBlank()) cleanLive else "..."
+                                    serviceScope.launch(Dispatchers.Main) {
+                                        stopTextShimmer(targetAdviceTv)
+                                        targetAdviceTv.text = "$displayText ▌"
+                                    }
+                                },
+                                onStatusUpdate = { statusMsg ->
+                                    requestStartedAt.set(System.currentTimeMillis())
+                                    hasReceivedFirstToken.set(false)
+                                    lastTokenReceivedAt.set(0L)
+                                    synchronized(accumulatedLive) {
+                                        accumulatedLive.setLength(0)
+                                    }
+                                    serviceScope.launch(Dispatchers.Main) {
+                                        targetAdviceTv.text = statusMsg
+                                        startTextShimmer(targetAdviceTv)
+                                    }
+                                }
+                            )
+                        }
+                        stopTextShimmer(targetAdviceTv)
+                        if (result.isSuccess) {
+                            val (cleanSummary, usedKey, shownCards) = result.getOrThrow()
+                            updateSummaryTextAndParseEagerly(cleanSummary)
+                            activeChatAnswer = null
+                            latestModelInfo = "${usedKey.provider.displayName} • ${usedKey.modelName}"
+                            sessionSummaryCache[currentSession.id] = Pair(cleanSummary, latestModelInfo)
+                            modelTv.text = latestModelInfo
+
+                            val parsed = cachedParsedSummary ?: SummaryParser.parse(cleanSummary).also { cachedParsedSummary = it }
+                            val cleanAdvice = SummaryParser.cleanAdviceText(parsed.conciseAdvice)
+                            targetAdviceTv.text = if (cleanAdvice.isNotBlank()) cleanAdvice else parsed.conciseAdvice.ifBlank { cleanSummary }
+
+                            renderLocalNoteCardsInBubble(targetNotesContainer, shownCards)
+
+                            currentTasksBoardLayout?.let { board ->
+                                populateTaskBoard(board, cardLayout, hasAdvice = true)
+                            }
+                        } else {
+                            val err = result.exceptionOrNull()
+                            val (title, detail) = buildAiErrorMessage(this@FloatingBubbleService, err, isWatchdogTimedOut.get())
+                            renderAiErrorUi(targetAdviceTv, targetNotesContainer, title, detail, promptToSend, executeAiCall)
+                        }
+                    } catch (e: CancellationException) {
+                        stopTextShimmer(targetAdviceTv)
+                        if (!isWatchdogTimedOut.get()) {
+                            throw e
+                        }
+                        val (title, detail) = buildAiErrorMessage(this@FloatingBubbleService, e, true)
+                        renderAiErrorUi(targetAdviceTv, targetNotesContainer, title, detail, promptToSend, executeAiCall)
+                    } catch (t: Throwable) {
+                        stopTextShimmer(targetAdviceTv)
+                        val (title, detail) = buildAiErrorMessage(this@FloatingBubbleService, t, isWatchdogTimedOut.get())
+                        renderAiErrorUi(targetAdviceTv, targetNotesContainer, title, detail, promptToSend, executeAiCall)
+                    } finally {
+                        stopTextShimmer(targetAdviceTv)
+                        activeWatchdogJob?.cancel()
+                        activeWatchdogJob = null
+                        isCallingAi = false
+                        queryEt.isEnabled = true
+                        queryEt.hint = "Nhập lệnh hoặc câu hỏi..."
+                        updateSendBtnState(queryEt.text?.isNotBlank() == true)
+                        activeStreamingJob = null
+                    }
                 }
             }
         }
-        sendBtnRef = sendBtn
-        currentSendBtnState = null
-        updateSendBtnState(queryEt.text?.isNotBlank() == true)
+
+        sendBtn.setOnClickListener {
+            if (!isCallingAi) {
+                val q = queryEt.text.toString().trim()
+                executeAiCall(q)
+            }
+        }
+
         inputRow.addView(sendBtn)
         inputCard.addView(inputRow)
         cardLayout.addView(inputCard)
 
+        return CardShellHolder(
+            cardLayout = cardLayout,
+            headerRow = headerRow,
+            titleTv = titleTv,
+            modelTv = modelTv,
+            openAppBtn = openAppBtn,
+            sessionsScroll = sessionsScroll,
+            sessionsLayout = sessionsLayout,
+            addSessionBtn = addSessionBtn,
+            scrollView = scrollView,
+            contentLayout = contentLayout,
+            sec1Box = sec1Box,
+            adviceTv = adviceTv,
+            notesContainer = notesContainer,
+            tasksBoardLayout = tasksBoardLayout,
+            inputCard = inputCard,
+            queryEt = queryEt,
+            sendBtn = sendBtn
+        )
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun expandFloatingCard(
+        root: FrameLayout,
+        animate: Boolean = true,
+        tapTimestampNs: Long = SystemClock.elapsedRealtimeNanos()
+    ) {
+        UserPreferences.getInstance(this).setHasUnreadSummary(false)
+        bubbleLifecycleHandler.removeCallbacks(toState2Runnable)
+        bubbleLifecycleHandler.removeCallbacks(toState3Runnable)
+        hideDismissTarget(immediate = true)
+        currentAnimator?.cancel()
+        isCollapsing = false
+        updateShakeDetectorState()
+        dismissedTaskTitles.clear()
+        isSwipeAnimating = false
+        currentSendBtnState = null
+
+        // Tắt chuông báo thức nếu người dùng mở thẻ AI xem
+        com.orca.orcaauto.receiver.AlarmRingtonePlayer.stop()
+
+        val dm = resources.displayMetrics
+        val screenWidth = dm.widthPixels
+        val screenHeight = dm.heightPixels
+        val bubbleSize = dpToPx(44)
+
+        // Enlarge expanded card: covers comfortable viewing area (~94% width, ~74% height for keyboard clearance)
+        val cardWidth = (screenWidth * 0.94f).toInt().coerceAtMost(dpToPx(500))
+        val cardHeight = (screenHeight * 0.74f).toInt().coerceAtMost(dpToPx(620))
+
+        // Phase 1 (Frame 0): Keep activeBubbleView in root for continuous visual handoff (70ms fade out, 0 gap)
+        activeBubbleView?.let { bubble ->
+            val bubbleLp = FrameLayout.LayoutParams(bubbleSize, bubbleSize).apply {
+                gravity = Gravity.TOP or Gravity.START
+                leftMargin = lastCollapsedX
+                topMargin = lastCollapsedY
+            }
+            bubble.layoutParams = bubbleLp
+            bubble.animate()
+                .alpha(0f)
+                .setDuration(70)
+                .withEndAction {
+                    root.removeView(bubble)
+                }
+                .start()
+        }
+
+        // Expand root window to MATCH_PARENT
+        val p = windowParams
+        if (p != null) {
+            if (!isExpanded) {
+                lastCollapsedX = p.x
+                lastCollapsedY = p.y
+            }
+            p.gravity = Gravity.CENTER
+            p.width = WindowManager.LayoutParams.MATCH_PARENT
+            p.height = WindowManager.LayoutParams.MATCH_PARENT
+            p.x = 0
+            p.y = 0
+            p.flags = (p.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()) and
+                      WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS.inv() and
+                      WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv() or
+                      WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+            @Suppress("DEPRECATION")
+            p.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN or WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN
+            try {
+                if (bubbleRootView?.isAttachedToWindow == true) {
+                    windowManager.updateViewLayout(bubbleRootView, p)
+                }
+            } catch (_: Exception) {}
+        }
+        isExpanded = true
+        updateShakeDetectorState()
+
+        // Clean transparent backdrop
+        root.setBackgroundColor(Color.TRANSPARENT)
+        root.isClickable = false
+        root.isFocusable = false
+        root.alpha = 1.0f
+
+        // Obtain Pre-Warmed Skeleton Shell or build immediately
+        val shell = prewarmedCardShell ?: buildCardShell(cardWidth, cardHeight).also { prewarmedCardShell = it }
+        val cardLayout = shell.cardLayout
+
+        currentCardLayoutRef = cardLayout
+        currentTasksBoardLayout = shell.tasksBoardLayout
+
+        // Outside-tap detector: tapping empty space collapses back to floating bubble
+        val cardRect = Rect()
+        root.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_DOWN) {
+                cardLayout.getGlobalVisibleRect(cardRect)
+                if (!cardRect.contains(event.rawX.toInt(), event.rawY.toInt())) {
+                    collapseExpandedCard(root)
+                    return@setOnTouchListener true
+                }
+            }
+            false
+        }
+
+        // Detach cardLayout if already attached to any parent
+        (cardLayout.parent as? ViewGroup)?.removeView(cardLayout)
         root.addView(cardLayout)
+        cardLayout.bringToFront()
 
-        // Smooth Entrance Animation with Spatial Continuity & Zero-Jank Hardware Acceleration
+        // Update session chips and model header in skeleton
+        renderSessionChips(shell.sessionsLayout, shell.addSessionBtn, root)
+        shell.modelTv.text = if (latestModelInfo.isNotBlank()) latestModelInfo else "Trợ lý AI điều phối thông minh"
+
+        // Populate Advice immediately from cachedParsedSummary (0.0ms pointer dereference)
+        val parsed = cachedParsedSummary ?: SummaryParser.parse(latestSummaryText).also { cachedParsedSummary = it }
+        val cleanAdvice = SummaryParser.cleanAdviceText(parsed.conciseAdvice)
+        val adviceText = if (cleanAdvice.isNotBlank()) cleanAdvice else parsed.conciseAdvice.ifBlank { latestSummaryText }
+        shell.adviceTv.text = adviceText
+        shell.adviceTv.isClickable = true
+        shell.sec1Box.visibility = if (adviceText.isNotBlank()) View.VISIBLE else View.GONE
+
+        // Telemetry onPreDraw listener: tap-to-render latency
+        var hasLoggedTelemetry = false
+        cardLayout.viewTreeObserver.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                if (!hasLoggedTelemetry) {
+                    hasLoggedTelemetry = true
+                    cardLayout.viewTreeObserver.removeOnPreDrawListener(this)
+                    val renderTimestampNs = SystemClock.elapsedRealtimeNanos()
+                    val latencyMs = (renderTimestampNs - tapTimestampNs) / 1_000_000.0
+                    Log.i(TAG, "⚡ [Telemetry] Bubble Tap-to-Render Latency: ${"%.2f".format(Locale.US, latencyMs)}ms (Frame 0 ready)")
+                }
+                return true
+            }
+        })
+
         if (animate) {
-            val bubbleSize = dpToPx(44)
-            val bubbleCenterX = lastCollapsedX + bubbleSize / 2f
-            val bubbleCenterY = lastCollapsedY + bubbleSize / 2f
-            val cardCenterX = screenWidth / 2f
-            val cardCenterY = screenHeight / 2f
-            val deltaX = bubbleCenterX - cardCenterX
-            val deltaY = bubbleCenterY - cardCenterY
-            val startScaleX = (bubbleSize.toFloat() / cardWidth).coerceIn(0.08f, 0.35f)
-            val startScaleY = (bubbleSize.toFloat() / cardHeight).coerceIn(0.08f, 0.35f)
-
+            // Immediate Frame 0 reveal (NO post {}, NO alpha = 0f, alpha = 1.0f immediately)
+            cardLayout.alpha = 1.0f
             cardLayout.setLayerType(View.LAYER_TYPE_HARDWARE, null)
-            cardLayout.alpha = 0f
+
+            val deltaX = (lastCollapsedX + bubbleSize / 2f) - (screenWidth / 2f)
+            val deltaY = (lastCollapsedY + bubbleSize / 2f) - (screenHeight / 2f)
             cardLayout.translationX = deltaX
             cardLayout.translationY = deltaY
-            cardLayout.scaleX = startScaleX
-            cardLayout.scaleY = startScaleY
+            cardLayout.scaleX = 0.12f
+            cardLayout.scaleY = 0.12f
 
-            root.alpha = 0f
-            root.animate().alpha(1f).setDuration(200).start()
-
-            cardLayout.post {
-                cardLayout.animate()
-                    .alpha(1f)
-                    .scaleX(1.0f)
-                    .scaleY(1.0f)
-                    .translationX(0f)
-                    .translationY(0f)
-                    .setDuration(260)
-                    .setInterpolator(OvershootInterpolator(1.06f))
-                    .withEndAction {
-                        cardLayout.setLayerType(View.LAYER_TYPE_NONE, null)
-                    }
-                    .start()
-            }
-        } else if (isExpanded) {
-            // Subtle Cross-fade when refreshing or switching sessions (110ms)
-            cardLayout.alpha = 0.5f
-            cardLayout.animate().alpha(1f).setDuration(110).start()
+            // Continuous Morphing: 180ms, PathInterpolator(0.05f, 0.7f, 0.1f, 1.0f)
+            cardLayout.animate()
+                .translationX(0f)
+                .translationY(0f)
+                .scaleX(1.0f)
+                .scaleY(1.0f)
+                .setDuration(180)
+                .setInterpolator(PathInterpolator(0.05f, 0.7f, 0.1f, 1.0f))
+                .withEndAction {
+                    cardLayout.setLayerType(View.LAYER_TYPE_NONE, null)
+                    // Phase 2: Post-Animation Mount task rows in withEndAction
+                    populateTaskBoard(shell.tasksBoardLayout, cardLayout, hasAdvice = shell.sec1Box.visibility == View.VISIBLE)
+                }
+                .start()
+        } else {
+            cardLayout.alpha = 1.0f
+            cardLayout.translationX = 0f
+            cardLayout.translationY = 0f
+            cardLayout.scaleX = 1.0f
+            cardLayout.scaleY = 1.0f
+            populateTaskBoard(shell.tasksBoardLayout, cardLayout, hasAdvice = shell.sec1Box.visibility == View.VISIBLE)
         }
     }
 
@@ -2472,19 +2577,216 @@ class FloatingBubbleService : Service() {
         }
     }
 
-    @SuppressLint("ClickableViewAccessibility")
-    private fun renderTaskRow(task: TaskItem, isPlanned: Boolean, cardLayout: View): View {
-        val cleanTitle = task.title.replace(Regex("""^[\[\(\-•*\d.]+\s*"""), "").trim()
+    private fun bindTaskRow(holder: TaskRowHolder, task: TaskItem, isPlanned: Boolean, cardLayout: View) {
+        val cleanTitle = SystemAlarmHelper.cleanTaskTitle(task.title)
         val parsedDt = SystemAlarmHelper.parseDateTimeFromText(task.deadline)
         val targetCal = parsedDt?.calendar ?: Calendar.getInstance().apply { add(Calendar.HOUR_OF_DAY, 1) }
         val generatedAlarmId = SystemAlarmHelper.generateAlarmId(cleanTitle, targetCal)
-        val existingAlarm = alarmDbMap[generatedAlarmId] ?: SystemAlarmHelper.findMatchingAlarm(cleanTitle, alarmDbMap)
+        val existingAlarm = alarmDbMap[generatedAlarmId] ?: SystemAlarmHelper.findMatchingAlarmFast(cleanTitle, alarmNormalizedTitleMap)
         val alarmId = existingAlarm?.alarmId ?: generatedAlarmId
 
         val isCancelled = existingAlarm?.status == SmartAlarmStatus.CANCELLED
         val isCompleted = existingAlarm?.status == SmartAlarmStatus.COMPLETED || task.status == TaskStatus.DONE
         val isAlarmActive = existingAlarm?.status == SmartAlarmStatus.ACTIVE
         val proposedTime = parsedDt?.timeLabel ?: "Hẹn giờ"
+
+        holder.boundTask = task
+        holder.boundAlarmId = alarmId
+        holder.boundAlarm = existingAlarm
+
+        // Reset visual translation & swipe actions
+        holder.taskRow.translationX = 0f
+        holder.taskRow.alpha = 1.0f
+        holder.container.visibility = View.VISIBLE
+        holder.leftSwipeAction.visibility = View.GONE
+        holder.rightSwipeAction.visibility = View.GONE
+
+        // Foreground Card Background styling
+        holder.taskRow.background = GradientDrawable().apply {
+            setColor(if (isCancelled) Color.parseColor("#1A1E293B") else Color.parseColor("#261E293B"))
+            cornerRadius = dpToPx(10).toFloat()
+            if (isCancelled) {
+                setStroke(dpToPx(1), Color.parseColor("#59EF4444"))
+            } else if (isCompleted) {
+                setStroke(dpToPx(1), Color.parseColor("#10B981"))
+            } else if (isPlanned) {
+                setStroke(dpToPx(1), Color.parseColor("#59F59E0B"))
+            } else {
+                setStroke(dpToPx(1), Color.parseColor("#EF4444"))
+            }
+        }
+
+        // Check circle visual
+        holder.checkCircle.text = when {
+            isCompleted -> "✓"
+            isCancelled -> "✕"
+            else -> "○"
+        }
+        holder.checkCircle.setTextColor(when {
+            isCompleted -> Color.parseColor("#10B981")
+            isCancelled -> Color.parseColor("#EF4444")
+            else -> Color.parseColor("#E4E4E7")
+        })
+
+        // Title visual
+        holder.title.text = task.title
+        holder.title.setTextColor(if (isCompleted || isCancelled) Color.parseColor("#94A3B8") else Color.WHITE)
+        if (isCompleted || isCancelled) {
+            holder.title.paintFlags = holder.title.paintFlags or android.graphics.Paint.STRIKE_THRU_TEXT_FLAG
+        } else {
+            holder.title.paintFlags = holder.title.paintFlags and android.graphics.Paint.STRIKE_THRU_TEXT_FLAG.inv()
+        }
+
+        // Badge row
+        holder.badgeRow.removeAllViews()
+        if (task.deadline.isNotBlank()) {
+            val deadlinePill = TextView(this).apply {
+                text = "⏰ ${task.deadline}"
+                setTextColor(if (isPlanned) Color.parseColor("#FDE68A") else Color.parseColor("#FCA5A5"))
+                textSize = 10f
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                typeface = Typeface.DEFAULT_BOLD
+                background = GradientDrawable().apply {
+                    setColor(if (isPlanned) Color.parseColor("#2E2005") else Color.parseColor("#2D1519"))
+                    cornerRadius = dpToPx(4).toFloat()
+                    setStroke(dpToPx(1), if (isPlanned) Color.parseColor("#78350F") else Color.parseColor("#7F1D1D"))
+                }
+                setPadding(dpToPx(7), dpToPx(2), dpToPx(7), dpToPx(3))
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    rightMargin = dpToPx(6)
+                }
+            }
+            holder.deadlinePill = deadlinePill
+            holder.badgeRow.addView(deadlinePill)
+        } else {
+            holder.deadlinePill = null
+        }
+
+        if (task.source.isNotBlank()) {
+            val sourcePill = TextView(this).apply {
+                text = "💬 ${task.source}"
+                setTextColor(Color.parseColor("#94A3B8"))
+                textSize = 10f
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                background = GradientDrawable().apply {
+                    setColor(Color.parseColor("#0F172A"))
+                    cornerRadius = dpToPx(4).toFloat()
+                    setStroke(dpToPx(1), Color.parseColor("#334155"))
+                }
+                setPadding(dpToPx(7), dpToPx(2), dpToPx(7), dpToPx(3))
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    rightMargin = dpToPx(6)
+                }
+            }
+            holder.sourcePill = sourcePill
+            holder.badgeRow.addView(sourcePill)
+        } else {
+            holder.sourcePill = null
+        }
+        holder.badgeRow.visibility = if (holder.badgeRow.childCount > 0) View.VISIBLE else View.GONE
+
+        // Action row (Status pill or Alarm button)
+        holder.actionRow.removeAllViews()
+        if (isCancelled) {
+            val cancelledPill = TextView(this).apply {
+                text = "↺ Đã hủy (Nhấn giữ khôi phục)"
+                setTextColor(Color.parseColor("#EF4444"))
+                textSize = 10f
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                typeface = Typeface.DEFAULT_BOLD
+                background = GradientDrawable().apply {
+                    setColor(Color.parseColor("#26EF4444"))
+                    cornerRadius = dpToPx(4).toFloat()
+                    setStroke(dpToPx(1), Color.parseColor("#4DEF4444"))
+                }
+                setPadding(dpToPx(7), dpToPx(2), dpToPx(7), dpToPx(3))
+                isClickable = true
+                setOnClickListener {
+                    Toast.makeText(this@FloatingBubbleService, "Nhấn giữ để khôi phục nhiệm vụ đã hủy", Toast.LENGTH_SHORT).show()
+                }
+            }
+            holder.cancelledPill = cancelledPill
+            holder.alarmPill = null
+            holder.actionRow.addView(cancelledPill)
+        } else if (!isCompleted) {
+            var currentAlarmActive = isAlarmActive
+            val pill = TextView(this).apply {
+                fun updatePillVisuals(active: Boolean) {
+                    text = if (active) "✓ Đã đặt $proposedTime" else "🔔 Đặt $proposedTime"
+                    setTextColor(if (active) Color.parseColor("#10B981") else Color.parseColor("#38BDF8"))
+                    background = GradientDrawable().apply {
+                        setColor(if (active) Color.parseColor("#062E24") else Color.parseColor("#082F49"))
+                        cornerRadius = dpToPx(4).toFloat()
+                        setStroke(dpToPx(1), if (active) Color.parseColor("#059669") else Color.parseColor("#0284C7"))
+                    }
+                }
+                updatePillVisuals(currentAlarmActive)
+                textSize = 10f
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                typeface = Typeface.DEFAULT_BOLD
+                setPadding(dpToPx(7), dpToPx(2), dpToPx(7), dpToPx(3))
+                isClickable = true
+                setOnClickListener {
+                    val curTask = holder.boundTask ?: task
+                    val curTitle = SystemAlarmHelper.cleanTaskTitle(curTask.title)
+                    val curAlarmId = holder.boundAlarmId ?: alarmId
+                    val curExisting = holder.boundAlarm ?: existingAlarm
+
+                    if (currentAlarmActive) {
+                        SystemAlarmHelper.cancelSmartAlarms(this@FloatingBubbleService, curTitle, curAlarmId)
+                        val disarmed = (curExisting ?: SmartAlarmEntity(
+                            alarmId = curAlarmId,
+                            taskTitle = curTitle,
+                            targetTimeMillis = targetCal.timeInMillis,
+                            targetDateLabel = proposedTime,
+                            status = SmartAlarmStatus.PROPOSED
+                        )).copy(status = SmartAlarmStatus.PROPOSED, updatedAt = System.currentTimeMillis())
+                        alarmDbMap = alarmDbMap + (curAlarmId to disarmed) + (generatedAlarmId to disarmed)
+                        alarmNormalizedTitleMap = alarmNormalizedTitleMap + (SystemAlarmHelper.normalizeTitle(curTitle) to disarmed)
+                        currentAlarmActive = false
+                        updatePillVisuals(false)
+                        Toast.makeText(this@FloatingBubbleService, "Đã tắt chuông báo: ${curTitle.take(24)}...", Toast.LENGTH_SHORT).show()
+                    } else {
+                        val result = SystemAlarmHelper.scheduleSmartAlarms(
+                            context = this@FloatingBubbleService,
+                            taskTitle = curTitle,
+                            targetCalendar = targetCal,
+                            mode = AlarmCascadeMode.X1
+                        )
+                        result.onSuccess {
+                            val armed = (curExisting ?: SmartAlarmEntity(
+                                alarmId = curAlarmId,
+                                taskTitle = curTitle,
+                                targetTimeMillis = targetCal.timeInMillis,
+                                targetDateLabel = proposedTime,
+                                status = SmartAlarmStatus.ACTIVE
+                            )).copy(status = SmartAlarmStatus.ACTIVE, updatedAt = System.currentTimeMillis())
+                            alarmDbMap = alarmDbMap + (curAlarmId to armed) + (generatedAlarmId to armed)
+                            alarmNormalizedTitleMap = alarmNormalizedTitleMap + (SystemAlarmHelper.normalizeTitle(curTitle) to armed)
+                            currentAlarmActive = true
+                            updatePillVisuals(true)
+                            Toast.makeText(this@FloatingBubbleService, "🔔 Đã đặt chuông báo $proposedTime: ${curTitle.take(24)}...", Toast.LENGTH_SHORT).show()
+                        }.onFailure { err ->
+                            Toast.makeText(this@FloatingBubbleService, "Không thể đặt báo thức: ${err.message}", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }
+            holder.alarmPill = pill
+            holder.cancelledPill = null
+            holder.actionRow.addView(pill)
+        }
+        holder.actionRow.visibility = if (holder.actionRow.childCount > 0) View.VISIBLE else View.GONE
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun renderTaskRow(task: TaskItem, isPlanned: Boolean, cardLayout: View): View {
+        val dm = resources.displayMetrics
+        val cardWidth = (dm.widthPixels * 0.94f).toInt().coerceAtMost(dpToPx(500))
 
         // Root container for gesture swiping
         val container = FrameLayout(this).apply {
@@ -2576,27 +2878,13 @@ class FloatingBubbleService : Service() {
         // Foreground Card
         val taskRow = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = GradientDrawable().apply {
-                setColor(if (isCancelled) Color.parseColor("#1A1E293B") else Color.parseColor("#261E293B"))
-                cornerRadius = dpToPx(10).toFloat()
-                if (isCancelled) {
-                    setStroke(dpToPx(1), Color.parseColor("#59EF4444"))
-                } else if (isCompleted) {
-                    setStroke(dpToPx(1), Color.parseColor("#10B981"))
-                } else if (isPlanned) {
-                    setStroke(dpToPx(1), Color.parseColor("#59F59E0B"))
-                } else {
-                    // Nhiệm vụ cần làm (To-Do): Luôn có viền đỏ đặc trưng (#EF4444) theo đúng chuẩn thiết kế toàn hệ thống
-                    setStroke(dpToPx(1), Color.parseColor("#EF4444"))
-                }
-            }
             setPadding(dpToPx(12), dpToPx(10), dpToPx(12), dpToPx(10))
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
             isClickable = true
             isFocusable = true
         }
 
-        // Title row: Checkbox + Title + Action
+        // Title row: Checkbox + Title
         val titleRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -2604,84 +2892,21 @@ class FloatingBubbleService : Service() {
         }
 
         val checkCircle = TextView(this).apply {
-            text = when {
-                isCompleted -> "✓"
-                isCancelled -> "✕"
-                else -> "○"
-            }
-            setTextColor(when {
-                isCompleted -> Color.parseColor("#10B981")
-                isCancelled -> Color.parseColor("#EF4444")
-                else -> Color.parseColor("#E4E4E7")
-            })
             textSize = 15f
             typeface = Typeface.DEFAULT_BOLD
             setPadding(0, 0, dpToPx(8), 0)
             isClickable = true
-            setOnClickListener {
-                if (isCancelled) {
-                    SystemAlarmHelper.restoreCancelledTask(this@FloatingBubbleService, cleanTitle, alarmId)
-                    val restoredAlarm = (existingAlarm ?: SmartAlarmEntity(
-                        alarmId = alarmId,
-                        taskTitle = cleanTitle,
-                        targetTimeMillis = System.currentTimeMillis(),
-                        targetDateLabel = proposedTime,
-                        status = SmartAlarmStatus.PROPOSED
-                    )).copy(status = SmartAlarmStatus.PROPOSED, updatedAt = System.currentTimeMillis())
-                    alarmDbMap = alarmDbMap + (alarmId to restoredAlarm) + (generatedAlarmId to restoredAlarm)
-                    Toast.makeText(this@FloatingBubbleService, "✓ Đã khôi phục: ${cleanTitle.take(24)}...", Toast.LENGTH_SHORT).show()
-                    currentTasksBoardLayout?.post { refreshTasksBoardOnly() }
-                } else if (isCompleted) {
-                    showFloatingConfirmationDialog(
-                        title = "Đưa về chưa hoàn thành?",
-                        message = "Bạn có muốn đưa nhiệm vụ \"$cleanTitle\" về lại danh sách việc cần làm (chưa hoàn thành) để tiếp tục theo dõi không?",
-                        confirmText = "Xác nhận",
-                        confirmColor = Color.WHITE
-                    ) {
-                        SystemAlarmHelper.uncompleteTask(this@FloatingBubbleService, cleanTitle, alarmId)
-                        val uncompletedAlarm = (existingAlarm ?: SmartAlarmEntity(
-                            alarmId = alarmId,
-                            taskTitle = cleanTitle,
-                            targetTimeMillis = System.currentTimeMillis(),
-                            targetDateLabel = proposedTime,
-                            status = SmartAlarmStatus.PROPOSED
-                        )).copy(status = SmartAlarmStatus.PROPOSED, updatedAt = System.currentTimeMillis())
-                        alarmDbMap = alarmDbMap + (alarmId to uncompletedAlarm) + (generatedAlarmId to uncompletedAlarm)
-                        Toast.makeText(this@FloatingBubbleService, "Đã đưa về trạng thái chưa hoàn thành!", Toast.LENGTH_SHORT).show()
-                        currentTasksBoardLayout?.post { refreshTasksBoardOnly() }
-                    }
-                } else {
-                    dismissedTaskTitles.add(cleanTitle)
-                    SystemAlarmHelper.markTaskCompleted(this@FloatingBubbleService, cleanTitle, alarmId)
-                    val completedAlarm = (existingAlarm ?: SmartAlarmEntity(
-                        alarmId = alarmId,
-                        taskTitle = cleanTitle,
-                        targetTimeMillis = System.currentTimeMillis(),
-                        targetDateLabel = "Đã xong",
-                        status = SmartAlarmStatus.COMPLETED
-                    )).copy(status = SmartAlarmStatus.COMPLETED, updatedAt = System.currentTimeMillis())
-                    alarmDbMap = alarmDbMap + (alarmId to completedAlarm) + (generatedAlarmId to completedAlarm)
-                    Toast.makeText(this@FloatingBubbleService, "✓ Đã hoàn thành: ${cleanTitle.take(24)}...", Toast.LENGTH_SHORT).show()
-                    collapseAndRemoveRow()
-                }
-            }
         }
         titleRow.addView(checkCircle)
 
+        // Single-Pass Measure: explicit width instead of weight = 1f to eliminate double measure pass
+        val titleWidth = (cardWidth - dpToPx(84)).coerceAtLeast(dpToPx(150))
         val title = TextView(this).apply {
-            text = task.title
-            setTextColor(if (isCompleted || isCancelled) Color.parseColor("#94A3B8") else Color.WHITE)
             textSize = 12.5f
             typeface = Typeface.DEFAULT_BOLD
-            if (isCompleted || isCancelled) {
-                paintFlags = paintFlags or android.graphics.Paint.STRIKE_THRU_TEXT_FLAG
-            } else {
-                paintFlags = paintFlags and android.graphics.Paint.STRIKE_THRU_TEXT_FLAG.inv()
-            }
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            layoutParams = LinearLayout.LayoutParams(titleWidth, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
         titleRow.addView(title)
-
         taskRow.addView(titleRow)
 
         // Badge row (Deadline & Source)
@@ -2693,53 +2918,9 @@ class FloatingBubbleService : Service() {
                 leftMargin = dpToPx(20)
             }
         }
+        taskRow.addView(badgeRow)
 
-        if (task.deadline.isNotBlank()) {
-            val deadlinePill = TextView(this).apply {
-                text = "⏰ ${task.deadline}"
-                setTextColor(if (isPlanned) Color.parseColor("#FDE68A") else Color.parseColor("#FCA5A5"))
-                textSize = 10f
-                maxLines = 1
-                ellipsize = android.text.TextUtils.TruncateAt.END
-                typeface = Typeface.DEFAULT_BOLD
-                background = GradientDrawable().apply {
-                    setColor(if (isPlanned) Color.parseColor("#2E2005") else Color.parseColor("#2D1519"))
-                    cornerRadius = dpToPx(4).toFloat()
-                    setStroke(dpToPx(1), if (isPlanned) Color.parseColor("#78350F") else Color.parseColor("#7F1D1D"))
-                }
-                setPadding(dpToPx(7), dpToPx(2), dpToPx(7), dpToPx(3))
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    rightMargin = dpToPx(6)
-                }
-            }
-            badgeRow.addView(deadlinePill)
-        }
-
-        if (task.source.isNotBlank()) {
-            val sourcePill = TextView(this).apply {
-                text = "💬 ${task.source}"
-                setTextColor(Color.parseColor("#94A3B8"))
-                textSize = 10f
-                maxLines = 1
-                ellipsize = android.text.TextUtils.TruncateAt.END
-                background = GradientDrawable().apply {
-                    setColor(Color.parseColor("#0F172A"))
-                    cornerRadius = dpToPx(4).toFloat()
-                    setStroke(dpToPx(1), Color.parseColor("#334155"))
-                }
-                setPadding(dpToPx(7), dpToPx(2), dpToPx(7), dpToPx(3))
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    rightMargin = dpToPx(6)
-                }
-            }
-            badgeRow.addView(sourcePill)
-        }
-
-        if (badgeRow.childCount > 0) {
-            taskRow.addView(badgeRow)
-        }
-
-        // Action row (Status pill or Alarm button in dedicated row to prevent vertical squishing)
+        // Action row
         val actionRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -2748,102 +2929,91 @@ class FloatingBubbleService : Service() {
                 leftMargin = dpToPx(20)
             }
         }
-
-        var alarmPill: TextView? = null
-        if (isCancelled) {
-            val cancelledPill = TextView(this).apply {
-                text = "↺ Đã hủy (Nhấn giữ khôi phục)"
-                setTextColor(Color.parseColor("#EF4444"))
-                textSize = 10f
-                maxLines = 1
-                ellipsize = android.text.TextUtils.TruncateAt.END
-                typeface = Typeface.DEFAULT_BOLD
-                background = GradientDrawable().apply {
-                    setColor(Color.parseColor("#26EF4444"))
-                    cornerRadius = dpToPx(4).toFloat()
-                    setStroke(dpToPx(1), Color.parseColor("#4DEF4444"))
-                }
-                setPadding(dpToPx(7), dpToPx(2), dpToPx(7), dpToPx(3))
-                isClickable = true
-                setOnClickListener {
-                    Toast.makeText(this@FloatingBubbleService, "Nhấn giữ để khôi phục nhiệm vụ đã hủy", Toast.LENGTH_SHORT).show()
-                }
-            }
-            actionRow.addView(cancelledPill)
-        } else if (!isCompleted) {
-            var currentAlarmActive = isAlarmActive
-            val pill = TextView(this).apply {
-                fun updatePillVisuals(active: Boolean) {
-                    text = if (active) "✓ Đã đặt $proposedTime" else "🔔 Đặt $proposedTime"
-                    setTextColor(if (active) Color.parseColor("#10B981") else Color.parseColor("#38BDF8"))
-                    background = GradientDrawable().apply {
-                        setColor(if (active) Color.parseColor("#062E24") else Color.parseColor("#082F49"))
-                        cornerRadius = dpToPx(4).toFloat()
-                        setStroke(dpToPx(1), if (active) Color.parseColor("#059669") else Color.parseColor("#0284C7"))
-                    }
-                }
-                updatePillVisuals(currentAlarmActive)
-                textSize = 10f
-                maxLines = 1
-                ellipsize = android.text.TextUtils.TruncateAt.END
-                typeface = Typeface.DEFAULT_BOLD
-                setPadding(dpToPx(7), dpToPx(2), dpToPx(7), dpToPx(3))
-                isClickable = true
-                setOnClickListener {
-                    if (currentAlarmActive) {
-                        SystemAlarmHelper.cancelSmartAlarms(this@FloatingBubbleService, cleanTitle, alarmId)
-                        val disarmed = (existingAlarm ?: SmartAlarmEntity(
-                            alarmId = alarmId,
-                            taskTitle = cleanTitle,
-                            targetTimeMillis = targetCal.timeInMillis,
-                            targetDateLabel = proposedTime,
-                            status = SmartAlarmStatus.PROPOSED
-                        )).copy(status = SmartAlarmStatus.PROPOSED, updatedAt = System.currentTimeMillis())
-                        alarmDbMap = alarmDbMap + (alarmId to disarmed) + (generatedAlarmId to disarmed)
-                        currentAlarmActive = false
-                        updatePillVisuals(false)
-                        Toast.makeText(this@FloatingBubbleService, "Đã tắt chuông báo: ${cleanTitle.take(24)}...", Toast.LENGTH_SHORT).show()
-                    } else {
-                        val result = SystemAlarmHelper.scheduleSmartAlarms(
-                            context = this@FloatingBubbleService,
-                            taskTitle = cleanTitle,
-                            targetCalendar = targetCal,
-                            mode = AlarmCascadeMode.X1
-                        )
-                        result.onSuccess {
-                            val armed = (existingAlarm ?: SmartAlarmEntity(
-                                alarmId = alarmId,
-                                taskTitle = cleanTitle,
-                                targetTimeMillis = targetCal.timeInMillis,
-                                targetDateLabel = proposedTime,
-                                status = SmartAlarmStatus.ACTIVE
-                            )).copy(status = SmartAlarmStatus.ACTIVE, updatedAt = System.currentTimeMillis())
-                            alarmDbMap = alarmDbMap + (alarmId to armed) + (generatedAlarmId to armed)
-                            currentAlarmActive = true
-                            updatePillVisuals(true)
-                            Toast.makeText(this@FloatingBubbleService, "🔔 Đã đặt chuông báo $proposedTime: ${cleanTitle.take(24)}...", Toast.LENGTH_SHORT).show()
-                        }.onFailure { err ->
-                            Toast.makeText(this@FloatingBubbleService, "Không thể đặt báo thức: ${err.message}", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                }
-            }
-            alarmPill = pill
-            actionRow.addView(pill)
-        }
-
-        if (actionRow.childCount > 0) {
-            taskRow.addView(actionRow)
-        }
+        taskRow.addView(actionRow)
         container.addView(taskRow)
 
-        // Unified Gesture Handler for taskRow:
-        // 1. Horizontal Swipe (Complete/Cancel) with strict swipe lock:
-        //    Once swiped, hold is permanently cancelled for this touch session, even if paused mid-drag!
-        // 2. Hold 550ms: Spawns Drag Pill View tracking finger position.
-        //    - Released inside card: Opens detail config & alarm dialog.
-        //    - Released outside card: Jumps directly to chat with auto-copied smart reply!
-        // 3. Short Tap (< 550ms): Quick alarm toggle or status toast.
+        // Attach TaskRowHolder
+        val holder = TaskRowHolder(
+            container = container,
+            bgSwipeLayout = bgSwipeLayout,
+            leftSwipeAction = leftSwipeAction,
+            rightSwipeAction = rightSwipeAction,
+            taskRow = taskRow,
+            titleRow = titleRow,
+            checkCircle = checkCircle,
+            title = title,
+            badgeRow = badgeRow,
+            actionRow = actionRow
+        )
+        container.tag = holder
+
+        // Initial binding
+        bindTaskRow(holder, task, isPlanned, cardLayout)
+
+        // checkCircle click listener
+        checkCircle.setOnClickListener {
+            val curTask = holder.boundTask ?: task
+            val cleanTitle = SystemAlarmHelper.cleanTaskTitle(curTask.title)
+            val parsedDt = SystemAlarmHelper.parseDateTimeFromText(curTask.deadline)
+            val targetCal = parsedDt?.calendar ?: Calendar.getInstance().apply { add(Calendar.HOUR_OF_DAY, 1) }
+            val generatedAlarmId = SystemAlarmHelper.generateAlarmId(cleanTitle, targetCal)
+            val curAlarmId = holder.boundAlarmId ?: generatedAlarmId
+            val curExisting = holder.boundAlarm ?: alarmDbMap[curAlarmId] ?: SystemAlarmHelper.findMatchingAlarmFast(cleanTitle, alarmNormalizedTitleMap)
+            val isCancelled = curExisting?.status == SmartAlarmStatus.CANCELLED
+            val isCompleted = curExisting?.status == SmartAlarmStatus.COMPLETED || curTask.status == TaskStatus.DONE
+            val proposedTime = parsedDt?.timeLabel ?: "Hẹn giờ"
+
+            if (isCancelled) {
+                SystemAlarmHelper.restoreCancelledTask(this@FloatingBubbleService, cleanTitle, curAlarmId)
+                val restoredAlarm = (curExisting ?: SmartAlarmEntity(
+                    alarmId = curAlarmId,
+                    taskTitle = cleanTitle,
+                    targetTimeMillis = System.currentTimeMillis(),
+                    targetDateLabel = proposedTime,
+                    status = SmartAlarmStatus.PROPOSED
+                )).copy(status = SmartAlarmStatus.PROPOSED, updatedAt = System.currentTimeMillis())
+                alarmDbMap = alarmDbMap + (curAlarmId to restoredAlarm) + (generatedAlarmId to restoredAlarm)
+                alarmNormalizedTitleMap = alarmNormalizedTitleMap + (SystemAlarmHelper.normalizeTitle(cleanTitle) to restoredAlarm)
+                Toast.makeText(this@FloatingBubbleService, "✓ Đã khôi phục: ${cleanTitle.take(24)}...", Toast.LENGTH_SHORT).show()
+                currentTasksBoardLayout?.post { refreshTasksBoardOnly() }
+            } else if (isCompleted) {
+                showFloatingConfirmationDialog(
+                    title = "Đưa về chưa hoàn thành?",
+                    message = "Bạn có muốn đưa nhiệm vụ \"$cleanTitle\" về lại danh sách việc cần làm (chưa hoàn thành) để tiếp tục theo dõi không?",
+                    confirmText = "Xác nhận",
+                    confirmColor = Color.WHITE
+                ) {
+                    SystemAlarmHelper.uncompleteTask(this@FloatingBubbleService, cleanTitle, curAlarmId)
+                    val uncompletedAlarm = (curExisting ?: SmartAlarmEntity(
+                        alarmId = curAlarmId,
+                        taskTitle = cleanTitle,
+                        targetTimeMillis = System.currentTimeMillis(),
+                        targetDateLabel = proposedTime,
+                        status = SmartAlarmStatus.PROPOSED
+                    )).copy(status = SmartAlarmStatus.PROPOSED, updatedAt = System.currentTimeMillis())
+                    alarmDbMap = alarmDbMap + (curAlarmId to uncompletedAlarm) + (generatedAlarmId to uncompletedAlarm)
+                    alarmNormalizedTitleMap = alarmNormalizedTitleMap + (SystemAlarmHelper.normalizeTitle(cleanTitle) to uncompletedAlarm)
+                    Toast.makeText(this@FloatingBubbleService, "Đã đưa về trạng thái chưa hoàn thành!", Toast.LENGTH_SHORT).show()
+                    currentTasksBoardLayout?.post { refreshTasksBoardOnly() }
+                }
+            } else {
+                dismissedTaskTitles.add(cleanTitle)
+                SystemAlarmHelper.markTaskCompleted(this@FloatingBubbleService, cleanTitle, curAlarmId)
+                val completedAlarm = (curExisting ?: SmartAlarmEntity(
+                    alarmId = curAlarmId,
+                    taskTitle = cleanTitle,
+                    targetTimeMillis = System.currentTimeMillis(),
+                    targetDateLabel = "Đã xong",
+                    status = SmartAlarmStatus.COMPLETED
+                )).copy(status = SmartAlarmStatus.COMPLETED, updatedAt = System.currentTimeMillis())
+                alarmDbMap = alarmDbMap + (curAlarmId to completedAlarm) + (generatedAlarmId to completedAlarm)
+                alarmNormalizedTitleMap = alarmNormalizedTitleMap + (SystemAlarmHelper.normalizeTitle(cleanTitle) to completedAlarm)
+                Toast.makeText(this@FloatingBubbleService, "✓ Đã hoàn thành: ${cleanTitle.take(24)}...", Toast.LENGTH_SHORT).show()
+                collapseAndRemoveRow()
+            }
+        }
+
+        // Gesture handling with isUserInteractingWithTask protection
         var startX = 0f
         var startY = 0f
         var lastRawX = 0f
@@ -2852,7 +3022,7 @@ class FloatingBubbleService : Service() {
         var isPillActive = false
         var hasCancelledHold = false
         val touchSlop = ViewConfiguration.get(this).scaledTouchSlop
-        val swipeThreshold = dpToPx(72) // Tăng thêm 20% ngưỡng kéo theo lệnh user (60dp * 1.2 = 72dp)
+        val swipeThreshold = dpToPx(72)
         val taskHandler = Handler(Looper.getMainLooper())
 
         val cardRect = Rect()
@@ -2885,8 +3055,11 @@ class FloatingBubbleService : Service() {
                     }
                 }
 
+                val curTask = holder.boundTask ?: task
+                val cleanTitle = SystemAlarmHelper.cleanTaskTitle(curTask.title)
+
                 if (isOutside) {
-                    val targetPackage = ChatIntentManager.resolveTargetPackage(task.source, cleanTitle)
+                    val targetPackage = ChatIntentManager.resolveTargetPackage(curTask.source, cleanTitle)
                     val appDisplayName = ChatIntentManager.getAppDisplayName(targetPackage)
                     pillIcon?.text = "🚀"
                     pillTv?.text = "Thả để mở $appDisplayName"
@@ -2962,8 +3135,20 @@ class FloatingBubbleService : Service() {
         }
 
         taskRow.setOnTouchListener { v, event ->
+            val curTask = holder.boundTask ?: task
+            val cleanTitle = SystemAlarmHelper.cleanTaskTitle(curTask.title)
+            val parsedDt = SystemAlarmHelper.parseDateTimeFromText(curTask.deadline)
+            val targetCal = parsedDt?.calendar ?: Calendar.getInstance().apply { add(Calendar.HOUR_OF_DAY, 1) }
+            val generatedAlarmId = SystemAlarmHelper.generateAlarmId(cleanTitle, targetCal)
+            val curAlarmId = holder.boundAlarmId ?: generatedAlarmId
+            val curExisting = holder.boundAlarm ?: alarmDbMap[curAlarmId] ?: SystemAlarmHelper.findMatchingAlarmFast(cleanTitle, alarmNormalizedTitleMap)
+            val isCancelled = curExisting?.status == SmartAlarmStatus.CANCELLED
+            val isCompleted = curExisting?.status == SmartAlarmStatus.COMPLETED || curTask.status == TaskStatus.DONE
+            val proposedTime = parsedDt?.timeLabel ?: "Hẹn giờ"
+
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    isUserInteractingWithTask = true
                     startX = event.rawX
                     startY = event.rawY
                     lastRawX = event.rawX
@@ -2982,13 +3167,11 @@ class FloatingBubbleService : Service() {
                     val dy = event.rawY - startY
 
                     if (!isPillActive) {
-                        // Nếu ngón tay di chuyển vượt touchSlop trước khi đủ 550ms -> hủy giữ ngay lập tức
                         if (Math.hypot(dx.toDouble(), dy.toDouble()) > touchSlop) {
                             hasCancelledHold = true
                             taskHandler.removeCallbacks(longPressRunnable)
                         }
 
-                        // Nhận diện vuốt ngang: khóa cứng vào isSwiping
                         if (!isSwiping && Math.abs(dx) > touchSlop && Math.abs(dx) > Math.abs(dy) * 1.5f) {
                             val allowRight = !isCompleted && !isCancelled
                             val allowLeft = !isCancelled
@@ -3019,7 +3202,6 @@ class FloatingBubbleService : Service() {
                             false
                         }
                     } else {
-                        // Đang trong chế độ Viên thuốc theo ngón tay
                         v.parent?.requestDisallowInterceptTouchEvent(true)
                         updatePillState(event.rawX, event.rawY)
                         true
@@ -3027,6 +3209,7 @@ class FloatingBubbleService : Service() {
                 }
                 MotionEvent.ACTION_UP -> {
                     taskHandler.removeCallbacks(longPressRunnable)
+                    isUserInteractingWithTask = false
 
                     if (isPillActive) {
                         isPillActive = false
@@ -3035,10 +3218,9 @@ class FloatingBubbleService : Service() {
                         removePillSafely()
 
                         if (isOutside) {
-                            // THẢ NGOÀI VÙNG THẺ: Mở app tương ứng của nhiệm vụ (Zalo, Telegram, Messenger)
                             ChatIntentManager.openAppForTask(
                                 context = this@FloatingBubbleService,
-                                sourceText = task.source,
+                                sourceText = curTask.source,
                                 taskTitle = cleanTitle
                             )
                             val root = bubbleRootView
@@ -3046,7 +3228,6 @@ class FloatingBubbleService : Service() {
                                 collapseExpandedCard(root)
                             }
                         } else {
-                            // THẢ TRONG VÙNG THẺ: Mở chi tiết đặt báo thức / ghi chú
                             if (isCancelled) {
                                 showFloatingConfirmationDialog(
                                     title = "Khôi phục nhiệm vụ?",
@@ -3054,15 +3235,16 @@ class FloatingBubbleService : Service() {
                                     confirmText = "Khôi phục",
                                     confirmColor = Color.parseColor("#10B981")
                                 ) {
-                                    SystemAlarmHelper.restoreCancelledTask(this@FloatingBubbleService, cleanTitle, alarmId)
-                                    val restoredAlarm = (existingAlarm ?: SmartAlarmEntity(
-                                        alarmId = alarmId,
+                                    SystemAlarmHelper.restoreCancelledTask(this@FloatingBubbleService, cleanTitle, curAlarmId)
+                                    val restoredAlarm = (curExisting ?: SmartAlarmEntity(
+                                        alarmId = curAlarmId,
                                         taskTitle = cleanTitle,
                                         targetTimeMillis = System.currentTimeMillis(),
                                         targetDateLabel = proposedTime,
                                         status = SmartAlarmStatus.PROPOSED
                                     )).copy(status = SmartAlarmStatus.PROPOSED, updatedAt = System.currentTimeMillis())
-                                    alarmDbMap = alarmDbMap + (alarmId to restoredAlarm) + (generatedAlarmId to restoredAlarm)
+                                    alarmDbMap = alarmDbMap + (curAlarmId to restoredAlarm) + (generatedAlarmId to restoredAlarm)
+                                    alarmNormalizedTitleMap = alarmNormalizedTitleMap + (SystemAlarmHelper.normalizeTitle(cleanTitle) to restoredAlarm)
                                     Toast.makeText(this@FloatingBubbleService, "Đã khôi phục nhiệm vụ thành công!", Toast.LENGTH_SHORT).show()
                                     currentTasksBoardLayout?.post { refreshTasksBoardOnly() }
                                 }
@@ -3073,21 +3255,26 @@ class FloatingBubbleService : Service() {
                                     confirmText = "Xác nhận",
                                     confirmColor = Color.WHITE
                                 ) {
-                                    SystemAlarmHelper.uncompleteTask(this@FloatingBubbleService, cleanTitle, alarmId)
-                                    val uncompletedAlarm = (existingAlarm ?: SmartAlarmEntity(
-                                        alarmId = alarmId,
+                                    SystemAlarmHelper.uncompleteTask(this@FloatingBubbleService, cleanTitle, curAlarmId)
+                                    val uncompletedAlarm = (curExisting ?: SmartAlarmEntity(
+                                        alarmId = curAlarmId,
                                         taskTitle = cleanTitle,
                                         targetTimeMillis = System.currentTimeMillis(),
                                         targetDateLabel = proposedTime,
                                         status = SmartAlarmStatus.PROPOSED
                                     )).copy(status = SmartAlarmStatus.PROPOSED, updatedAt = System.currentTimeMillis())
-                                    alarmDbMap = alarmDbMap + (alarmId to uncompletedAlarm) + (generatedAlarmId to uncompletedAlarm)
+                                    alarmDbMap = alarmDbMap + (curAlarmId to uncompletedAlarm) + (generatedAlarmId to uncompletedAlarm)
+                                    alarmNormalizedTitleMap = alarmNormalizedTitleMap + (SystemAlarmHelper.normalizeTitle(cleanTitle) to uncompletedAlarm)
                                     Toast.makeText(this@FloatingBubbleService, "Đã đưa về trạng thái chưa hoàn thành!", Toast.LENGTH_SHORT).show()
                                     currentTasksBoardLayout?.post { refreshTasksBoardOnly() }
                                 }
                             } else {
-                                showFloatingTaskConfigDialog(task, alarmId, existingAlarm)
+                                showFloatingTaskConfigDialog(curTask, curAlarmId, curExisting)
                             }
+                        }
+                        if (hasPendingTaskBoardUpdate) {
+                            hasPendingTaskBoardUpdate = false
+                            refreshTasksBoardOnly()
                         }
                         return@setOnTouchListener true
                     }
@@ -3097,50 +3284,64 @@ class FloatingBubbleService : Service() {
                         val dx = event.rawX - startX
 
                         if (dx > swipeThreshold && !isCompleted && !isCancelled) {
-                            // Vuốt phải vượt 72dp -> Hoàn thành
                             isSwipeAnimating = true
                             dismissedTaskTitles.add(cleanTitle)
                             v.animate().translationX(v.width.toFloat()).setDuration(160).withEndAction {
-                                SystemAlarmHelper.markTaskCompleted(this@FloatingBubbleService, cleanTitle, alarmId)
-                                val completedAlarm = (existingAlarm ?: SmartAlarmEntity(
-                                    alarmId = alarmId,
+                                SystemAlarmHelper.markTaskCompleted(this@FloatingBubbleService, cleanTitle, curAlarmId)
+                                val completedAlarm = (curExisting ?: SmartAlarmEntity(
+                                    alarmId = curAlarmId,
                                     taskTitle = cleanTitle,
                                     targetTimeMillis = System.currentTimeMillis(),
                                     targetDateLabel = "Đã xong",
                                     status = SmartAlarmStatus.COMPLETED
                                 )).copy(status = SmartAlarmStatus.COMPLETED, updatedAt = System.currentTimeMillis())
-                                alarmDbMap = alarmDbMap + (alarmId to completedAlarm) + (generatedAlarmId to completedAlarm)
+                                alarmDbMap = alarmDbMap + (curAlarmId to completedAlarm) + (generatedAlarmId to completedAlarm)
+                                alarmNormalizedTitleMap = alarmNormalizedTitleMap + (SystemAlarmHelper.normalizeTitle(cleanTitle) to completedAlarm)
                                 Toast.makeText(this@FloatingBubbleService, "✓ Đã hoàn thành: ${cleanTitle.take(24)}...", Toast.LENGTH_SHORT).show()
-
+                                isSwipeAnimating = false
+                                isUserInteractingWithTask = false
+                                if (hasPendingTaskBoardUpdate) {
+                                    hasPendingTaskBoardUpdate = false
+                                    refreshTasksBoardOnly()
+                                }
                                 collapseAndRemoveRow()
                             }.start()
                         } else if (dx < -swipeThreshold && !isCancelled) {
-                            // Vuốt trái vượt 72dp -> Hủy việc
                             isSwipeAnimating = true
                             dismissedTaskTitles.add(cleanTitle)
                             v.animate().translationX(-v.width.toFloat()).setDuration(160).withEndAction {
-                                SystemAlarmHelper.markTaskCancelled(this@FloatingBubbleService, cleanTitle, alarmId)
-                                val cancelledAlarm = (existingAlarm ?: SmartAlarmEntity(
-                                    alarmId = alarmId,
+                                SystemAlarmHelper.markTaskCancelled(this@FloatingBubbleService, cleanTitle, curAlarmId)
+                                val cancelledAlarm = (curExisting ?: SmartAlarmEntity(
+                                    alarmId = curAlarmId,
                                     taskTitle = cleanTitle,
                                     targetTimeMillis = System.currentTimeMillis(),
                                     targetDateLabel = "Đã hủy",
                                     status = SmartAlarmStatus.CANCELLED
                                 )).copy(status = SmartAlarmStatus.CANCELLED, updatedAt = System.currentTimeMillis())
-                                alarmDbMap = alarmDbMap + (alarmId to cancelledAlarm) + (generatedAlarmId to cancelledAlarm)
+                                alarmDbMap = alarmDbMap + (curAlarmId to cancelledAlarm) + (generatedAlarmId to cancelledAlarm)
+                                alarmNormalizedTitleMap = alarmNormalizedTitleMap + (SystemAlarmHelper.normalizeTitle(cleanTitle) to cancelledAlarm)
                                 Toast.makeText(this@FloatingBubbleService, "✕ Đã hủy: ${cleanTitle.take(24)}...", Toast.LENGTH_SHORT).show()
-
+                                isSwipeAnimating = false
+                                isUserInteractingWithTask = false
+                                if (hasPendingTaskBoardUpdate) {
+                                    hasPendingTaskBoardUpdate = false
+                                    refreshTasksBoardOnly()
+                                }
                                 collapseAndRemoveRow()
                             }.start()
                         } else {
                             v.animate().translationX(0f).setDuration(180).withEndAction {
                                 leftSwipeAction.visibility = View.GONE
                                 rightSwipeAction.visibility = View.GONE
+                                isUserInteractingWithTask = false
+                                if (hasPendingTaskBoardUpdate) {
+                                    hasPendingTaskBoardUpdate = false
+                                    refreshTasksBoardOnly()
+                                }
                             }.start()
                         }
                         true
                     } else {
-                        // Chạm nhẹ nhanh (< 550ms, không kéo vuốt)
                         val dx = Math.abs(event.rawX - startX)
                         val dy = Math.abs(event.rawY - startY)
                         if (dx < touchSlop && dy < touchSlop) {
@@ -3149,14 +3350,19 @@ class FloatingBubbleService : Service() {
                             } else if (isCompleted) {
                                 Toast.makeText(this@FloatingBubbleService, "Nhấn giữ để đưa về trạng thái chưa hoàn thành", Toast.LENGTH_SHORT).show()
                             } else {
-                                alarmPill?.performClick()
+                                holder.alarmPill?.performClick()
                             }
+                        }
+                        if (hasPendingTaskBoardUpdate) {
+                            hasPendingTaskBoardUpdate = false
+                            refreshTasksBoardOnly()
                         }
                         true
                     }
                 }
                 MotionEvent.ACTION_CANCEL -> {
                     taskHandler.removeCallbacks(longPressRunnable)
+                    isUserInteractingWithTask = false
                     if (isPillActive) {
                         isPillActive = false
                         removePillSafely()
@@ -3169,6 +3375,10 @@ class FloatingBubbleService : Service() {
                         }.start()
                     }
                     isSwipeAnimating = false
+                    if (hasPendingTaskBoardUpdate) {
+                        hasPendingTaskBoardUpdate = false
+                        refreshTasksBoardOnly()
+                    }
                     false
                 }
                 else -> false
@@ -3723,6 +3933,8 @@ class FloatingBubbleService : Service() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        prewarmedCardShell = null
+        prewarmedCardShell = null
         val dm = resources.displayMetrics
         val screenWidth = dm.widthPixels
         val screenHeight = dm.heightPixels

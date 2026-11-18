@@ -68,12 +68,22 @@ object SystemAlarmHelper {
     const val CANCELLED_RETENTION_MS = 48L * 3600L * 1000L
     private val scope = CoroutineScope(Dispatchers.IO)
 
+    private val PREFIX_BULLET_NUMBER_REGEX = Regex("""^[\[\(\-•*\d.]+\s*""")
+    private val NON_ALPHANUMERIC_VI_REGEX = Regex("""[^a-z0-9àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]""")
+    private val TIME_COLON_REGEX = Regex("""(?:^|\D)(\d{1,2})[:.](\d{2})(?:\D|$)""")
+    private val TIME_H_REGEX = Regex("""(?:^|\D)(\d{1,2})\s*h\s*(\d{2})?(?:\D|$)""")
+    private val TIME_GIO_REGEX = Regex("""(?:^|\D)(\d{1,2})\s*(?:giờ|g)\s*(\d{2})?(?:\D|$)""")
+    private val DATE_SLASH_REGEX = Regex("""(?:ngày\s*)?(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?""")
+    private val DATE_TEXT_REGEX = Regex("""(?:ngày\s*)?(\d{1,2})\s*tháng\s*(\d{1,2})(?:\s*năm\s*(\d{4}))?""")
+
+    fun cleanTaskTitle(title: String): String = title.replace(PREFIX_BULLET_NUMBER_REGEX, "").trim()
+
     /**
      * Generates a Deterministic ID for a task and its target date/time.
      * Guaranteed to produce the exact same ID across multiple AI chat sessions.
      */
     fun generateAlarmId(taskTitle: String, targetCalendar: Calendar): String {
-        val cleanTitle = taskTitle.lowercase().replace(Regex("""[^a-z0-9àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]"""), "").take(25)
+        val cleanTitle = taskTitle.lowercase().replace(NON_ALPHANUMERIC_VI_REGEX, "").take(25)
         val dateKey = String.format(
             Locale.US,
             "%04d%02d%02d_%02d%02d",
@@ -92,8 +102,8 @@ object SystemAlarmHelper {
      */
     fun normalizeTitle(title: String): String {
         return title.lowercase()
-            .replace(Regex("""^[\[\(\-•*\d.]+\s*"""), "")
-            .replace(Regex("""[^a-z0-9àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]"""), "")
+            .replace(PREFIX_BULLET_NUMBER_REGEX, "")
+            .replace(NON_ALPHANUMERIC_VI_REGEX, "")
             .trim()
     }
 
@@ -143,6 +153,81 @@ object SystemAlarmHelper {
     }
 
     /**
+     * Builds an O(1) normalized title lookup map from a collection of SmartAlarmEntity.
+     * Selects active alarms first, or the most recently updated status (CANCELLED, COMPLETED, PROPOSED).
+     */
+    fun buildNormalizedTitleMap(
+        alarms: Collection<SmartAlarmEntity>,
+        now: Long = System.currentTimeMillis()
+    ): Map<String, SmartAlarmEntity> {
+        if (alarms.isEmpty()) return emptyMap()
+        val cutoff = now - CANCELLED_RETENTION_MS
+        val grouped = alarms.groupBy { normalizeTitle(it.taskTitle) }
+        val result = HashMap<String, SmartAlarmEntity>(grouped.size)
+        for ((normTitle, list) in grouped) {
+            if (normTitle.isEmpty()) continue
+            val active = list.filter { it.status == SmartAlarmStatus.ACTIVE && it.targetTimeMillis >= now - 3600_000L }
+                .maxByOrNull { it.updatedAt }
+            val winner = active ?: list.filter {
+                if (it.status == SmartAlarmStatus.CANCELLED) it.updatedAt >= cutoff
+                else it.targetTimeMillis >= cutoff || it.updatedAt >= cutoff
+            }.maxByOrNull { it.updatedAt }
+            if (winner != null) {
+                result[normTitle] = winner
+            }
+        }
+        return result
+    }
+
+    /**
+     * O(1) matching against pre-computed normalized title map with fast prefix fallback.
+     */
+    fun findMatchingAlarmFast(
+        taskTitle: String,
+        normalizedMap: Map<String, SmartAlarmEntity>
+    ): SmartAlarmEntity? {
+        val norm = normalizeTitle(taskTitle)
+        if (norm.isEmpty()) return null
+        normalizedMap[norm]?.let { return it }
+        val normLen = norm.length
+        if (normLen >= 8) {
+            for ((key, entity) in normalizedMap) {
+                val keyLen = key.length
+                val minLen = minOf(normLen, keyLen)
+                val maxLen = maxOf(normLen, keyLen)
+                if (minLen >= 8 && (maxLen - minLen) <= 4) {
+                    if (norm.startsWith(key) || key.startsWith(norm)) {
+                        return entity
+                    }
+                }
+            }
+        }
+        return null
+    }
+
+    fun isTaskCompletedFast(taskTitle: String, normalizedMap: Map<String, SmartAlarmEntity>): Boolean {
+        val matching = findMatchingAlarmFast(taskTitle, normalizedMap)
+        return matching?.status == SmartAlarmStatus.COMPLETED
+    }
+
+    fun isTaskCancelledFast(taskTitle: String, normalizedMap: Map<String, SmartAlarmEntity>): Boolean {
+        val matching = findMatchingAlarmFast(taskTitle, normalizedMap)
+        return matching?.status == SmartAlarmStatus.CANCELLED
+    }
+
+    fun filterOutCancelledFast(
+        parsed: ParsedSummary,
+        normalizedMap: Map<String, SmartAlarmEntity>
+    ): ParsedSummary {
+        if (normalizedMap.isEmpty()) return parsed
+        return parsed.copy(
+            tasksToDo = parsed.tasksToDo.filterNot { isTaskCancelledFast(it.title, normalizedMap) },
+            tasksDone = parsed.tasksDone.filterNot { isTaskCancelledFast(it.title, normalizedMap) },
+            tasksPlanned = parsed.tasksPlanned.filterNot { isTaskCancelledFast(it.title, normalizedMap) }
+        )
+    }
+
+    /**
      * Lọc giữ các việc đã hủy trong vòng 48 giờ kể từ lúc người dùng bấm hủy.
      */
     fun filterRecentCancelled(
@@ -189,7 +274,7 @@ object SystemAlarmHelper {
         val isAm = text.contains("sáng") || text.contains("am")
 
         // 1. Colon pattern: "15:30", "9:15"
-        val colonMatch = Regex("""(?:^|\D)(\d{1,2})[:.](\d{2})(?:\D|$)""").find(text)
+        val colonMatch = TIME_COLON_REGEX.find(text)
         if (colonMatch != null) {
             val (hStr, mStr) = colonMatch.destructured
             var h = hStr.toIntOrNull() ?: return null
@@ -200,7 +285,7 @@ object SystemAlarmHelper {
         }
 
         // 2. 'h' pattern: "15h30", "15h", "9h45"
-        val hMatch = Regex("""(?:^|\D)(\d{1,2})\s*h\s*(\d{2})?(?:\D|$)""").find(text)
+        val hMatch = TIME_H_REGEX.find(text)
         if (hMatch != null) {
             val hStr = hMatch.groupValues[1]
             val mStr = hMatch.groupValues.getOrNull(2).orEmpty()
@@ -212,7 +297,7 @@ object SystemAlarmHelper {
         }
 
         // 3. "giờ" pattern: "15 giờ 30", "3 giờ chiều"
-        val gioMatch = Regex("""(?:^|\D)(\d{1,2})\s*(?:giờ|g)\s*(\d{2})?(?:\D|$)""").find(text)
+        val gioMatch = TIME_GIO_REGEX.find(text)
         if (gioMatch != null) {
             val hStr = gioMatch.groupValues[1]
             val mStr = gioMatch.groupValues.getOrNull(2).orEmpty()
@@ -263,8 +348,8 @@ object SystemAlarmHelper {
         }
 
         // A. Specific Date: "dd/MM/yyyy", "dd/MM", "dd-MM"
-        val slashDateMatch = Regex("""(?:ngày\s*)?(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?""").find(lower)
-        val textDateMatch = Regex("""(?:ngày\s*)?(\d{1,2})\s*tháng\s*(\d{1,2})(?:\s*năm\s*(\d{4}))?""").find(lower)
+        val slashDateMatch = DATE_SLASH_REGEX.find(lower)
+        val textDateMatch = DATE_TEXT_REGEX.find(lower)
 
         var matchedSpecificDate = false
         val dateMatch = slashDateMatch ?: textDateMatch
@@ -399,7 +484,7 @@ object SystemAlarmHelper {
         mode: AlarmCascadeMode,
         intervalMinutes: Int = 15
     ): List<AlarmScheduleItem> {
-        val cleanTitle = taskTitle.replace(Regex("""^[\[\(\-•*\d.]+\s*"""), "").trim()
+        val cleanTitle = cleanTaskTitle(taskTitle)
         val safeInterval = intervalMinutes.coerceIn(1, 120)
 
         val offsets = when (mode) {
@@ -483,7 +568,7 @@ object SystemAlarmHelper {
         skipUi: Boolean = true
     ): Result<List<AlarmScheduleItem>> {
         return try {
-            val cleanTitle = taskTitle.replace(Regex("""^[\[\(\-•*\d.]+\s*"""), "").trim()
+            val cleanTitle = cleanTaskTitle(taskTitle)
             val schedules = calculateAlarmSchedules(cleanTitle, targetCalendar, mode, intervalMinutes)
             val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
             val nowMillis = System.currentTimeMillis()
@@ -615,7 +700,7 @@ object SystemAlarmHelper {
      * 4. Dispatches best-effort dismissal to native Clock apps for any legacy entries.
      */
     fun cancelSmartAlarms(context: Context, taskTitle: String, alarmId: String? = null): Boolean {
-        val cleanTitle = taskTitle.replace(Regex("""^[\[\(\-•*\d.]+\s*"""), "").trim()
+        val cleanTitle = cleanTaskTitle(taskTitle)
 
         // Stop any currently playing ringtone audio immediately
         try {
@@ -755,7 +840,7 @@ object SystemAlarmHelper {
      * Tuyệt đối KHÔNG thay đổi trạng thái trong Database (không ghi đè PROPOSED).
      */
     fun disarmAlarmHardwareOnly(context: Context, taskTitle: String, alarmId: String? = null) {
-        val cleanTitle = taskTitle.replace(Regex("""^[\[\(\-•*\d.]+\s*"""), "").trim()
+        val cleanTitle = cleanTaskTitle(taskTitle)
         try {
             com.orca.orcaauto.receiver.AlarmRingtonePlayer.stop()
         } catch (_: Exception) {}
@@ -769,7 +854,7 @@ object SystemAlarmHelper {
      * Marks a task as COMPLETED in DB and clears its active alarm hardware triggers.
      */
     fun markTaskCompleted(context: Context, taskTitle: String, alarmId: String? = null) {
-        val cleanTitle = taskTitle.replace(Regex("""^[\[\(\-•*\d.]+\s*"""), "").trim()
+        val cleanTitle = cleanTaskTitle(taskTitle)
         disarmAlarmHardwareOnly(context, cleanTitle, alarmId)
         scope.launch {
             try {
@@ -821,7 +906,7 @@ object SystemAlarmHelper {
      * Marks a task as CANCELLED in DB and ensures AI will never regenerate it.
      */
     fun markTaskCancelled(context: Context, taskTitle: String, alarmId: String? = null) {
-        val cleanTitle = taskTitle.replace(Regex("""^[\[\(\-•*\d.]+\s*"""), "").trim()
+        val cleanTitle = cleanTaskTitle(taskTitle)
         disarmAlarmHardwareOnly(context, cleanTitle, alarmId)
         scope.launch {
             try {
@@ -874,7 +959,7 @@ object SystemAlarmHelper {
      * Resets status to PROPOSED in DB so the task reappears in active tasks and floating chat bubble.
      */
     fun restoreCancelledTask(context: Context, taskTitle: String, alarmId: String? = null) {
-        val cleanTitle = taskTitle.replace(Regex("""^[\[\(\-•*\d.]+\s*"""), "").trim()
+        val cleanTitle = cleanTaskTitle(taskTitle)
         scope.launch {
             try {
                 val dao = AppDatabase.getDatabase(context).smartAlarmDao()
@@ -895,7 +980,7 @@ object SystemAlarmHelper {
      * Allows user to continue tracking tasks they accidentally marked complete.
      */
     fun uncompleteTask(context: Context, taskTitle: String, alarmId: String? = null) {
-        val cleanTitle = taskTitle.replace(Regex("""^[\[\(\-•*\d.]+\s*"""), "").trim()
+        val cleanTitle = cleanTaskTitle(taskTitle)
         scope.launch {
             try {
                 val dao = AppDatabase.getDatabase(context).smartAlarmDao()
@@ -941,7 +1026,7 @@ object SystemAlarmHelper {
         targetCalendar: Calendar
     ) {
         try {
-            val cleanTitle = taskTitle.replace(Regex("""^[\[\(\-•*\d.]+\s*"""), "").trim()
+            val cleanTitle = cleanTaskTitle(taskTitle)
             val startMillis = targetCalendar.timeInMillis
             val endMillis = startMillis + (30 * 60 * 1000L) // 30 mins
 

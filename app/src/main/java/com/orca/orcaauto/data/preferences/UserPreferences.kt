@@ -86,6 +86,9 @@ class UserPreferences private constructor(context: Context) {
     private val _filterRulesFlow = MutableStateFlow(loadAllFilterRules())
     val filterRulesFlow: StateFlow<Map<String, AppFilterRule>> = _filterRulesFlow.asStateFlow()
 
+    @Volatile private var cachedSessions: List<SummarySessionConfig>? = null
+    @Volatile private var cachedSelectedSessionId: String? = null
+
     private val _sessionsFlow = MutableStateFlow(loadSessions())
     val sessionsFlow: StateFlow<List<SummarySessionConfig>> = _sessionsFlow.asStateFlow()
 
@@ -615,6 +618,7 @@ class UserPreferences private constructor(context: Context) {
     }
 
     fun loadSessions(): List<SummarySessionConfig> {
+        cachedSessions?.let { return it }
         val json = try {
             prefs.getString(KEY_SUMMARY_SESSIONS, null)
         } catch (e: Throwable) {
@@ -653,10 +657,12 @@ class UserPreferences private constructor(context: Context) {
             )
         }
 
-        return result.sortedWith(
+        val sorted = result.sortedWith(
             compareByDescending<SummarySessionConfig> { it.isMain }
                 .thenBy { it.createdAt }
         )
+        cachedSessions = sorted
+        return sorted
     }
 
     fun saveSessions(sessions: List<SummarySessionConfig>) {
@@ -670,8 +676,9 @@ class UserPreferences private constructor(context: Context) {
                 compareByDescending<SummarySessionConfig> { it.isMain }
                     .thenBy { it.createdAt }
             )
-            prefs.edit().putString(KEY_SUMMARY_SESSIONS, gson.toJson(sorted)).apply()
+            cachedSessions = sorted
             _sessionsFlow.value = sorted
+            prefs.edit().putString(KEY_SUMMARY_SESSIONS, gson.toJson(sorted)).apply()
         } catch (e: Throwable) {
             android.util.Log.e("UserPreferences", "Lỗi saveSessions: ${e.message}")
         }
@@ -702,15 +709,19 @@ class UserPreferences private constructor(context: Context) {
     }
 
     fun getSelectedSessionId(): String {
-        return try {
+        cachedSelectedSessionId?.let { return it }
+        val id = try {
             prefs.getString(KEY_SELECTED_SESSION_ID, SummarySessionConfig.MAIN_SESSION_ID)
                 ?: SummarySessionConfig.MAIN_SESSION_ID
         } catch (e: Throwable) {
             SummarySessionConfig.MAIN_SESSION_ID
         }
+        cachedSelectedSessionId = id
+        return id
     }
 
     fun setSelectedSessionId(sessionId: String) {
+        cachedSelectedSessionId = sessionId
         try {
             prefs.edit().putString(KEY_SELECTED_SESSION_ID, sessionId).apply()
             _selectedSessionIdFlow.value = sessionId

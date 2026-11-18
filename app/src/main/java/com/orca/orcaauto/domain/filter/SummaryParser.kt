@@ -45,6 +45,11 @@ object ScratchpadExtractor {
         options = setOf(RegexOption.IGNORE_CASE)
     )
 
+    private val STRIP_TAGS_REGEX = Regex("(?i)</?(answer|response|summary|output|scratchpad|think|thought|reasoning)>")
+    private val CODE_BLOCK_OPEN_REGEX = Regex("(?m)^```[a-zA-Z]*\\s*$")
+    private val CODE_BLOCK_CLOSE_REGEX = Regex("(?m)^```\\s*$")
+    private val INTRO_BOILERPLATE_REGEX = Regex("(?i)^(dưới đây là|here is the|bản tóm tắt|đây là bản tóm tắt).*?:\\s*\\n+")
+
     fun extractReasoning(rawText: String): String? {
         val scratchMatch = SCRATCHPAD_REGEX.find(rawText)
         val scratchContent = scratchMatch?.groups?.get(1)?.value?.trim()
@@ -64,26 +69,47 @@ object ScratchpadExtractor {
         return rawText
             .replace(SCRATCHPAD_REGEX, "")
             .replace(NATIVE_THINK_REGEX, "")
-            .replace(Regex("(?i)</?(answer|response|summary|output|scratchpad|think|thought|reasoning)>"), "")
-            .replace(Regex("(?m)^```[a-zA-Z]*\\s*$"), "")
-            .replace(Regex("(?m)^```\\s*$"), "")
-            .replace(Regex("(?i)^(dưới đây là|here is the|bản tóm tắt|đây là bản tóm tắt).*?:\\s*\\n+"), "")
+            .replace(STRIP_TAGS_REGEX, "")
+            .replace(CODE_BLOCK_OPEN_REGEX, "")
+            .replace(CODE_BLOCK_CLOSE_REGEX, "")
+            .replace(INTRO_BOILERPLATE_REGEX, "")
             .trim()
     }
 }
 
 object SummaryParser {
 
+    private val MARKDOWN_TAGS_REGEX = Regex("(?i)</?(answer|response|summary|output|think|thought|scratchpad|reasoning)>")
+    private val BOLD_STARS_REGEX = Regex("\\*\\*")
+    private val UNDERLINE_REGEX = Regex("__")
+    private val BACKTICK_REGEX = Regex("`")
+    private val QUESTION_BULLET_START_REGEX = Regex("^\\?\\s*")
+    private val QUESTION_BULLET_MID_REGEX = Regex("(?<=\\s)\\?\\s*")
+    private val BRACKET_STRIP_REGEX = Regex("\\[(.*?)\\]")
+
+    private val ADVICE_BULLET_PREFIX_REGEX = Regex("""^([\\-•*]\s*|\d+\.\s*)""")
+    private val ADVICE_BOLD_HEADER_REGEX = Regex("""^\*\*([^*]+)\*\*:?\s*""")
+    private val ADVICE_BRACKETED_HEADER_REGEX = Regex("""^\[[^\]]*\]:?\s*""")
+    private val ADVICE_PARENTHESIZED_HEADER_REGEX = Regex("""^\([^)]*\):?\s*""")
+    private val ADVICE_PERSONA_LEFTOVERS_REGEX = Regex("""^(?i)[a-zA-ZÀ-ỹ\s\-&]+[\])]:?\s*""")
+    private val ADVICE_LABEL_PREFIXES_REGEX = Regex("""^(?i)(lời nhắn & điểm lưu ý|lời nhắn nhẹ nhàng|lời nhắn|lời khuyên|lưu ý tinh tế|điểm cần chú ý|tóm tắt trọng tâm|ghi chú nhanh|lưu ý nhanh|chú ý|tóm tắt)[:\-–]+\s*""")
+    private val ADVICE_HEADER_SYMBOLS_REGEX = Regex("""^[#:>]+""")
+
+    private val NUMBERED_LIST_ITEM_REGEX = Regex("""^\d+\..*""")
+
+    private val TASK_LINE_PREFIX_REGEX = Regex("^[\\-•*\\d.]+\\s*")
+    private val TASK_LINE_CHECKBOX_REGEX = Regex("^\\[[ xX]?\\]\\s*")
+
     fun cleanMarkdown(text: String): String {
         return text
-            .replace(Regex("(?i)</?(answer|response|summary|output|think|thought|scratchpad|reasoning)>"), "")
-            .replace(Regex("\\*\\*"), "")
-            .replace(Regex("__"), "")
-            .replace(Regex("`"), "")
+            .replace(MARKDOWN_TAGS_REGEX, "")
+            .replace(BOLD_STARS_REGEX, "")
+            .replace(UNDERLINE_REGEX, "")
+            .replace(BACKTICK_REGEX, "")
             // Only clean question marks if they were used as bullets or stray formatting with leading space
-            .replace(Regex("^\\?\\s*"), "")
-            .replace(Regex("(?<=\\s)\\?\\s*"), "")
-            .replace(Regex("\\[(.*?)\\]"), "$1")
+            .replace(QUESTION_BULLET_START_REGEX, "")
+            .replace(QUESTION_BULLET_MID_REGEX, "")
+            .replace(BRACKET_STRIP_REGEX, "$1")
             .trim()
     }
 
@@ -92,28 +118,28 @@ object SummaryParser {
         if (trimmed.isBlank()) return ""
 
         // Preserve bullet (- , * , • ) or numbered list (1. , 2. ) prefix
-        val bulletMatch = Regex("""^([\\-•*]\s*|\d+\.\s*)""").find(trimmed)
+        val bulletMatch = ADVICE_BULLET_PREFIX_REGEX.find(trimmed)
         val prefix = bulletMatch?.value ?: ""
         var rest = trimmed.substring(prefix.length).trim()
 
         // Strip markdown bold wrappers around header label e.g. **Lời khuyên**: or **Lời Nhắn**:
-        rest = rest.replace(Regex("""^\*\*([^*]+)\*\*:?\s*"""), "$1: ")
+        rest = rest.replace(ADVICE_BOLD_HEADER_REGEX, "$1: ")
 
         // Strip bracketed headers e.g. [Nhẹ Nhàng], [Lời Nhắn], [Persona]
-        rest = rest.replace(Regex("""^\[[^\]]*\]:?\s*"""), "")
-        rest = rest.replace(Regex("""^\([^)]*\):?\s*"""), "")
+        rest = rest.replace(ADVICE_BRACKETED_HEADER_REGEX, "")
+        rest = rest.replace(ADVICE_PARENTHESIZED_HEADER_REGEX, "")
 
         // Strip trailing bracket persona leftovers e.g. "Nhẹ Nhàng]:", "Cố Vấn]:"
-        rest = rest.replace(Regex("""^(?i)[a-zA-ZÀ-ỹ\s\-&]+[\])]:?\s*"""), "")
+        rest = rest.replace(ADVICE_PERSONA_LEFTOVERS_REGEX, "")
 
         // Strip label prefixes e.g. "Lời khuyên:", "Lời nhắn:", "Lưu ý tinh tế:"
         rest = rest.replace(
-            Regex("""^(?i)(lời nhắn & điểm lưu ý|lời nhắn nhẹ nhàng|lời nhắn|lời khuyên|lưu ý tinh tế|điểm cần chú ý|tóm tắt trọng tâm|ghi chú nhanh|lưu ý nhanh|chú ý|tóm tắt)[:\-–]+\s*"""),
+            ADVICE_LABEL_PREFIXES_REGEX,
             ""
         )
 
         // Strip markdown header symbols like # or > from the beginning of rest
-        rest = rest.replace(Regex("""^[#:>]+"""), "").trim()
+        rest = rest.replace(ADVICE_HEADER_SYMBOLS_REGEX, "").trim()
 
         val cleanedRest = cleanMarkdown(rest)
         if (cleanedRest.isBlank()) return ""
@@ -163,7 +189,7 @@ object SummaryParser {
             val lower = trimmed.lowercase()
             if (trimmed.isBlank()) continue
 
-            val isBullet = trimmed.startsWith("-") || trimmed.startsWith("•") || trimmed.startsWith("*") || trimmed.startsWith("?") || trimmed.matches(Regex("""^\d+\..*"""))
+            val isBullet = trimmed.startsWith("-") || trimmed.startsWith("•") || trimmed.startsWith("*") || trimmed.startsWith("?") || trimmed.matches(NUMBERED_LIST_ITEM_REGEX)
 
             // Section Heading checks (Must not be a bullet item)
             when {
@@ -219,7 +245,7 @@ object SummaryParser {
 
             // Section 2, 3, 4: Tasks parsing
             if (currentSection in 2..4) {
-                if (trimmed.startsWith("-") || trimmed.startsWith("•") || trimmed.startsWith("*") || trimmed.startsWith("[") || trimmed.matches(Regex("""^\d+\..*"""))) {
+                if (trimmed.startsWith("-") || trimmed.startsWith("•") || trimmed.startsWith("*") || trimmed.startsWith("[") || trimmed.matches(NUMBERED_LIST_ITEM_REGEX)) {
                     val taskItem = parseTaskLine(trimmed, when (currentSection) {
                         2 -> TaskStatus.TODO
                         3 -> TaskStatus.DONE
@@ -288,9 +314,9 @@ object SummaryParser {
         val parts = line.split("|").map { it.trim() }
         var rawTitle = parts.getOrNull(0) ?: line
         // Strip bullet / number prefix: "- ", "* ", "1. ", etc.
-        rawTitle = rawTitle.replace(Regex("^[\\-•*\\d.]+\\s*"), "")
+        rawTitle = rawTitle.replace(TASK_LINE_PREFIX_REGEX, "")
         // Strip markdown checkbox: "[ ] ", "[x] ", "[X] ", etc.
-        rawTitle = rawTitle.replace(Regex("^\\[[ xX]?\\]\\s*"), "")
+        rawTitle = rawTitle.replace(TASK_LINE_CHECKBOX_REGEX, "")
         rawTitle = rawTitle.trim()
         val title = cleanMarkdown(rawTitle)
         if (title.isBlank()) return null

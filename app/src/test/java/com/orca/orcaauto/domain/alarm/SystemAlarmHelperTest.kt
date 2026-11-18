@@ -347,4 +347,62 @@ class SystemAlarmHelperTest {
         assertEquals("Gửi báo cáo tuần", speakable.tasksToDo.first().title)
         assertEquals(1, speakable.tasksPlanned.size)
     }
+
+    @Test
+    fun testCleanTaskTitle_stripsPrefixBulletsAndNumbers() {
+        assertEquals("Mua văn phòng phẩm", SystemAlarmHelper.cleanTaskTitle("1. Mua văn phòng phẩm"))
+        assertEquals("Gửi email báo cáo", SystemAlarmHelper.cleanTaskTitle("• Gửi email báo cáo"))
+        assertEquals("Họp dự án", SystemAlarmHelper.cleanTaskTitle("- Họp dự án"))
+        assertEquals("Lên kế hoạch", SystemAlarmHelper.cleanTaskTitle("* Lên kế hoạch"))
+    }
+
+    @Test
+    fun testBuildNormalizedTitleMap_and_findMatchingAlarmFast() {
+        val now = System.currentTimeMillis()
+        val alarm1 = com.orca.orcaauto.data.local.SmartAlarmEntity(
+            alarmId = "ALM_ACTIVE",
+            taskTitle = "Gửi báo cáo doanh thu tuần",
+            targetTimeMillis = now + 1800_000L,
+            targetDateLabel = "15:00 Hôm nay",
+            status = com.orca.orcaauto.data.local.SmartAlarmStatus.ACTIVE,
+            updatedAt = now
+        )
+        val alarm2 = com.orca.orcaauto.data.local.SmartAlarmEntity(
+            alarmId = "ALM_DONE",
+            taskTitle = "Họp ban giám đốc",
+            targetTimeMillis = now - 3600_000L,
+            targetDateLabel = "09:00 Hôm nay",
+            status = com.orca.orcaauto.data.local.SmartAlarmStatus.COMPLETED,
+            updatedAt = now
+        )
+
+        val map = SystemAlarmHelper.buildNormalizedTitleMap(listOf(alarm1, alarm2), now = now)
+        assertEquals(2, map.size)
+
+        // Exact lookup
+        val match1 = SystemAlarmHelper.findMatchingAlarmFast("Gửi báo cáo doanh thu tuần", map)
+        assertNotNull(match1)
+        assertEquals("ALM_ACTIVE", match1?.alarmId)
+
+        // Prefix match fallback with bullet prefix
+        val match2 = SystemAlarmHelper.findMatchingAlarmFast("• Họp ban giám đốc", map)
+        assertNotNull(match2)
+        assertEquals("ALM_DONE", match2?.alarmId)
+        assertTrue(SystemAlarmHelper.isTaskCompletedFast("• Họp ban giám đốc", map))
+
+        // Fast filtering
+        val parsed = com.orca.orcaauto.domain.filter.ParsedSummary(
+            rawCleanText = "raw",
+            conciseAdvice = "",
+            criticalQuestions = emptyList(),
+            tasksToDo = listOf(
+                com.orca.orcaauto.domain.filter.TaskItem(title = "Gửi báo cáo doanh thu tuần"),
+                com.orca.orcaauto.domain.filter.TaskItem(title = "Nhiệm vụ chưa hẹn")
+            ),
+            tasksDone = emptyList(),
+            tasksPlanned = emptyList()
+        )
+        val filtered = SystemAlarmHelper.filterOutCancelledFast(parsed, map)
+        assertEquals(2, filtered.tasksToDo.size)
+    }
 }
