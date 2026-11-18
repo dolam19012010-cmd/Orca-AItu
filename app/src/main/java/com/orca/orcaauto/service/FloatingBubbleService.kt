@@ -1,5 +1,6 @@
 ﻿package com.orca.orcaauto.service
 
+import android.Manifest
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
@@ -11,6 +12,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -34,6 +36,7 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
@@ -44,6 +47,9 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import android.provider.Settings
 import android.os.SystemClock
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import android.text.InputType
 import android.text.Selection
 import android.text.TextWatcher
@@ -77,7 +83,9 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.core.content.ContextCompat
 import com.orca.orcaauto.R
+import com.orca.orcaauto.ui.components.SoundWaveVisualizerView
 import com.orca.orcaauto.data.local.AppDatabase
 import com.orca.orcaauto.data.local.SharedNoteEntity
 import com.orca.orcaauto.data.local.SmartAlarmEntity
@@ -168,6 +176,20 @@ class FloatingBubbleService : Service() {
     private var unreadDotView: View? = null
     private var lastKnownSummaryId: Long? = null
     private var prewarmedCardShell: CardShellHolder? = null
+    private var activeSpeechRecognizer: SpeechRecognizer? = null
+    private var isRecordingVoice: Boolean = false
+    private var cancelActiveVoiceSession: (() -> Unit)? = null
+
+    private fun cleanupVoiceRecording() {
+        try {
+            activeSpeechRecognizer?.cancel()
+            activeSpeechRecognizer?.destroy()
+        } catch (_: Exception) {}
+        activeSpeechRecognizer = null
+        isRecordingVoice = false
+        cancelActiveVoiceSession?.invoke()
+        cancelActiveVoiceSession = null
+    }
 
     private val suppressActionModeCallback = object : ActionMode.Callback {
         override fun onCreateActionMode(mode: ActionMode?, menu: Menu?): Boolean = false
@@ -194,7 +216,10 @@ class FloatingBubbleService : Service() {
         val inputCard: LinearLayout,
         val queryEt: SelectionAwareEditText,
         val sendBtn: TextView,
-        val quickActionBar: View
+        val quickActionBar: View,
+        val thinkingChipRow: LinearLayout? = null,
+        val voiceVisualizerBubble: View? = null,
+        val soundVisualizerView: SoundWaveVisualizerView? = null
     )
 
     private class TaskRowHolder(
@@ -1431,6 +1456,12 @@ class FloatingBubbleService : Service() {
                 shell.quickActionBar.visibility = View.GONE
                 shell.quickActionBar.alpha = 0f
             }
+            shell.voiceVisualizerBubble?.let { vb ->
+                vb.animate().cancel()
+                vb.visibility = View.GONE
+                vb.alpha = 0f
+            }
+            shell.soundVisualizerView?.stopVisualizer()
             val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
             imm?.hideSoftInputFromWindow(shell.queryEt.windowToken, 0)
         } catch (_: Exception) {}
@@ -1448,6 +1479,7 @@ class FloatingBubbleService : Service() {
         dismissedTaskTitles.clear()
         isSwipeAnimating = false
         currentSendBtnState = null
+        cleanupVoiceRecording()
         try {
             com.orca.orcaauto.domain.voice.VoiceBriefingManager.getInstance(this).stop()
         } catch (_: Exception) {}
@@ -1456,6 +1488,11 @@ class FloatingBubbleService : Service() {
         hideDismissTarget(immediate = true)
 
         cleanupEditorHandlesAndToolbar(prewarmedCardShell)
+        prewarmedCardShell?.thinkingChipRow?.let {
+            it.animate().cancel()
+            it.visibility = View.GONE
+            it.alpha = 0f
+        }
 
         val dm = resources.displayMetrics
         val screenWidth = dm.widthPixels
@@ -2046,6 +2083,8 @@ class FloatingBubbleService : Service() {
         val thinkingChipRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            visibility = View.GONE
+            alpha = 0f
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 bottomMargin = dpToPx(6)
             }
@@ -2064,6 +2103,7 @@ class FloatingBubbleService : Service() {
                 textSize = 11f
                 gravity = Gravity.CENTER
                 isSingleLine = true
+                isFocusable = false
                 setPadding(dpToPx(6), dpToPx(4), dpToPx(6), dpToPx(4))
                 layoutParams = LinearLayout.LayoutParams(0, dpToPx(28), 1f).apply {
                     if (index > 0) leftMargin = dpToPx(6)
@@ -2098,6 +2138,41 @@ class FloatingBubbleService : Service() {
             }
         }
 
+        val voiceVisualizerBubble = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            visibility = View.GONE
+            alpha = 0f
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#E618181B"))
+                cornerRadius = dpToPx(18).toFloat()
+                setStroke(dpToPx(1), Color.parseColor("#33FFFFFF"))
+            }
+            setPadding(dpToPx(10), dpToPx(4), dpToPx(12), dpToPx(4))
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dpToPx(36)).apply {
+                bottomMargin = dpToPx(6)
+            }
+        }
+
+        val soundVisualizerView = SoundWaveVisualizerView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(dpToPx(110), dpToPx(24))
+        }
+
+        val cancelHintTv = TextView(this).apply {
+            text = "‹ Trượt sang trái để huỷ"
+            setTextColor(Color.parseColor("#94A3B8"))
+            textSize = 11f
+            gravity = Gravity.CENTER_VERTICAL or Gravity.END
+            isSingleLine = true
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                leftMargin = dpToPx(8)
+            }
+        }
+
+        voiceVisualizerBubble.addView(soundVisualizerView)
+        voiceVisualizerBubble.addView(cancelHintTv)
+        inputCard.addView(voiceVisualizerBubble)
+
         fun showQuickActionBar() {
             if (quickActionScroll.visibility == View.VISIBLE && quickActionScroll.alpha == 1f) return
             quickActionScroll.animate().cancel()
@@ -2127,6 +2202,8 @@ class FloatingBubbleService : Service() {
                 quickActionScroll.visibility = View.GONE
             }
         }
+
+        var updateThinkingChipsVisibility: ((Boolean) -> Unit)? = null
 
         val queryEt = SelectionAwareEditText(this).apply {
             hint = if (isCallingAi) "AI đang xử lý..." else "Nhập lệnh hoặc câu hỏi..."
@@ -2167,12 +2244,53 @@ class FloatingBubbleService : Service() {
             }
 
             setOnFocusChangeListener { _, hasFocus ->
+                updateThinkingChipsVisibility?.invoke(true)
                 if (hasFocus) {
                     scrollView.postDelayed({
                         scrollView.fullScroll(View.FOCUS_DOWN)
                     }, 200L)
                 } else {
                     hideQuickActionBar(animated = false)
+                }
+            }
+        }
+
+        updateThinkingChipsVisibility = { animated ->
+            val shouldShow = FloatingBubbleVoiceHelper.shouldShowThinkingChips(
+                hasFocus = queryEt.hasFocus(),
+                text = queryEt.text
+            )
+            if (shouldShow) {
+                if (!(thinkingChipRow.visibility == View.VISIBLE && thinkingChipRow.alpha == 1f)) {
+                    thinkingChipRow.animate().cancel()
+                    thinkingChipRow.visibility = View.VISIBLE
+                    if (animated) {
+                        thinkingChipRow.animate()
+                            .alpha(1f)
+                            .setDuration(120L)
+                            .setListener(null)
+                            .start()
+                    } else {
+                        thinkingChipRow.alpha = 1f
+                    }
+                }
+            } else {
+                if (thinkingChipRow.visibility != View.GONE) {
+                    thinkingChipRow.animate().cancel()
+                    if (animated) {
+                        thinkingChipRow.animate()
+                            .alpha(0f)
+                            .setDuration(100L)
+                            .setListener(object : AnimatorListenerAdapter() {
+                                override fun onAnimationEnd(animation: Animator) {
+                                    thinkingChipRow.visibility = View.GONE
+                                }
+                            })
+                            .start()
+                    } else {
+                        thinkingChipRow.alpha = 0f
+                        thinkingChipRow.visibility = View.GONE
+                    }
                 }
             }
         }
@@ -2342,6 +2460,7 @@ class FloatingBubbleService : Service() {
 
         fun updateSendBtnState(hasText: Boolean) {
             val btn = sendBtnRef ?: return
+            if (isRecordingVoice) return
             val targetState = when {
                 isCallingAi -> SendBtnState.CALLING_AI
                 hasText -> SendBtnState.HAS_TEXT
@@ -2373,6 +2492,7 @@ class FloatingBubbleService : Service() {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
                 updateSendBtnState(!s.isNullOrBlank())
+                updateThinkingChipsVisibility?.invoke(true)
                 if (queryEt.selectionStart == queryEt.selectionEnd) {
                     hideQuickActionBar(animated = false)
                 }
@@ -2396,7 +2516,6 @@ class FloatingBubbleService : Service() {
                 bottomMargin = dpToPx(1)
             }
             isClickable = !isCallingAi
-            addMicroPressEffect()
         }
         sendBtnRef = sendBtn
         updateSendBtnState(false)
@@ -2409,9 +2528,11 @@ class FloatingBubbleService : Service() {
 
                 val promptToSend = queryText.ifBlank { "Tóm tắt các tin nhắn quan trọng gần đây" }
                 queryEt.setText("")
+                queryEt.clearFocus()
                 queryEt.isEnabled = false
                 queryEt.hint = "AI đang xử lý..."
                 hideQuickActionBar(animated = false)
+                updateThinkingChipsVisibility?.invoke(false)
                 updateSendBtnState(false)
 
                 sendBtnRef?.text = "..."
@@ -2552,16 +2673,299 @@ class FloatingBubbleService : Service() {
                         queryEt.isEnabled = true
                         queryEt.hint = "Nhập lệnh hoặc câu hỏi..."
                         updateSendBtnState(queryEt.text?.isNotBlank() == true)
+                        updateThinkingChipsVisibility?.invoke(false)
                         activeStreamingJob = null
                     }
                 }
             }
         }
 
-        sendBtn.setOnClickListener {
-            if (!isCallingAi) {
-                val q = queryEt.text.toString().trim()
-                executeAiCall(q)
+        var holdRunnable: Runnable? = null
+        var downRawX = 0f
+        var downRawY = 0f
+        var isHoldTriggered = false
+        var isSlideCancelled = false
+        var hasCrossedThreshold = false
+        var initialRecordedText = ""
+        val cancelThresholdPx = dpToPx(50).toFloat()
+        val touchSlopPx = dpToPx(8).toFloat()
+
+        fun cleanupVoiceSession(revertText: Boolean) {
+            holdRunnable?.let { bubbleLifecycleHandler.removeCallbacks(it) }
+            holdRunnable = null
+            try {
+                if (revertText) {
+                    activeSpeechRecognizer?.cancel()
+                } else {
+                    activeSpeechRecognizer?.stopListening()
+                }
+                activeSpeechRecognizer?.destroy()
+            } catch (_: Exception) {}
+            activeSpeechRecognizer = null
+            isRecordingVoice = false
+
+            if (revertText) {
+                queryEt.setText(initialRecordedText)
+                queryEt.setSelection(initialRecordedText.length)
+            }
+
+            soundVisualizerView.stopVisualizer()
+            voiceVisualizerBubble.animate().cancel()
+            voiceVisualizerBubble.animate()
+                .alpha(0f)
+                .scaleX(0.92f)
+                .scaleY(0.92f)
+                .setDuration(120L)
+                .setListener(object : AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: Animator) {
+                        voiceVisualizerBubble.visibility = View.GONE
+                        voiceVisualizerBubble.scaleX = 1f
+                        voiceVisualizerBubble.scaleY = 1f
+                    }
+                })
+                .start()
+
+            sendBtn.animate().scaleX(1.0f).scaleY(1.0f).setDuration(100L).start()
+            currentSendBtnState = null
+            updateSendBtnState(!queryEt.text.isNullOrBlank())
+
+            isHoldTriggered = false
+            isSlideCancelled = false
+            hasCrossedThreshold = false
+        }
+
+        cancelActiveVoiceSession = {
+            cleanupVoiceSession(revertText = true)
+        }
+
+        sendBtn.setOnTouchListener { v, event ->
+            if (isCallingAi) return@setOnTouchListener false
+
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downRawX = event.rawX
+                    downRawY = event.rawY
+                    isHoldTriggered = false
+                    isSlideCancelled = false
+                    hasCrossedThreshold = false
+                    initialRecordedText = queryEt.text.toString()
+
+                    v.animate().scaleX(0.92f).scaleY(0.92f).setDuration(80L).start()
+
+                    holdRunnable?.let { bubbleLifecycleHandler.removeCallbacks(it) }
+                    val r = Runnable {
+                        if (isCallingAi) return@Runnable
+                        isHoldTriggered = true
+
+                        // Check RECORD_AUDIO permission
+                        val hasMic = ContextCompat.checkSelfPermission(
+                            this@FloatingBubbleService,
+                            Manifest.permission.RECORD_AUDIO
+                        ) == PackageManager.PERMISSION_GRANTED
+
+                        if (!hasMic) {
+                            v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(80L).start()
+                            showFloatingConfirmationDialog(
+                                title = "Cần quyền Micro",
+                                message = "Để nhận diện giọng nói tiếng Việt và tự động điền câu lệnh, Orca cần quyền Microphone. Vui lòng cấp quyền trong Cài đặt.",
+                                confirmText = "Mở Cài đặt",
+                                confirmColor = Color.parseColor("#38BDF8")
+                            ) {
+                                try {
+                                    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                        data = Uri.fromParts("package", packageName, null)
+                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                    }
+                                    startActivity(intent)
+                                } catch (_: Exception) {}
+                            }
+                            return@Runnable
+                        }
+
+                        if (!SpeechRecognizer.isRecognitionAvailable(this@FloatingBubbleService)) {
+                            v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(80L).start()
+                            Toast.makeText(this@FloatingBubbleService, "Thiết bị chưa hỗ trợ nhận diện giọng nói", Toast.LENGTH_SHORT).show()
+                            return@Runnable
+                        }
+
+                        // Trigger haptic feedback
+                        sendBtn.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+
+                        // Morph Send button to Mic
+                        sendBtn.text = "🎙"
+                        sendBtn.setTextColor(Color.WHITE)
+                        sendBtn.background = GradientDrawable().apply {
+                            setColor(Color.parseColor("#1E3A5F"))
+                            cornerRadius = dpToPx(18).toFloat()
+                            setStroke(dpToPx(1), Color.parseColor("#38BDF8"))
+                        }
+                        sendBtn.animate().scaleX(1.08f).scaleY(1.08f).setDuration(120L).start()
+
+                        // Reveal voice visualizer bubble
+                        voiceVisualizerBubble.animate().cancel()
+                        voiceVisualizerBubble.visibility = View.VISIBLE
+                        voiceVisualizerBubble.alpha = 0f
+                        voiceVisualizerBubble.scaleX = 0.95f
+                        voiceVisualizerBubble.scaleY = 0.95f
+                        voiceVisualizerBubble.animate()
+                            .alpha(1f)
+                            .scaleX(1f)
+                            .scaleY(1f)
+                            .setDuration(120L)
+                            .setListener(null)
+                            .start()
+
+                        soundVisualizerView.startVisualizer()
+                        soundVisualizerView.setCancelProgress(0f)
+                        cancelHintTv.text = "‹ Trượt sang trái để huỷ"
+                        cancelHintTv.setTextColor(Color.parseColor("#94A3B8"))
+
+                        try {
+                            activeSpeechRecognizer?.cancel()
+                            activeSpeechRecognizer?.destroy()
+                            activeSpeechRecognizer = null
+
+                            val recognizer = SpeechRecognizer.createSpeechRecognizer(this@FloatingBubbleService)
+                            activeSpeechRecognizer = recognizer
+
+                            recognizer.setRecognitionListener(object : RecognitionListener {
+                                override fun onReadyForSpeech(params: Bundle?) {}
+                                override fun onBeginningOfSpeech() {}
+                                override fun onRmsChanged(rmsdB: Float) {
+                                    soundVisualizerView.setRmsDb(rmsdB)
+                                }
+                                override fun onBufferReceived(buffer: ByteArray?) {}
+                                override fun onEndOfSpeech() {}
+                                override fun onError(error: Int) {
+                                    // Speech timeout or error: keep transcribed text
+                                }
+                                override fun onResults(results: Bundle?) {
+                                    if (!isSlideCancelled) {
+                                        val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                                        val text = matches?.firstOrNull()?.trim()
+                                        if (!text.isNullOrEmpty()) {
+                                            val combined = FloatingBubbleVoiceHelper.combineTranscribedText(initialRecordedText, text)
+                                            queryEt.setText(combined)
+                                            queryEt.setSelection(combined.length)
+                                        }
+                                    }
+                                }
+                                override fun onPartialResults(partialResults: Bundle?) {
+                                    if (!isSlideCancelled) {
+                                        val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                                        val text = matches?.firstOrNull()?.trim()
+                                        if (!text.isNullOrEmpty()) {
+                                            val combined = FloatingBubbleVoiceHelper.combineTranscribedText(initialRecordedText, text)
+                                            queryEt.setText(combined)
+                                            queryEt.setSelection(combined.length)
+                                        }
+                                    }
+                                }
+                                override fun onEvent(eventType: Int, params: Bundle?) {}
+                            })
+
+                            val speechIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "vi-VN")
+                                putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "vi-VN")
+                                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+                                putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
+                            }
+                            recognizer.startListening(speechIntent)
+                            isRecordingVoice = true
+                        } catch (e: Exception) {
+                            Log.e("FloatingBubble", "Lỗi SpeechRecognizer: ${e.message}")
+                        }
+                    }
+                    holdRunnable = r
+                    bubbleLifecycleHandler.postDelayed(r, FloatingBubbleVoiceHelper.HOLD_THRESHOLD_MS)
+                    true
+                }
+
+                MotionEvent.ACTION_MOVE -> {
+                    if (!isHoldTriggered) {
+                        val dx = Math.abs(event.rawX - downRawX)
+                        val dy = Math.abs(event.rawY - downRawY)
+                        if (dx > touchSlopPx || dy > touchSlopPx) {
+                            holdRunnable?.let { bubbleLifecycleHandler.removeCallbacks(it) }
+                            holdRunnable = null
+                        }
+                    } else if (isRecordingVoice) {
+                        val dragProgress = FloatingBubbleVoiceHelper.calculateCancelProgress(
+                            downRawX,
+                            event.rawX,
+                            cancelThresholdPx
+                        )
+                        val isExceeded = FloatingBubbleVoiceHelper.isCancelThresholdExceeded(
+                            downRawX,
+                            event.rawX,
+                            cancelThresholdPx
+                        )
+
+                        soundVisualizerView.setCancelProgress(dragProgress)
+
+                        if (FloatingBubbleVoiceHelper.didCrossCancelThreshold(hasCrossedThreshold, isExceeded)) {
+                            hasCrossedThreshold = true
+                            isSlideCancelled = true
+                            sendBtn.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                            voiceVisualizerBubble.animate().scaleX(1.08f).scaleY(1.08f).setDuration(120L).start()
+                            cancelHintTv.text = "✕ Thả để hủy"
+                            cancelHintTv.setTextColor(Color.parseColor("#F87171"))
+                        } else if (FloatingBubbleVoiceHelper.didRevertFromCancel(hasCrossedThreshold, isExceeded)) {
+                            hasCrossedThreshold = false
+                            isSlideCancelled = false
+                            voiceVisualizerBubble.animate().scaleX(1.0f).scaleY(1.0f).setDuration(120L).start()
+                            cancelHintTv.text = "‹ Trượt sang trái để huỷ"
+                            cancelHintTv.setTextColor(Color.parseColor("#94A3B8"))
+                        }
+                    }
+                    true
+                }
+
+                MotionEvent.ACTION_UP -> {
+                    holdRunnable?.let { bubbleLifecycleHandler.removeCallbacks(it) }
+                    holdRunnable = null
+
+                    val action = FloatingBubbleVoiceHelper.resolveTouchAction(
+                        isHoldTriggered = isHoldTriggered,
+                        isSlideCancelled = isSlideCancelled
+                    )
+
+                    when (action) {
+                        FloatingBubbleVoiceHelper.TouchAction.TAP -> {
+                            v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(80L).start()
+                            if (!isCallingAi) {
+                                val q = queryEt.text.toString().trim()
+                                executeAiCall(q)
+                            }
+                        }
+                        FloatingBubbleVoiceHelper.TouchAction.HOLD_RELEASE_CANCEL -> {
+                            sendBtn.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                            cleanupVoiceSession(revertText = true)
+                        }
+                        FloatingBubbleVoiceHelper.TouchAction.HOLD_RELEASE_COMMIT -> {
+                            cleanupVoiceSession(revertText = false)
+                        }
+                        else -> {
+                            cleanupVoiceSession(revertText = false)
+                        }
+                    }
+                    true
+                }
+
+                MotionEvent.ACTION_CANCEL -> {
+                    holdRunnable?.let { bubbleLifecycleHandler.removeCallbacks(it) }
+                    holdRunnable = null
+                    if (isHoldTriggered) {
+                        cleanupVoiceSession(revertText = true)
+                    } else {
+                        v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(80L).start()
+                    }
+                    true
+                }
+
+                else -> false
             }
         }
 
@@ -2587,7 +2991,10 @@ class FloatingBubbleService : Service() {
             inputCard = inputCard,
             queryEt = queryEt,
             sendBtn = sendBtn,
-            quickActionBar = quickActionScroll
+            quickActionBar = quickActionScroll,
+            thinkingChipRow = thinkingChipRow,
+            voiceVisualizerBubble = voiceVisualizerBubble,
+            soundVisualizerView = soundVisualizerView
         )
     }
 
@@ -2675,6 +3082,16 @@ class FloatingBubbleService : Service() {
         val cardLayout = shell.cardLayout
         shell.quickActionBar.visibility = View.GONE
         shell.quickActionBar.alpha = 0f
+
+        val shouldShowChips = FloatingBubbleVoiceHelper.shouldShowThinkingChips(
+            hasFocus = shell.queryEt.hasFocus(),
+            text = shell.queryEt.text
+        )
+        shell.thinkingChipRow?.visibility = if (shouldShowChips) View.VISIBLE else View.GONE
+        shell.thinkingChipRow?.alpha = if (shouldShowChips) 1f else 0f
+        shell.voiceVisualizerBubble?.visibility = View.GONE
+        shell.voiceVisualizerBubble?.alpha = 0f
+        shell.soundVisualizerView?.stopVisualizer()
 
         currentCardLayoutRef = cardLayout
         currentTasksBoardLayout = shell.tasksBoardLayout
@@ -4251,6 +4668,7 @@ class FloatingBubbleService : Service() {
         activeWatchdogJob = null
         sessionSwitchJob?.cancel()
         sessionSwitchJob = null
+        cleanupVoiceRecording()
         try {
             com.orca.orcaauto.domain.voice.VoiceBriefingManager.getInstance(this).stop()
         } catch (_: Exception) {}
