@@ -1414,6 +1414,28 @@ class FloatingBubbleService : Service() {
         }
     }
 
+    private fun cleanupEditorHandlesAndToolbar(shell: CardShellHolder?) {
+        shell ?: return
+        try {
+            val plan = FloatingBubbleTextSelectionHelper.planLifecycleCleanup(
+                hasText = !shell.queryEt.text.isNullOrEmpty()
+            )
+            if (plan.clearFocus) {
+                shell.queryEt.clearFocus()
+            }
+            plan.targetSelection?.let { sel ->
+                Selection.setSelection(shell.queryEt.text, sel)
+            }
+            if (plan.hideToolbar) {
+                shell.quickActionBar.animate().cancel()
+                shell.quickActionBar.visibility = View.GONE
+                shell.quickActionBar.alpha = 0f
+            }
+            val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+            imm?.hideSoftInputFromWindow(shell.queryEt.windowToken, 0)
+        } catch (_: Exception) {}
+    }
+
     private fun collapseExpandedCard(root: FrameLayout) {
         activeStreamingJob?.cancel()
         activeStreamingJob = null
@@ -1433,20 +1455,7 @@ class FloatingBubbleService : Service() {
         isCollapsing = true
         hideDismissTarget(immediate = true)
 
-        prewarmedCardShell?.let { shell ->
-            try {
-                shell.queryEt.clearFocus()
-                val text = shell.queryEt.text
-                if (text != null && text.isNotEmpty()) {
-                    Selection.setSelection(text, 0)
-                }
-                shell.quickActionBar.animate().cancel()
-                shell.quickActionBar.visibility = View.GONE
-                shell.quickActionBar.alpha = 0f
-                val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-                imm?.hideSoftInputFromWindow(shell.queryEt.windowToken, 0)
-            } catch (_: Exception) {}
-        }
+        cleanupEditorHandlesAndToolbar(prewarmedCardShell)
 
         val dm = resources.displayMetrics
         val screenWidth = dm.widthPixels
@@ -1483,17 +1492,7 @@ class FloatingBubbleService : Service() {
             .withEndAction {
                 isCollapsing = false
                 currentBubbleState = BubbleState.STATE_1_ACTIVE
-                prewarmedCardShell?.let { shell ->
-                    try {
-                        shell.queryEt.clearFocus()
-                        val text = shell.queryEt.text
-                        if (text != null && text.isNotEmpty()) {
-                            Selection.setSelection(text, 0)
-                        }
-                        shell.quickActionBar.visibility = View.GONE
-                        shell.quickActionBar.alpha = 0f
-                    } catch (_: Exception) {}
-                }
+                cleanupEditorHandlesAndToolbar(prewarmedCardShell)
                 prewarmedCardShell?.cardLayout?.let { cl ->
                     (cl.parent as? ViewGroup)?.removeView(cl)
                 }
@@ -1768,20 +1767,7 @@ class FloatingBubbleService : Service() {
                 setOnClickListener {
                     val targetSessionId = session.id
                     if (prefs.getSelectedSessionId() != targetSessionId) {
-                        prewarmedCardShell?.let { shell ->
-                            try {
-                                shell.queryEt.clearFocus()
-                                val text = shell.queryEt.text
-                                if (text != null && text.isNotEmpty()) {
-                                    Selection.setSelection(text, 0)
-                                }
-                                shell.quickActionBar.animate().cancel()
-                                shell.quickActionBar.visibility = View.GONE
-                                shell.quickActionBar.alpha = 0f
-                                val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-                                imm?.hideSoftInputFromWindow(shell.queryEt.windowToken, 0)
-                            } catch (_: Exception) {}
-                        }
+                        cleanupEditorHandlesAndToolbar(prewarmedCardShell)
                         prefs.setSelectedSessionId(targetSessionId)
 
                         // Hot Cache Check: RAM hit -> 0ms immediate UI update
@@ -2105,7 +2091,8 @@ class FloatingBubbleService : Service() {
             isHorizontalScrollBarEnabled = false
             visibility = View.GONE
             alpha = 0f
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dpToPx(32)).apply {
+            minimumHeight = dpToPx(32)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 gravity = Gravity.CENTER_HORIZONTAL
                 bottomMargin = dpToPx(6)
             }
@@ -2172,7 +2159,7 @@ class FloatingBubbleService : Service() {
 
             setOnLongClickListener {
                 if (!isEnabled || isCallingAi) return@setOnLongClickListener false
-                if (text.isNullOrBlank()) {
+                if (FloatingBubbleTextSelectionHelper.shouldConsumeLongClickForInstantPaste(text)) {
                     pasteFromClipboard(this)
                 } else {
                     false
@@ -2203,13 +2190,14 @@ class FloatingBubbleService : Service() {
         val quickActionBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = dpToPx(32)
             background = GradientDrawable().apply {
                 setColor(Color.parseColor("#E627272A"))
                 cornerRadius = dpToPx(16).toFloat()
                 setStroke(dpToPx(1), Color.parseColor("#33FFFFFF"))
             }
             setPadding(dpToPx(6), 0, dpToPx(6), 0)
-            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dpToPx(32))
+            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
 
         fun createActionPill(iconEmoji: String, title: String, onClick: () -> Unit): TextView {
@@ -2255,12 +2243,17 @@ class FloatingBubbleService : Service() {
                 queryEt.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                 val editable = queryEt.text
                 if (editable != null) {
-                    val rawStart = queryEt.selectionStart.coerceAtLeast(0)
-                    val rawEnd = queryEt.selectionEnd.coerceAtLeast(0)
-                    val start = minOf(rawStart, rawEnd).coerceAtMost(editable.length)
-                    val end = maxOf(rawStart, rawEnd).coerceAtMost(editable.length)
+                    val (start, end) = FloatingBubbleTextSelectionHelper.resolvePasteRange(
+                        textLength = editable.length,
+                        selStart = queryEt.selectionStart,
+                        selEnd = queryEt.selectionEnd
+                    )
                     editable.replace(start, end, clipText)
-                    val newCursor = (start + clipText.length).coerceAtMost(editable.length)
+                    val newCursor = FloatingBubbleTextSelectionHelper.resolveNewCursorPosition(
+                        start = start,
+                        insertedLength = clipText.length,
+                        totalLength = editable.length
+                    )
                     queryEt.setSelection(newCursor)
                 }
                 Toast.makeText(this@FloatingBubbleService, "✓ Đã dán", Toast.LENGTH_SHORT).show()
@@ -2276,15 +2269,11 @@ class FloatingBubbleService : Service() {
                 Toast.makeText(this@FloatingBubbleService, "Không có nội dung để sao chép", Toast.LENGTH_SHORT).show()
                 return@createActionPill
             }
-            val rawStart = queryEt.selectionStart.coerceAtLeast(0)
-            val rawEnd = queryEt.selectionEnd.coerceAtLeast(0)
-            val start = minOf(rawStart, rawEnd).coerceAtMost(editable.length)
-            val end = maxOf(rawStart, rawEnd).coerceAtMost(editable.length)
-            val textToCopy = if (start < end) {
-                editable.substring(start, end)
-            } else {
-                editable.toString()
-            }
+            val textToCopy = FloatingBubbleTextSelectionHelper.resolveCopyText(
+                text = editable,
+                selStart = queryEt.selectionStart,
+                selEnd = queryEt.selectionEnd
+            )
             if (textToCopy.isNotEmpty()) {
                 val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                 val clip = ClipData.newPlainText("text", textToCopy)
@@ -2301,11 +2290,13 @@ class FloatingBubbleService : Service() {
                 Toast.makeText(this@FloatingBubbleService, "Không có nội dung để cắt", Toast.LENGTH_SHORT).show()
                 return@createActionPill
             }
-            val rawStart = queryEt.selectionStart.coerceAtLeast(0)
-            val rawEnd = queryEt.selectionEnd.coerceAtLeast(0)
-            val start = minOf(rawStart, rawEnd).coerceAtMost(editable.length)
-            val end = maxOf(rawStart, rawEnd).coerceAtMost(editable.length)
-            if (start < end) {
+            val cutRange = FloatingBubbleTextSelectionHelper.resolveCutRange(
+                text = editable,
+                selStart = queryEt.selectionStart,
+                selEnd = queryEt.selectionEnd
+            )
+            if (cutRange != null) {
+                val (start, end) = cutRange
                 val textToCut = editable.substring(start, end)
                 val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                 val clip = ClipData.newPlainText("text", textToCut)
@@ -4284,6 +4275,9 @@ class FloatingBubbleService : Service() {
         shakeDetector = null
         sensorThread?.quitSafely()
         sensorThread = null
+
+        cleanupEditorHandlesAndToolbar(prewarmedCardShell)
+        prewarmedCardShell = null
 
         bubbleRootView?.let {
             try {

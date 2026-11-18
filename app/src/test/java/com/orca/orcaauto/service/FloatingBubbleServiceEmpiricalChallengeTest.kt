@@ -1685,121 +1685,143 @@ class FloatingBubbleServiceEmpiricalChallengeTest {
     @Test
     fun smartContextDispatcher_whenTextIsNullOrEmpty_returnsTrueForInstantPaste() {
         // Contract: Long-press on empty/blank queryEt must trigger clipboard paste and consume event (return true)
-        fun shouldDelegateToEditor(text: CharSequence?): Boolean {
-            return if (text.isNullOrBlank()) {
-                true // consumed by pasteFromClipboard
-            } else {
-                false // return false so AOSP Editor executes native word selection
-            }
-        }
-
-        assertTrue("Empty string must trigger instant paste", shouldDelegateToEditor(""))
-        assertTrue("Null string must trigger instant paste", shouldDelegateToEditor(null))
-        assertTrue("Whitespace-only string must trigger instant paste", shouldDelegateToEditor("   \n\t  "))
+        assertTrue(
+            "Empty string must trigger instant paste",
+            FloatingBubbleTextSelectionHelper.shouldConsumeLongClickForInstantPaste("")
+        )
+        assertTrue(
+            "Null string must trigger instant paste",
+            FloatingBubbleTextSelectionHelper.shouldConsumeLongClickForInstantPaste(null)
+        )
+        assertTrue(
+            "Whitespace-only string must trigger instant paste",
+            FloatingBubbleTextSelectionHelper.shouldConsumeLongClickForInstantPaste("   \n\t  ")
+        )
     }
 
     @Test
     fun smartContextDispatcher_whenTextIsPopulated_returnsFalseForAospWordSelection() {
         // Contract: Long-press on populated queryEt must return false to let AOSP Editor handle word selection
-        fun shouldDelegateToEditor(text: CharSequence?): Boolean {
-            return if (text.isNullOrBlank()) {
-                true // consumed by pasteFromClipboard
-            } else {
-                false // return false so AOSP Editor executes native word selection
-            }
-        }
-
-        assertFalse("Populated word must delegate to AOSP Editor", shouldDelegateToEditor("Báo cáo"))
-        assertFalse("Single word must delegate to AOSP Editor", shouldDelegateToEditor("Hello"))
-        assertFalse("Sentence must delegate to AOSP Editor", shouldDelegateToEditor("Nhắc nhở họp giao ban lúc 14h"))
+        assertFalse(
+            "Populated word must delegate to AOSP Editor",
+            FloatingBubbleTextSelectionHelper.shouldConsumeLongClickForInstantPaste("Báo cáo")
+        )
+        assertFalse(
+            "Single word must delegate to AOSP Editor",
+            FloatingBubbleTextSelectionHelper.shouldConsumeLongClickForInstantPaste("Hello")
+        )
+        assertFalse(
+            "Sentence must delegate to AOSP Editor",
+            FloatingBubbleTextSelectionHelper.shouldConsumeLongClickForInstantPaste("Nhắc nhở họp giao ban lúc 14h")
+        )
     }
 
     @Test
     fun contextualToolbar_copyRangeResolution_clampedAndSafe() {
         val originalText = "Họp giao ban tiến độ dự án OrcaAuto"
-        
-        fun resolveCopyText(text: String, selStart: Int, selEnd: Int): String {
-            if (text.isEmpty()) return ""
-            val rawStart = selStart.coerceAtLeast(0)
-            val rawEnd = selEnd.coerceAtLeast(0)
-            val start = minOf(rawStart, rawEnd).coerceAtMost(text.length)
-            val end = maxOf(rawStart, rawEnd).coerceAtMost(text.length)
-            return if (start < end) {
-                text.substring(start, end)
-            } else {
-                text
-            }
-        }
 
         // Active selection
-        assertEquals("Họp giao ban", resolveCopyText(originalText, 0, 12))
-        assertEquals("tiến độ", resolveCopyText(originalText, 13, 20))
+        assertEquals("Họp giao ban", FloatingBubbleTextSelectionHelper.resolveCopyText(originalText, 0, 12))
+        assertEquals("tiến độ", FloatingBubbleTextSelectionHelper.resolveCopyText(originalText, 13, 20))
 
         // Inverted selection coordinates (dragged backwards)
-        assertEquals("tiến độ", resolveCopyText(originalText, 20, 13))
+        assertEquals("tiến độ", FloatingBubbleTextSelectionHelper.resolveCopyText(originalText, 20, 13))
 
         // Caret collapsed (no selection) -> copies full text fallback
-        assertEquals(originalText, resolveCopyText(originalText, 5, 5))
+        assertEquals(originalText, FloatingBubbleTextSelectionHelper.resolveCopyText(originalText, 5, 5))
 
         // Out of bounds coordinates -> safely clamped
-        assertEquals(originalText, resolveCopyText(originalText, -10, 100))
+        assertEquals(originalText, FloatingBubbleTextSelectionHelper.resolveCopyText(originalText, -10, 100))
+
+        // Null and empty strings
+        assertEquals("", FloatingBubbleTextSelectionHelper.resolveCopyText(null, 0, 5))
+        assertEquals("", FloatingBubbleTextSelectionHelper.resolveCopyText("", 0, 0))
     }
 
     @Test
     fun contextualToolbar_cutRangeResolution_clampedAndSafe() {
         val originalText = "Họp giao ban tiến độ dự án"
-        
-        fun resolveCut(text: StringBuilder, selStart: Int, selEnd: Int): Pair<String?, Int> {
-            if (text.isEmpty()) return Pair(null, 0)
-            val rawStart = selStart.coerceAtLeast(0)
-            val rawEnd = selEnd.coerceAtLeast(0)
-            val start = minOf(rawStart, rawEnd).coerceAtMost(text.length)
-            val end = maxOf(rawStart, rawEnd).coerceAtMost(text.length)
-            return if (start < end) {
-                val cutText = text.substring(start, end)
-                text.delete(start, end)
-                Pair(cutText, start)
-            } else {
-                Pair(null, start)
-            }
-        }
 
-        // Active selection cut
-        val sb1 = StringBuilder(originalText)
-        val (cutText1, newCursor1) = resolveCut(sb1, 0, 13) // Cut "Họp giao ban "
-        assertEquals("Họp giao ban ", cutText1)
-        assertEquals("tiến độ dự án", sb1.toString())
-        assertEquals(0, newCursor1)
+        // Active selection cut range
+        val range1 = FloatingBubbleTextSelectionHelper.resolveCutRange(originalText, 0, 13)
+        assertNotNull(range1)
+        assertEquals(0, range1!!.first)
+        assertEquals(13, range1.second)
+        assertEquals("Họp giao ban ", originalText.substring(range1.first, range1.second))
+
+        // Inverted selection cut range (dragged backwards)
+        val rangeInverted = FloatingBubbleTextSelectionHelper.resolveCutRange(originalText, 20, 13)
+        assertNotNull(rangeInverted)
+        assertEquals(13, rangeInverted!!.first)
+        assertEquals(20, rangeInverted.second)
+        assertEquals("tiến độ", originalText.substring(rangeInverted.first, rangeInverted.second))
 
         // Caret collapsed cut -> returns null (shows "Chưa chọn đoạn chữ cần cắt")
-        val sb2 = StringBuilder(originalText)
-        val (cutText2, newCursor2) = resolveCut(sb2, 4, 4)
-        assertNull(cutText2)
-        assertEquals(originalText, sb2.toString())
-        assertEquals(4, newCursor2)
+        val rangeCollapsed = FloatingBubbleTextSelectionHelper.resolveCutRange(originalText, 4, 4)
+        assertNull(rangeCollapsed)
+
+        // Empty / null text -> returns null
+        assertNull(FloatingBubbleTextSelectionHelper.resolveCutRange("", 0, 0))
+        assertNull(FloatingBubbleTextSelectionHelper.resolveCutRange(null, 0, 0))
+
+        // Out of bounds coordinates -> safely clamped
+        val rangeOutOfBounds = FloatingBubbleTextSelectionHelper.resolveCutRange(originalText, -5, 100)
+        assertNotNull(rangeOutOfBounds)
+        assertEquals(0, rangeOutOfBounds!!.first)
+        assertEquals(originalText.length, rangeOutOfBounds.second)
+    }
+
+    @Test
+    fun contextualToolbar_pasteRangeAndCursorResolution_clampedAndSafe() {
+        val textLength = 26 // e.g. "Họp giao ban tiến độ dự án"
+
+        // Active selection replacement range
+        val range1 = FloatingBubbleTextSelectionHelper.resolvePasteRange(textLength, 0, 13)
+        assertEquals(Pair(0, 13), range1)
+
+        // Inverted selection replacement range
+        val rangeInverted = FloatingBubbleTextSelectionHelper.resolvePasteRange(textLength, 20, 13)
+        assertEquals(Pair(13, 20), rangeInverted)
+
+        // Collapsed insertion at cursor
+        val rangeCollapsed = FloatingBubbleTextSelectionHelper.resolvePasteRange(textLength, 5, 5)
+        assertEquals(Pair(5, 5), rangeCollapsed)
+
+        // Out of bounds coordinates -> safely clamped
+        val rangeClamped = FloatingBubbleTextSelectionHelper.resolvePasteRange(textLength, -10, 100)
+        assertEquals(Pair(0, textLength), rangeClamped)
+
+        // Cursor positioning after paste
+        val cursorAfterInsert = FloatingBubbleTextSelectionHelper.resolveNewCursorPosition(
+            start = 5,
+            insertedLength = 10,
+            totalLength = 36
+        )
+        assertEquals(15, cursorAfterInsert)
+
+        // Clamped cursor
+        val cursorClamped = FloatingBubbleTextSelectionHelper.resolveNewCursorPosition(
+            start = 5,
+            insertedLength = 50,
+            totalLength = 36
+        )
+        assertEquals(36, cursorClamped)
     }
 
     @Test
     fun zeroGhostHandles_lifecycleStateCleanupContract() {
-        // Contract: When card is collapsed or session switched:
+        // Contract: When card is collapsed, session switched, or service destroyed:
         // 1. queryEt.clearFocus() removes focus
         // 2. Selection.setSelection(text, 0) collapses range to 0
         // 3. quickActionBar.visibility is set to GONE and alpha to 0f
-        var focusCleared = false
-        var selectionCollapsed = false
-        var toolbarHidden = false
+        val planPopulated = FloatingBubbleTextSelectionHelper.planLifecycleCleanup(hasText = true)
+        assertTrue("Focus must be cleared on lifecycle transition", planPopulated.clearFocus)
+        assertEquals("Selection must be collapsed to zero to destroy drag handles", 0, planPopulated.targetSelection)
+        assertTrue("Contextual quick action toolbar must be immediately hidden", planPopulated.hideToolbar)
 
-        fun simulateLifecycleCleanup(hasActiveSelection: Boolean) {
-            focusCleared = true
-            if (hasActiveSelection) {
-                selectionCollapsed = true
-            }
-            toolbarHidden = true
-        }
-
-        simulateLifecycleCleanup(hasActiveSelection = true)
-        assertTrue("Focus must be cleared on lifecycle transition", focusCleared)
-        assertTrue("Selection must be collapsed to zero to destroy drag handles", selectionCollapsed)
-        assertTrue("Contextual quick action toolbar must be immediately hidden", toolbarHidden)
+        val planEmpty = FloatingBubbleTextSelectionHelper.planLifecycleCleanup(hasText = false)
+        assertTrue("Focus must be cleared even when editor is empty", planEmpty.clearFocus)
+        assertNull("Selection reset index should be null when editor has no text", planEmpty.targetSelection)
+        assertTrue("Contextual quick action toolbar must be immediately hidden", planEmpty.hideToolbar)
     }
 }
