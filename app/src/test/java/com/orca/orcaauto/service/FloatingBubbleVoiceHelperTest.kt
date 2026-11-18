@@ -17,15 +17,41 @@ class FloatingBubbleVoiceHelperTest {
     // =========================================================================
 
     @Test
-    fun testResolveTouchAction_whenHoldNotTriggered_alwaysResolvesToTap() {
+    fun testResolveTouchAction_whenHoldNotTriggered_withoutSlop_alwaysResolvesToTap() {
         assertEquals(
             FloatingBubbleVoiceHelper.TouchAction.TAP,
             FloatingBubbleVoiceHelper.resolveTouchAction(isHoldTriggered = false, isSlideCancelled = false)
         )
-        // Even if slide flag was somehow set, if hold never fired it remains a TAP
+        // Even if slide flag was somehow set, if hold never fired and slop not exceeded, it remains a TAP
         assertEquals(
             FloatingBubbleVoiceHelper.TouchAction.TAP,
             FloatingBubbleVoiceHelper.resolveTouchAction(isHoldTriggered = false, isSlideCancelled = true)
+        )
+        // Explicit false for isSlopExceeded
+        assertEquals(
+            FloatingBubbleVoiceHelper.TouchAction.TAP,
+            FloatingBubbleVoiceHelper.resolveTouchAction(isHoldTriggered = false, isSlideCancelled = false, isSlopExceeded = false)
+        )
+    }
+
+    @Test
+    fun testResolveTouchAction_whenHoldNotTriggered_andSlopExceeded_resolvesToIgnore() {
+        // Dragging away before 1500ms aborts touch gesture -> IGNORE (do not send AI query)
+        assertEquals(
+            FloatingBubbleVoiceHelper.TouchAction.IGNORE,
+            FloatingBubbleVoiceHelper.resolveTouchAction(
+                isHoldTriggered = false,
+                isSlideCancelled = false,
+                isSlopExceeded = true
+            )
+        )
+        assertEquals(
+            FloatingBubbleVoiceHelper.TouchAction.IGNORE,
+            FloatingBubbleVoiceHelper.resolveTouchAction(
+                isHoldTriggered = false,
+                isSlideCancelled = true,
+                isSlopExceeded = true
+            )
         )
     }
 

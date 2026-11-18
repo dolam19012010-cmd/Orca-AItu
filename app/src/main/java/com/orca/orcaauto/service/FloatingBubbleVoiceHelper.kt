@@ -22,8 +22,13 @@ internal object FloatingBubbleVoiceHelper {
     /**
      * Resolves the touch action on button release or touch completion.
      */
-    fun resolveTouchAction(isHoldTriggered: Boolean, isSlideCancelled: Boolean): TouchAction {
+    fun resolveTouchAction(
+        isHoldTriggered: Boolean,
+        isSlideCancelled: Boolean,
+        isSlopExceeded: Boolean = false
+    ): TouchAction {
         return when {
+            !isHoldTriggered && isSlopExceeded -> TouchAction.IGNORE
             !isHoldTriggered -> TouchAction.TAP
             isSlideCancelled -> TouchAction.HOLD_RELEASE_CANCEL
             else -> TouchAction.HOLD_RELEASE_COMMIT

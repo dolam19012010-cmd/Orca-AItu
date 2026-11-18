@@ -178,9 +178,12 @@ class FloatingBubbleService : Service() {
     private var prewarmedCardShell: CardShellHolder? = null
     private var activeSpeechRecognizer: SpeechRecognizer? = null
     private var isRecordingVoice: Boolean = false
+    private var activeHoldRunnable: Runnable? = null
     private var cancelActiveVoiceSession: (() -> Unit)? = null
 
     private fun cleanupVoiceRecording() {
+        activeHoldRunnable?.let { bubbleLifecycleHandler.removeCallbacks(it) }
+        activeHoldRunnable = null
         try {
             activeSpeechRecognizer?.cancel()
             activeSpeechRecognizer?.destroy()
@@ -188,7 +191,6 @@ class FloatingBubbleService : Service() {
         activeSpeechRecognizer = null
         isRecordingVoice = false
         cancelActiveVoiceSession?.invoke()
-        cancelActiveVoiceSession = null
     }
 
     private val suppressActionModeCallback = object : ActionMode.Callback {
@@ -2680,28 +2682,34 @@ class FloatingBubbleService : Service() {
             }
         }
 
-        var holdRunnable: Runnable? = null
         var downRawX = 0f
         var downRawY = 0f
         var isHoldTriggered = false
         var isSlideCancelled = false
         var hasCrossedThreshold = false
+        var isSlopExceeded = false
         var initialRecordedText = ""
         val cancelThresholdPx = dpToPx(50).toFloat()
         val touchSlopPx = dpToPx(8).toFloat()
 
-        fun cleanupVoiceSession(revertText: Boolean) {
-            holdRunnable?.let { bubbleLifecycleHandler.removeCallbacks(it) }
-            holdRunnable = null
+        fun cleanupVoiceSession(revertText: Boolean, destroyRecognizer: Boolean = false) {
+            activeHoldRunnable?.let { bubbleLifecycleHandler.removeCallbacks(it) }
+            activeHoldRunnable = null
             try {
                 if (revertText) {
                     activeSpeechRecognizer?.cancel()
+                    activeSpeechRecognizer?.destroy()
+                    activeSpeechRecognizer = null
+                } else if (destroyRecognizer) {
+                    activeSpeechRecognizer?.destroy()
+                    activeSpeechRecognizer = null
                 } else {
                     activeSpeechRecognizer?.stopListening()
                 }
-                activeSpeechRecognizer?.destroy()
             } catch (_: Exception) {}
-            activeSpeechRecognizer = null
+            if (revertText || destroyRecognizer) {
+                activeSpeechRecognizer = null
+            }
             isRecordingVoice = false
 
             if (revertText) {
@@ -2732,10 +2740,11 @@ class FloatingBubbleService : Service() {
             isHoldTriggered = false
             isSlideCancelled = false
             hasCrossedThreshold = false
+            isSlopExceeded = false
         }
 
         cancelActiveVoiceSession = {
-            cleanupVoiceSession(revertText = true)
+            cleanupVoiceSession(revertText = true, destroyRecognizer = true)
         }
 
         sendBtn.setOnTouchListener { v, event ->
@@ -2748,11 +2757,12 @@ class FloatingBubbleService : Service() {
                     isHoldTriggered = false
                     isSlideCancelled = false
                     hasCrossedThreshold = false
+                    isSlopExceeded = false
                     initialRecordedText = queryEt.text.toString()
 
                     v.animate().scaleX(0.92f).scaleY(0.92f).setDuration(80L).start()
 
-                    holdRunnable?.let { bubbleLifecycleHandler.removeCallbacks(it) }
+                    activeHoldRunnable?.let { bubbleLifecycleHandler.removeCallbacks(it) }
                     val r = Runnable {
                         if (isCallingAi) return@Runnable
                         isHoldTriggered = true
@@ -2837,7 +2847,17 @@ class FloatingBubbleService : Service() {
                                 override fun onBufferReceived(buffer: ByteArray?) {}
                                 override fun onEndOfSpeech() {}
                                 override fun onError(error: Int) {
-                                    // Speech timeout or error: keep transcribed text
+                                    val message = when (error) {
+                                        SpeechRecognizer.ERROR_NETWORK,
+                                        SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Lỗi kết nối mạng khi nhận diện giọng nói"
+                                        SpeechRecognizer.ERROR_AUDIO -> "Lỗi ghi âm từ microphone"
+                                        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Chưa đủ quyền truy cập microphone"
+                                        else -> null
+                                    }
+                                    if (message != null) {
+                                        Toast.makeText(this@FloatingBubbleService, message, Toast.LENGTH_SHORT).show()
+                                    }
+                                    cleanupVoiceSession(revertText = false, destroyRecognizer = true)
                                 }
                                 override fun onResults(results: Bundle?) {
                                     if (!isSlideCancelled) {
@@ -2849,6 +2869,10 @@ class FloatingBubbleService : Service() {
                                             queryEt.setSelection(combined.length)
                                         }
                                     }
+                                    try {
+                                        activeSpeechRecognizer?.destroy()
+                                    } catch (_: Exception) {}
+                                    activeSpeechRecognizer = null
                                 }
                                 override fun onPartialResults(partialResults: Bundle?) {
                                     if (!isSlideCancelled) {
@@ -2878,7 +2902,7 @@ class FloatingBubbleService : Service() {
                             Log.e("FloatingBubble", "Lỗi SpeechRecognizer: ${e.message}")
                         }
                     }
-                    holdRunnable = r
+                    activeHoldRunnable = r
                     bubbleLifecycleHandler.postDelayed(r, FloatingBubbleVoiceHelper.HOLD_THRESHOLD_MS)
                     true
                 }
@@ -2888,8 +2912,10 @@ class FloatingBubbleService : Service() {
                         val dx = Math.abs(event.rawX - downRawX)
                         val dy = Math.abs(event.rawY - downRawY)
                         if (dx > touchSlopPx || dy > touchSlopPx) {
-                            holdRunnable?.let { bubbleLifecycleHandler.removeCallbacks(it) }
-                            holdRunnable = null
+                            isSlopExceeded = true
+                            v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(80L).start()
+                            activeHoldRunnable?.let { bubbleLifecycleHandler.removeCallbacks(it) }
+                            activeHoldRunnable = null
                         }
                     } else if (isRecordingVoice) {
                         val dragProgress = FloatingBubbleVoiceHelper.calculateCancelProgress(
@@ -2924,12 +2950,13 @@ class FloatingBubbleService : Service() {
                 }
 
                 MotionEvent.ACTION_UP -> {
-                    holdRunnable?.let { bubbleLifecycleHandler.removeCallbacks(it) }
-                    holdRunnable = null
+                    activeHoldRunnable?.let { bubbleLifecycleHandler.removeCallbacks(it) }
+                    activeHoldRunnable = null
 
                     val action = FloatingBubbleVoiceHelper.resolveTouchAction(
                         isHoldTriggered = isHoldTriggered,
-                        isSlideCancelled = isSlideCancelled
+                        isSlideCancelled = isSlideCancelled,
+                        isSlopExceeded = isSlopExceeded
                     )
 
                     when (action) {
@@ -2940,25 +2967,28 @@ class FloatingBubbleService : Service() {
                                 executeAiCall(q)
                             }
                         }
+                        FloatingBubbleVoiceHelper.TouchAction.IGNORE -> {
+                            v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(80L).start()
+                        }
                         FloatingBubbleVoiceHelper.TouchAction.HOLD_RELEASE_CANCEL -> {
                             sendBtn.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-                            cleanupVoiceSession(revertText = true)
+                            cleanupVoiceSession(revertText = true, destroyRecognizer = true)
                         }
                         FloatingBubbleVoiceHelper.TouchAction.HOLD_RELEASE_COMMIT -> {
-                            cleanupVoiceSession(revertText = false)
+                            cleanupVoiceSession(revertText = false, destroyRecognizer = false)
                         }
                         else -> {
-                            cleanupVoiceSession(revertText = false)
+                            cleanupVoiceSession(revertText = false, destroyRecognizer = false)
                         }
                     }
                     true
                 }
 
                 MotionEvent.ACTION_CANCEL -> {
-                    holdRunnable?.let { bubbleLifecycleHandler.removeCallbacks(it) }
-                    holdRunnable = null
+                    activeHoldRunnable?.let { bubbleLifecycleHandler.removeCallbacks(it) }
+                    activeHoldRunnable = null
                     if (isHoldTriggered) {
-                        cleanupVoiceSession(revertText = true)
+                        cleanupVoiceSession(revertText = true, destroyRecognizer = true)
                     } else {
                         v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(80L).start()
                     }
@@ -4669,6 +4699,7 @@ class FloatingBubbleService : Service() {
         sessionSwitchJob?.cancel()
         sessionSwitchJob = null
         cleanupVoiceRecording()
+        cancelActiveVoiceSession = null
         try {
             com.orca.orcaauto.domain.voice.VoiceBriefingManager.getInstance(this).stop()
         } catch (_: Exception) {}
