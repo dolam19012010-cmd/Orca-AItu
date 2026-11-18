@@ -6,6 +6,7 @@ import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.app.Service
 import android.content.BroadcastReceiver
+import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
@@ -44,11 +45,16 @@ import android.os.VibratorManager
 import android.provider.Settings
 import android.os.SystemClock
 import android.text.InputType
+import android.text.Selection
 import android.text.TextWatcher
+import android.util.AttributeSet
 import android.util.Log
 import android.util.TypedValue
+import android.view.ActionMode
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
+import android.view.Menu
+import android.view.MenuItem
 import android.view.MotionEvent
 import android.view.VelocityTracker
 import android.view.View
@@ -57,6 +63,7 @@ import android.view.ViewGroup
 import android.view.ViewOutlineProvider
 import android.view.ViewTreeObserver
 import android.view.WindowManager
+import android.view.inputmethod.InputMethodManager
 import android.view.animation.AccelerateInterpolator
 import android.view.animation.DecelerateInterpolator
 import android.view.animation.OvershootInterpolator
@@ -110,6 +117,25 @@ import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
+/**
+ * Custom [EditText] subclass that hooks into [onSelectionChanged] to notify listeners of text
+ * selection changes, powering the in-card contextual quick action bar while preserving native
+ * AOSP selection mechanics and drag handles.
+ */
+open class SelectionAwareEditText @JvmOverloads constructor(
+    context: Context,
+    attrs: AttributeSet? = null,
+    defStyleAttr: Int = android.R.attr.editTextStyle
+) : EditText(context, attrs, defStyleAttr) {
+
+    var onSelectionChangedListener: ((selStart: Int, selEnd: Int) -> Unit)? = null
+
+    override fun onSelectionChanged(selStart: Int, selEnd: Int) {
+        super.onSelectionChanged(selStart, selEnd)
+        onSelectionChangedListener?.invoke(selStart, selEnd)
+    }
+}
+
 class FloatingBubbleService : Service() {
 
     private lateinit var windowManager: WindowManager
@@ -143,6 +169,13 @@ class FloatingBubbleService : Service() {
     private var lastKnownSummaryId: Long? = null
     private var prewarmedCardShell: CardShellHolder? = null
 
+    private val suppressActionModeCallback = object : ActionMode.Callback {
+        override fun onCreateActionMode(mode: ActionMode?, menu: Menu?): Boolean = false
+        override fun onPrepareActionMode(mode: ActionMode?, menu: Menu?): Boolean = false
+        override fun onActionItemClicked(mode: ActionMode?, item: MenuItem?): Boolean = false
+        override fun onDestroyActionMode(mode: ActionMode?) {}
+    }
+
     private class CardShellHolder(
         val cardLayout: LinearLayout,
         val headerRow: LinearLayout,
@@ -159,8 +192,9 @@ class FloatingBubbleService : Service() {
         val notesContainer: LinearLayout,
         val tasksBoardLayout: LinearLayout,
         val inputCard: LinearLayout,
-        val queryEt: EditText,
-        val sendBtn: TextView
+        val queryEt: SelectionAwareEditText,
+        val sendBtn: TextView,
+        val quickActionBar: View
     )
 
     private class TaskRowHolder(
@@ -1399,6 +1433,21 @@ class FloatingBubbleService : Service() {
         isCollapsing = true
         hideDismissTarget(immediate = true)
 
+        prewarmedCardShell?.let { shell ->
+            try {
+                shell.queryEt.clearFocus()
+                val text = shell.queryEt.text
+                if (text != null && text.isNotEmpty()) {
+                    Selection.setSelection(text, 0)
+                }
+                shell.quickActionBar.animate().cancel()
+                shell.quickActionBar.visibility = View.GONE
+                shell.quickActionBar.alpha = 0f
+                val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                imm?.hideSoftInputFromWindow(shell.queryEt.windowToken, 0)
+            } catch (_: Exception) {}
+        }
+
         val dm = resources.displayMetrics
         val screenWidth = dm.widthPixels
         val screenHeight = dm.heightPixels
@@ -1434,6 +1483,17 @@ class FloatingBubbleService : Service() {
             .withEndAction {
                 isCollapsing = false
                 currentBubbleState = BubbleState.STATE_1_ACTIVE
+                prewarmedCardShell?.let { shell ->
+                    try {
+                        shell.queryEt.clearFocus()
+                        val text = shell.queryEt.text
+                        if (text != null && text.isNotEmpty()) {
+                            Selection.setSelection(text, 0)
+                        }
+                        shell.quickActionBar.visibility = View.GONE
+                        shell.quickActionBar.alpha = 0f
+                    } catch (_: Exception) {}
+                }
                 prewarmedCardShell?.cardLayout?.let { cl ->
                     (cl.parent as? ViewGroup)?.removeView(cl)
                 }
@@ -1708,6 +1768,20 @@ class FloatingBubbleService : Service() {
                 setOnClickListener {
                     val targetSessionId = session.id
                     if (prefs.getSelectedSessionId() != targetSessionId) {
+                        prewarmedCardShell?.let { shell ->
+                            try {
+                                shell.queryEt.clearFocus()
+                                val text = shell.queryEt.text
+                                if (text != null && text.isNotEmpty()) {
+                                    Selection.setSelection(text, 0)
+                                }
+                                shell.quickActionBar.animate().cancel()
+                                shell.quickActionBar.visibility = View.GONE
+                                shell.quickActionBar.alpha = 0f
+                                val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                                imm?.hideSoftInputFromWindow(shell.queryEt.windowToken, 0)
+                            } catch (_: Exception) {}
+                        }
                         prefs.setSelectedSessionId(targetSessionId)
 
                         // Hot Cache Check: RAM hit -> 0ms immediate UI update
@@ -1931,6 +2005,7 @@ class FloatingBubbleService : Service() {
             setLineSpacing(dpToPx(2).toFloat(), 1.15f)
             setTextIsSelectable(true)
             highlightColor = Color.parseColor("#4D38BDF8")
+            customSelectionActionModeCallback = suppressActionModeCallback
         }
         sec1Box.addView(adviceTv)
 
@@ -2025,13 +2100,48 @@ class FloatingBubbleService : Service() {
         }
         inputCard.addView(thinkingChipRow)
 
-        val inputRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.BOTTOM
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        val quickActionScroll = HorizontalScrollView(this).apply {
+            overScrollMode = View.OVER_SCROLL_NEVER
+            isHorizontalScrollBarEnabled = false
+            visibility = View.GONE
+            alpha = 0f
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dpToPx(32)).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+                bottomMargin = dpToPx(6)
+            }
         }
 
-        val queryEt = EditText(this).apply {
+        fun showQuickActionBar() {
+            if (quickActionScroll.visibility == View.VISIBLE && quickActionScroll.alpha == 1f) return
+            quickActionScroll.animate().cancel()
+            quickActionScroll.visibility = View.VISIBLE
+            quickActionScroll.animate()
+                .alpha(1f)
+                .setDuration(120L)
+                .setListener(null)
+                .start()
+        }
+
+        fun hideQuickActionBar(animated: Boolean = true) {
+            if (quickActionScroll.visibility == View.GONE) return
+            quickActionScroll.animate().cancel()
+            if (animated) {
+                quickActionScroll.animate()
+                    .alpha(0f)
+                    .setDuration(80L)
+                    .setListener(object : AnimatorListenerAdapter() {
+                        override fun onAnimationEnd(animation: Animator) {
+                            quickActionScroll.visibility = View.GONE
+                        }
+                    })
+                    .start()
+            } else {
+                quickActionScroll.alpha = 0f
+                quickActionScroll.visibility = View.GONE
+            }
+        }
+
+        val queryEt = SelectionAwareEditText(this).apply {
             hint = if (isCallingAi) "AI đang xử lý..." else "Nhập lệnh hoặc câu hỏi..."
             setHintTextColor(Color.parseColor("#71717A"))
             setTextColor(Color.WHITE)
@@ -2054,17 +2164,186 @@ class FloatingBubbleService : Service() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 isForceDarkAllowed = false
             }
+
+            customSelectionActionModeCallback = suppressActionModeCallback
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                customInsertionActionModeCallback = suppressActionModeCallback
+            }
+
             setOnLongClickListener {
                 if (!isEnabled || isCallingAi) return@setOnLongClickListener false
-                pasteFromClipboard(this)
+                if (text.isNullOrBlank()) {
+                    pasteFromClipboard(this)
+                } else {
+                    false
+                }
             }
+
             setOnFocusChangeListener { _, hasFocus ->
                 if (hasFocus) {
                     scrollView.postDelayed({
                         scrollView.fullScroll(View.FOCUS_DOWN)
                     }, 200L)
+                } else {
+                    hideQuickActionBar(animated = false)
                 }
             }
+        }
+
+        queryEt.onSelectionChangedListener = { selStart, selEnd ->
+            if (!queryEt.isEnabled || isCallingAi) {
+                hideQuickActionBar(animated = false)
+            } else if (selStart != selEnd) {
+                showQuickActionBar()
+            } else {
+                hideQuickActionBar(animated = true)
+            }
+        }
+
+        val quickActionBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#E627272A"))
+                cornerRadius = dpToPx(16).toFloat()
+                setStroke(dpToPx(1), Color.parseColor("#33FFFFFF"))
+            }
+            setPadding(dpToPx(6), 0, dpToPx(6), 0)
+            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dpToPx(32))
+        }
+
+        fun createActionPill(iconEmoji: String, title: String, onClick: () -> Unit): TextView {
+            return TextView(this).apply {
+                text = "$iconEmoji $title"
+                textSize = 11.5f
+                setTextColor(Color.parseColor("#F4F4F5"))
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                isSingleLine = true
+                setPadding(dpToPx(8), dpToPx(4), dpToPx(8), dpToPx(4))
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                isClickable = true
+                isFocusable = false
+                addMicroPressEffect()
+                setOnClickListener {
+                    onClick()
+                }
+            }
+        }
+
+        fun createPillDivider(): View {
+            return View(this).apply {
+                background = GradientDrawable().apply {
+                    setColor(Color.parseColor("#26FFFFFF"))
+                }
+                layoutParams = LinearLayout.LayoutParams(dpToPx(1), dpToPx(14)).apply {
+                    setMargins(dpToPx(2), 0, dpToPx(2), 0)
+                }
+            }
+        }
+
+        val pastePill = createActionPill("📋", "Dán") {
+            if (!queryEt.isEnabled || isCallingAi) return@createActionPill
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            val clipData = clipboard?.primaryClip
+            val clipText = if (clipData != null && clipData.itemCount > 0) {
+                clipData.getItemAt(0)?.coerceToText(this@FloatingBubbleService)?.toString()
+            } else {
+                null
+            }
+            if (!clipText.isNullOrEmpty()) {
+                queryEt.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                val editable = queryEt.text
+                if (editable != null) {
+                    val rawStart = queryEt.selectionStart.coerceAtLeast(0)
+                    val rawEnd = queryEt.selectionEnd.coerceAtLeast(0)
+                    val start = minOf(rawStart, rawEnd).coerceAtMost(editable.length)
+                    val end = maxOf(rawStart, rawEnd).coerceAtMost(editable.length)
+                    editable.replace(start, end, clipText)
+                    val newCursor = (start + clipText.length).coerceAtMost(editable.length)
+                    queryEt.setSelection(newCursor)
+                }
+                Toast.makeText(this@FloatingBubbleService, "✓ Đã dán", Toast.LENGTH_SHORT).show()
+                hideQuickActionBar(animated = true)
+            } else {
+                Toast.makeText(this@FloatingBubbleService, "Bộ nhớ tạm đang trống", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        val copyPill = createActionPill("📑", "Sao chép") {
+            val editable = queryEt.text
+            if (editable.isNullOrEmpty()) {
+                Toast.makeText(this@FloatingBubbleService, "Không có nội dung để sao chép", Toast.LENGTH_SHORT).show()
+                return@createActionPill
+            }
+            val rawStart = queryEt.selectionStart.coerceAtLeast(0)
+            val rawEnd = queryEt.selectionEnd.coerceAtLeast(0)
+            val start = minOf(rawStart, rawEnd).coerceAtMost(editable.length)
+            val end = maxOf(rawStart, rawEnd).coerceAtMost(editable.length)
+            val textToCopy = if (start < end) {
+                editable.substring(start, end)
+            } else {
+                editable.toString()
+            }
+            if (textToCopy.isNotEmpty()) {
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                val clip = ClipData.newPlainText("text", textToCopy)
+                clipboard?.setPrimaryClip(clip)
+                queryEt.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                Toast.makeText(this@FloatingBubbleService, "✓ Đã chép", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        val cutPill = createActionPill("✂️", "Cắt") {
+            if (!queryEt.isEnabled || isCallingAi) return@createActionPill
+            val editable = queryEt.text
+            if (editable.isNullOrEmpty()) {
+                Toast.makeText(this@FloatingBubbleService, "Không có nội dung để cắt", Toast.LENGTH_SHORT).show()
+                return@createActionPill
+            }
+            val rawStart = queryEt.selectionStart.coerceAtLeast(0)
+            val rawEnd = queryEt.selectionEnd.coerceAtLeast(0)
+            val start = minOf(rawStart, rawEnd).coerceAtMost(editable.length)
+            val end = maxOf(rawStart, rawEnd).coerceAtMost(editable.length)
+            if (start < end) {
+                val textToCut = editable.substring(start, end)
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                val clip = ClipData.newPlainText("text", textToCut)
+                clipboard?.setPrimaryClip(clip)
+                editable.delete(start, end)
+                queryEt.setSelection(start)
+                queryEt.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                Toast.makeText(this@FloatingBubbleService, "✓ Đã cắt", Toast.LENGTH_SHORT).show()
+                hideQuickActionBar(animated = true)
+            } else {
+                Toast.makeText(this@FloatingBubbleService, "Chưa chọn đoạn chữ cần cắt", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        val selectAllPill = createActionPill("🔘", "Chọn tất cả") {
+            if (!queryEt.isEnabled || isCallingAi) return@createActionPill
+            if (!queryEt.text.isNullOrEmpty()) {
+                queryEt.requestFocus()
+                queryEt.selectAll()
+                queryEt.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+            }
+        }
+
+        quickActionBar.addView(pastePill)
+        quickActionBar.addView(createPillDivider())
+        quickActionBar.addView(copyPill)
+        quickActionBar.addView(createPillDivider())
+        quickActionBar.addView(cutPill)
+        quickActionBar.addView(createPillDivider())
+        quickActionBar.addView(selectAllPill)
+        quickActionScroll.addView(quickActionBar)
+
+        inputCard.addView(quickActionScroll)
+
+        val inputRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.BOTTOM
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
         inputRow.addView(queryEt)
 
@@ -2103,6 +2382,9 @@ class FloatingBubbleService : Service() {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
                 updateSendBtnState(!s.isNullOrBlank())
+                if (queryEt.selectionStart == queryEt.selectionEnd) {
+                    hideQuickActionBar(animated = false)
+                }
             }
             override fun afterTextChanged(s: android.text.Editable?) {}
         })
@@ -2138,6 +2420,7 @@ class FloatingBubbleService : Service() {
                 queryEt.setText("")
                 queryEt.isEnabled = false
                 queryEt.hint = "AI đang xử lý..."
+                hideQuickActionBar(animated = false)
                 updateSendBtnState(false)
 
                 sendBtnRef?.text = "..."
@@ -2312,7 +2595,8 @@ class FloatingBubbleService : Service() {
             tasksBoardLayout = tasksBoardLayout,
             inputCard = inputCard,
             queryEt = queryEt,
-            sendBtn = sendBtn
+            sendBtn = sendBtn,
+            quickActionBar = quickActionScroll
         )
     }
 
@@ -2398,6 +2682,8 @@ class FloatingBubbleService : Service() {
         // Obtain Pre-Warmed Skeleton Shell or build immediately
         val shell = prewarmedCardShell ?: buildCardShell(cardWidth, cardHeight).also { prewarmedCardShell = it }
         val cardLayout = shell.cardLayout
+        shell.quickActionBar.visibility = View.GONE
+        shell.quickActionBar.alpha = 0f
 
         currentCardLayoutRef = cardLayout
         currentTasksBoardLayout = shell.tasksBoardLayout

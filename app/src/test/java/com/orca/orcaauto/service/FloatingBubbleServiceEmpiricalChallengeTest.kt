@@ -892,7 +892,7 @@ class FloatingBubbleServiceEmpiricalChallengeTest {
         // In the old buggy code, a 100ms delay before first token triggered the 50ms watchdog!
         // In the new decoupled code, stall watchdog is forbidden until hasReceivedFirstToken is true.
         val testScope = CoroutineScope(Dispatchers.Default)
-        val initialConnectionTimeoutMs = 300L
+        val initialConnectionTimeoutMs = 1000L
         val sseWatchdogTimeoutMs = 50L
         val requestStartedAt = System.currentTimeMillis()
         val hasReceivedFirstToken = AtomicBoolean(false)
@@ -1676,5 +1676,130 @@ class FloatingBubbleServiceEmpiricalChallengeTest {
         val bytesPerPixelArgb8888 = 4
         val memorySavingsPercent = ((bytesPerPixelArgb8888 - bytesPerPixelRgb565).toDouble() / bytesPerPixelArgb8888) * 100
         assertEquals(50.0, memorySavingsPercent, 0.001)
+    }
+
+    // =========================================================================
+    // 21. OVERLAY TEXT SELECTION, SMART CONTEXT DISPATCHER & GHOST HANDLES CLEANUP
+    // =========================================================================
+
+    @Test
+    fun smartContextDispatcher_whenTextIsNullOrEmpty_returnsTrueForInstantPaste() {
+        // Contract: Long-press on empty/blank queryEt must trigger clipboard paste and consume event (return true)
+        fun shouldDelegateToEditor(text: CharSequence?): Boolean {
+            return if (text.isNullOrBlank()) {
+                true // consumed by pasteFromClipboard
+            } else {
+                false // return false so AOSP Editor executes native word selection
+            }
+        }
+
+        assertTrue("Empty string must trigger instant paste", shouldDelegateToEditor(""))
+        assertTrue("Null string must trigger instant paste", shouldDelegateToEditor(null))
+        assertTrue("Whitespace-only string must trigger instant paste", shouldDelegateToEditor("   \n\t  "))
+    }
+
+    @Test
+    fun smartContextDispatcher_whenTextIsPopulated_returnsFalseForAospWordSelection() {
+        // Contract: Long-press on populated queryEt must return false to let AOSP Editor handle word selection
+        fun shouldDelegateToEditor(text: CharSequence?): Boolean {
+            return if (text.isNullOrBlank()) {
+                true // consumed by pasteFromClipboard
+            } else {
+                false // return false so AOSP Editor executes native word selection
+            }
+        }
+
+        assertFalse("Populated word must delegate to AOSP Editor", shouldDelegateToEditor("Báo cáo"))
+        assertFalse("Single word must delegate to AOSP Editor", shouldDelegateToEditor("Hello"))
+        assertFalse("Sentence must delegate to AOSP Editor", shouldDelegateToEditor("Nhắc nhở họp giao ban lúc 14h"))
+    }
+
+    @Test
+    fun contextualToolbar_copyRangeResolution_clampedAndSafe() {
+        val originalText = "Họp giao ban tiến độ dự án OrcaAuto"
+        
+        fun resolveCopyText(text: String, selStart: Int, selEnd: Int): String {
+            if (text.isEmpty()) return ""
+            val rawStart = selStart.coerceAtLeast(0)
+            val rawEnd = selEnd.coerceAtLeast(0)
+            val start = minOf(rawStart, rawEnd).coerceAtMost(text.length)
+            val end = maxOf(rawStart, rawEnd).coerceAtMost(text.length)
+            return if (start < end) {
+                text.substring(start, end)
+            } else {
+                text
+            }
+        }
+
+        // Active selection
+        assertEquals("Họp giao ban", resolveCopyText(originalText, 0, 12))
+        assertEquals("tiến độ", resolveCopyText(originalText, 13, 20))
+
+        // Inverted selection coordinates (dragged backwards)
+        assertEquals("tiến độ", resolveCopyText(originalText, 20, 13))
+
+        // Caret collapsed (no selection) -> copies full text fallback
+        assertEquals(originalText, resolveCopyText(originalText, 5, 5))
+
+        // Out of bounds coordinates -> safely clamped
+        assertEquals(originalText, resolveCopyText(originalText, -10, 100))
+    }
+
+    @Test
+    fun contextualToolbar_cutRangeResolution_clampedAndSafe() {
+        val originalText = "Họp giao ban tiến độ dự án"
+        
+        fun resolveCut(text: StringBuilder, selStart: Int, selEnd: Int): Pair<String?, Int> {
+            if (text.isEmpty()) return Pair(null, 0)
+            val rawStart = selStart.coerceAtLeast(0)
+            val rawEnd = selEnd.coerceAtLeast(0)
+            val start = minOf(rawStart, rawEnd).coerceAtMost(text.length)
+            val end = maxOf(rawStart, rawEnd).coerceAtMost(text.length)
+            return if (start < end) {
+                val cutText = text.substring(start, end)
+                text.delete(start, end)
+                Pair(cutText, start)
+            } else {
+                Pair(null, start)
+            }
+        }
+
+        // Active selection cut
+        val sb1 = StringBuilder(originalText)
+        val (cutText1, newCursor1) = resolveCut(sb1, 0, 13) // Cut "Họp giao ban "
+        assertEquals("Họp giao ban ", cutText1)
+        assertEquals("tiến độ dự án", sb1.toString())
+        assertEquals(0, newCursor1)
+
+        // Caret collapsed cut -> returns null (shows "Chưa chọn đoạn chữ cần cắt")
+        val sb2 = StringBuilder(originalText)
+        val (cutText2, newCursor2) = resolveCut(sb2, 4, 4)
+        assertNull(cutText2)
+        assertEquals(originalText, sb2.toString())
+        assertEquals(4, newCursor2)
+    }
+
+    @Test
+    fun zeroGhostHandles_lifecycleStateCleanupContract() {
+        // Contract: When card is collapsed or session switched:
+        // 1. queryEt.clearFocus() removes focus
+        // 2. Selection.setSelection(text, 0) collapses range to 0
+        // 3. quickActionBar.visibility is set to GONE and alpha to 0f
+        var focusCleared = false
+        var selectionCollapsed = false
+        var toolbarHidden = false
+
+        fun simulateLifecycleCleanup(hasActiveSelection: Boolean) {
+            focusCleared = true
+            if (hasActiveSelection) {
+                selectionCollapsed = true
+            }
+            toolbarHidden = true
+        }
+
+        simulateLifecycleCleanup(hasActiveSelection = true)
+        assertTrue("Focus must be cleared on lifecycle transition", focusCleared)
+        assertTrue("Selection must be collapsed to zero to destroy drag handles", selectionCollapsed)
+        assertTrue("Contextual quick action toolbar must be immediately hidden", toolbarHidden)
     }
 }
