@@ -6,7 +6,16 @@ import androidx.compose.runtime.Immutable
 enum class TaskStatus(val displayName: String, val badgeColor: String) {
     TODO("Phải làm", "#EF4444"),
     DONE("Đã làm", "#10B981"),
-    PLANNED("Kế hoạch", "#F59E0B")
+    PLANNED("Kế hoạch", "#F59E0B");
+
+    fun getDisplayName(language: com.orca.orcaauto.ui.locale.AppLanguage): String = when (language) {
+        com.orca.orcaauto.ui.locale.AppLanguage.VIETNAMESE -> displayName
+        com.orca.orcaauto.ui.locale.AppLanguage.ENGLISH -> when (this) {
+            TODO -> "To-Do"
+            DONE -> "Done"
+            PLANNED -> "Planned"
+        }
+    }
 }
 
 @Immutable
@@ -92,7 +101,7 @@ object SummaryParser {
     private val ADVICE_BRACKETED_HEADER_REGEX = Regex("""^\[[^\]]*\]:?\s*""")
     private val ADVICE_PARENTHESIZED_HEADER_REGEX = Regex("""^\([^)]*\):?\s*""")
     private val ADVICE_PERSONA_LEFTOVERS_REGEX = Regex("""^(?i)[a-zA-ZÀ-ỹ\s\-&]+[\])]:?\s*""")
-    private val ADVICE_LABEL_PREFIXES_REGEX = Regex("""^(?i)(lời nhắn & điểm lưu ý|lời nhắn nhẹ nhàng|lời nhắn|lời khuyên|lưu ý tinh tế|điểm cần chú ý|tóm tắt trọng tâm|ghi chú nhanh|lưu ý nhanh|chú ý|tóm tắt)[:\-–]+\s*""")
+    private val ADVICE_LABEL_PREFIXES_REGEX = Regex("""^(?i)(lời nhắn & điểm lưu ý|lời nhắn nhẹ nhàng|lời nhắn|lời khuyên|lưu ý tinh tế|điểm cần chú ý|tóm tắt trọng tâm|ghi chú nhanh|lưu ý nhanh|chú ý|tóm tắt|gentle message|core summary|strategic advice|quick note|subtle notes|points of attention|critical questions|urgent notice|advice|note|notes|summary)[:\-–]+\s*""")
     private val ADVICE_HEADER_SYMBOLS_REGEX = Regex("""^[#:>]+""")
 
     private val NUMBERED_LIST_ITEM_REGEX = Regex("""^\d+\..*""")
@@ -195,27 +204,41 @@ object SummaryParser {
             when {
                 !isBullet && (
                     lower.contains("phần 1") ||
+                    lower.contains("part 1") ||
+                    lower.contains("section 1") ||
                     (lower.contains("góc nhìn") && lower.contains("phản biện")) ||
+                    (lower.contains("advice") && lower.contains("note")) ||
                     lower.startsWith("=== phần 1") ||
                     lower.startsWith("### phần 1") ||
-                    ((lower.startsWith("#") || lower.startsWith("=")) && (lower.contains("lời khuyên") || lower.contains("lời nhắn") || lower.contains("lưu ý")))
+                    lower.startsWith("=== part 1") ||
+                    lower.startsWith("### part 1") ||
+                    ((lower.startsWith("#") || lower.startsWith("=")) && (
+                        lower.contains("lời khuyên") || lower.contains("lời nhắn") || lower.contains("lưu ý") ||
+                        lower.contains("advice") || lower.contains("note") || lower.contains("notes")
+                    ))
                 ) -> {
                     currentSection = 1
                     continue
                 }
-                lower.contains("nhiệm vụ phải làm") || lower.contains("việc cần làm") || (lower.contains("to-do") && !isBullet) -> {
+                lower.contains("nhiệm vụ phải làm") || lower.contains("việc cần làm") || (lower.contains("to-do") && !isBullet) || (lower.contains("todo") && !isBullet) -> {
                     currentSection = 2
                     continue
                 }
-                lower.contains("nhiệm vụ đã làm") || lower.contains("việc đã làm") || (lower.contains("done") && !isBullet) -> {
+                lower.contains("nhiệm vụ đã làm") || lower.contains("việc đã làm") || (lower.contains("done") && !isBullet) || (lower.contains("completed") && !isBullet) -> {
                     currentSection = 3
                     continue
                 }
-                lower.contains("kế hoạch dự kiến") || lower.contains("việc dự kiến") || (lower.contains("planned") && !isBullet) -> {
+                lower.contains("kế hoạch dự kiến") || lower.contains("việc dự kiến") || (lower.contains("planned") && !isBullet) || (lower.contains("upcoming") && !isBullet) -> {
                     currentSection = 4
                     continue
                 }
-                !isBullet && (lower.contains("phần 2") || lower.contains("bảng điều phối") || lower.contains("nhiệm vụ điều phối")) -> {
+                !isBullet && (
+                    lower.contains("phần 2") ||
+                    lower.contains("part 2") ||
+                    lower.contains("bảng điều phối") ||
+                    lower.contains("task dispatch board") ||
+                    lower.contains("nhiệm vụ điều phối")
+                ) -> {
                     currentSection = 2
                     continue
                 }
@@ -228,7 +251,10 @@ object SummaryParser {
                     lower in listOf(
                         "lời khuyên:", "lời nhắn:", "lưu ý:", "chú ý:",
                         "lưu ý tinh tế:", "điểm cần chú ý:", "lời nhắn nhẹ nhàng:",
-                        "góc nhìn phản biện & lời khuyên:", "lời nhắn & điểm lưu ý:"
+                        "góc nhìn phản biện & lời khuyên:", "lời nhắn & điểm lưu ý:",
+                        "gentle message:", "core summary:", "strategic advice:",
+                        "quick note:", "subtle notes:", "points of attention:",
+                        "critical questions:", "urgent notice:", "advice:", "note:", "notes:"
                     )
                 )
                 if (isStandaloneHeader) {
@@ -258,7 +284,9 @@ object SummaryParser {
                             4 -> tasksPlanned.add(taskItem)
                         }
                     }
-                } else if (trimmed.startsWith("Hạn:") || trimmed.startsWith("Hạn chót:") || trimmed.startsWith("Nguồn:") || trimmed.startsWith("Thời gian:")) {
+                } else if (trimmed.startsWith("Hạn:") || trimmed.startsWith("Hạn chót:") || trimmed.startsWith("Nguồn:") || trimmed.startsWith("Thời gian:") ||
+                    trimmed.startsWith("Due:") || trimmed.startsWith("Deadline:") || trimmed.startsWith("Source:") || trimmed.startsWith("Time:") ||
+                    trimmed.startsWith("Target:") || trimmed.startsWith("Goal:")) {
                     // This was a sub-line attached to the previous task
                     val targetList = when (currentSection) {
                         2 -> tasksToDo
@@ -273,8 +301,9 @@ object SummaryParser {
                         val subParts = trimmed.split("•", "|")
                         for (part in subParts) {
                             val lowerPart = part.trim().lowercase()
-                            if (lowerPart.startsWith("nguồn:")) s = cleanMarkdown(part.trim().substringAfter(":"))
-                            if (lowerPart.startsWith("hạn:") || lowerPart.startsWith("hạn chót:") || lowerPart.startsWith("thời gian:")) {
+                            if (lowerPart.startsWith("nguồn:") || lowerPart.startsWith("source:") || lowerPart.startsWith("from:")) s = cleanMarkdown(part.trim().substringAfter(":"))
+                            if (lowerPart.startsWith("hạn:") || lowerPart.startsWith("hạn chót:") || lowerPart.startsWith("thời gian:") ||
+                                lowerPart.startsWith("due:") || lowerPart.startsWith("deadline:") || lowerPart.startsWith("time:") || lowerPart.startsWith("target:") || lowerPart.startsWith("goal:")) {
                                 d = cleanMarkdown(part.trim().substringAfter(":"))
                             }
                         }
@@ -328,8 +357,9 @@ object SummaryParser {
             val part = parts[i]
             val lower = part.lowercase()
             when {
-                lower.startsWith("nguồn:") -> source = cleanMarkdown(part.substringAfter(":"))
-                lower.startsWith("hạn chót:") || lower.startsWith("hạn:") || lower.startsWith("thời gian:") || lower.startsWith("mục tiêu:") -> {
+                lower.startsWith("nguồn:") || lower.startsWith("source:") || lower.startsWith("from:") -> source = cleanMarkdown(part.substringAfter(":"))
+                lower.startsWith("hạn chót:") || lower.startsWith("hạn:") || lower.startsWith("thời gian:") || lower.startsWith("mục tiêu:") ||
+                lower.startsWith("due:") || lower.startsWith("deadline:") || lower.startsWith("time:") || lower.startsWith("target:") || lower.startsWith("goal:") -> {
                     deadline = cleanMarkdown(part.substringAfter(":"))
                 }
                 source.isBlank() -> source = cleanMarkdown(part)

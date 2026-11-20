@@ -4,6 +4,7 @@ import com.orca.orcaauto.data.local.NotificationEntity
 import com.orca.orcaauto.data.local.SmartAlarmEntity
 import com.orca.orcaauto.domain.assistant.MessageCoalescer
 import com.orca.orcaauto.domain.filter.PiiSanitizer
+import com.orca.orcaauto.ui.locale.AppLanguage
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -15,6 +16,7 @@ object GeminiPromptBuilder {
     /**
      * Builds a structured AI prompt supporting dynamic PromptPersonas (Gentle Assistant, Executive Secretary, etc.)
      * Includes real-time timestamp, custom fixed user context, and optional live interactive user instructions.
+     * Supports both VIETNAMESE and ENGLISH prompt generation and output language enforcement.
      */
     fun buildSummaryPrompt(
         notifications: List<NotificationEntity>,
@@ -28,7 +30,55 @@ object GeminiPromptBuilder {
         taskNotes: Map<String, String> = emptyMap(),
         timezoneId: String = "Asia/Ho_Chi_Minh",
         autoCompleteOverdue: Boolean = false,
+        language: AppLanguage = AppLanguage.VIETNAMESE,
         notesSnippet: String = ""
+    ): String {
+        return if (language == AppLanguage.ENGLISH) {
+            buildEnglishPrompt(
+                notifications = notifications,
+                customFixedContext = customFixedContext,
+                persona = persona,
+                userQueryOrInstruction = userQueryOrInstruction,
+                previousSummary = previousSummary,
+                activeAlarms = activeAlarms,
+                cancelledTasks = cancelledTasks,
+                completedTasks = completedTasks,
+                taskNotes = taskNotes,
+                timezoneId = timezoneId,
+                autoCompleteOverdue = autoCompleteOverdue,
+                notesSnippet = notesSnippet
+            )
+        } else {
+            buildVietnamesePrompt(
+                notifications = notifications,
+                customFixedContext = customFixedContext,
+                persona = persona,
+                userQueryOrInstruction = userQueryOrInstruction,
+                previousSummary = previousSummary,
+                activeAlarms = activeAlarms,
+                cancelledTasks = cancelledTasks,
+                completedTasks = completedTasks,
+                taskNotes = taskNotes,
+                timezoneId = timezoneId,
+                autoCompleteOverdue = autoCompleteOverdue,
+                notesSnippet = notesSnippet
+            )
+        }
+    }
+
+    private fun buildVietnamesePrompt(
+        notifications: List<NotificationEntity>,
+        customFixedContext: String,
+        persona: PromptPersona,
+        userQueryOrInstruction: String,
+        previousSummary: String,
+        activeAlarms: List<SmartAlarmEntity>,
+        cancelledTasks: List<SmartAlarmEntity>,
+        completedTasks: List<SmartAlarmEntity>,
+        taskNotes: Map<String, String>,
+        timezoneId: String,
+        autoCompleteOverdue: Boolean,
+        notesSnippet: String
     ): String {
         val tz = try { java.util.TimeZone.getTimeZone(timezoneId) } catch (_: Exception) { java.util.TimeZone.getDefault() }
         val localizedDateFormat = SimpleDateFormat("EEEE, 'ngày' dd/MM/yyyy 'lúc' HH:mm", Locale("vi", "VN")).apply {
@@ -177,6 +227,172 @@ object GeminiPromptBuilder {
 
         contentBuilder.append("### 🟡 KẾ HOẠCH DỰ KIẾN (PLANNED)\n")
         contentBuilder.append("- [Tên lịch hẹn/kế hoạch tương lai] | Nguồn: [Người gửi] | Mục tiêu: [Ngày/Giờ]\n")
+
+        return contentBuilder.toString()
+    }
+
+    private fun buildEnglishPrompt(
+        notifications: List<NotificationEntity>,
+        customFixedContext: String,
+        persona: PromptPersona,
+        userQueryOrInstruction: String,
+        previousSummary: String,
+        activeAlarms: List<SmartAlarmEntity>,
+        cancelledTasks: List<SmartAlarmEntity>,
+        completedTasks: List<SmartAlarmEntity>,
+        taskNotes: Map<String, String>,
+        timezoneId: String,
+        autoCompleteOverdue: Boolean,
+        notesSnippet: String
+    ): String {
+        val tz = try { java.util.TimeZone.getTimeZone(timezoneId) } catch (_: Exception) { java.util.TimeZone.getDefault() }
+        val localizedDateFormat = SimpleDateFormat("EEEE, MMMM dd, yyyy 'at' HH:mm", Locale.US).apply {
+            timeZone = tz
+        }
+        val nowFormatted = localizedDateFormat.format(Date())
+        val offsetHours = tz.rawOffset / (3600 * 1000)
+        val offsetStr = if (offsetHours >= 0) "+$offsetHours" else "$offsetHours"
+
+        val contentBuilder = StringBuilder()
+
+        // 1. Role & Tone instruction based on Persona
+        contentBuilder.append(persona.getSystemRole(AppLanguage.ENGLISH)).append("\n\n")
+        contentBuilder.append("=== TONE & REASONING PRINCIPLES ===\n")
+        contentBuilder.append(persona.getPromptInstructions(AppLanguage.ENGLISH)).append("\n\n")
+
+        // 2. Real-time Anchor & Time Estimation
+        contentBuilder.append("=== REAL-TIME ANCHOR & DEADLINE REASONING ===\n")
+        contentBuilder.append("⏰ Current Time: $nowFormatted (Timezone: ${tz.id}, GMT$offsetStr).\n")
+        contentBuilder.append("• Correlate relative timestamps in messages with current time to accurately compute target dates and sensible alarm trigger proposals.\n")
+        contentBuilder.append("• If an actionable task lacks a specific hour, output 'Due: Today (Pending exact hour)' or sensible estimated time with date.\n")
+        if (autoCompleteOverdue) {
+            contentBuilder.append("• [AUTO-COMPLETE WHEN OVERDUE]: Any task whose deadline has passed relative to NOW MUST be automatically classified under [### 🟢 COMPLETED TASKS (DONE)] with note '(Auto-expired)'. Never keep it under TO-DO.\n\n")
+        } else {
+            contentBuilder.append("• For tasks not yet completed that are overdue or passively finished over time: Retain and track them for 1 to 2 more sessions after passing deadline, avoiding premature removal that could cause user to drop tasks.\n\n")
+        }
+
+        // 3. Long-term Context & Task Status (Last 2 Days)
+        val distinctCancelled = cancelledTasks.map { it.taskTitle.trim() }.filter { it.isNotBlank() }.distinct().take(35)
+        val distinctCompleted = completedTasks.map { it.taskTitle.trim() }.filter { it.isNotBlank() }.distinct().take(15)
+        val hasLongTermData = activeAlarms.isNotEmpty() || distinctCancelled.isNotEmpty() || distinctCompleted.isNotEmpty()
+
+        if (hasLongTermData) {
+            contentBuilder.append("=== LONG-TERM CONTEXT & TASK STATUS (LAST 2 DAYS) ===\n")
+            if (activeAlarms.isNotEmpty()) {
+                contentBuilder.append("• Tasks currently tracked / scheduled:\n")
+                for (alarm in activeAlarms.take(15)) {
+                    contentBuilder.append("  - ${alarm.taskTitle} | Due: ${alarm.targetDateLabel} [IN PROGRESS]\n")
+                }
+            }
+            if (distinctCancelled.isNotEmpty()) {
+                contentBuilder.append("• Tasks CANCELLED by user (within last 2 days):\n")
+                for (title in distinctCancelled) {
+                    contentBuilder.append("  - $title [CANCELLED] -> User cancelled this task, DO NOT recreate\n")
+                }
+            }
+            if (distinctCompleted.isNotEmpty()) {
+                contentBuilder.append("• Completed tasks:\n")
+                for (title in distinctCompleted) {
+                    contentBuilder.append("  - $title [COMPLETED]\n")
+                }
+            }
+            contentBuilder.append("⚡ Strictly respect the above labels: Items with [CANCELLED] or [COMPLETED] MUST NOT be placed into To-Do or Planned tasks.\n\n")
+        }
+
+        // 7. Task Notes
+        if (taskNotes.isNotEmpty()) {
+            contentBuilder.append("=== USER'S SPECIFIC INSTRUCTIONS FOR TASKS ===\n")
+            for ((tTitle, tNote) in taskNotes) {
+                if (tTitle.isNotBlank() && tNote.isNotBlank()) {
+                    contentBuilder.append("- Task: \"$tTitle\" ➜ Note: \"$tNote\"\n")
+                }
+            }
+            contentBuilder.append("⚡ Must follow these instructions to adjust priority or timing accordingly.\n\n")
+        }
+
+        // 8. Custom User Context
+        if (customFixedContext.isNotBlank()) {
+            contentBuilder.append("=== USER CONTEXT ===\n")
+            contentBuilder.append(customFixedContext.trim())
+            contentBuilder.append("\n\n")
+        }
+
+        // 9. Previous Summary Context
+        if (previousSummary.isNotBlank()) {
+            val compactPrev = previousSummary.trim().take(3000)
+            contentBuilder.append("=== PREVIOUS SHIFT REPORT (PROGRESS REFERENCE) ===\n")
+            contentBuilder.append(compactPrev)
+            contentBuilder.append("\n⚡ Continue progress from previous shift; incomplete or overdue tasks should be maintained according to rules above.\n\n")
+        }
+
+        // 9.1. Notes Snippet (Retrieved from Local Note Repository with Sealed Pointer for private notes)
+        if (notesSnippet.isNotBlank()) {
+            contentBuilder.append("=== RELEVANT NOTES REPOSITORY (LONG-TERM MEMORY) ===\n")
+            contentBuilder.append(notesSnippet.trim())
+            contentBuilder.append("\n\n")
+            contentBuilder.append("⚡ Notes Instructions:\n")
+            contentBuilder.append("- You can use information from these notes to answer the user.\n")
+            contentBuilder.append("- To display a note card on screen, use command syntax [SHOW_NOTE:id].\n")
+            contentBuilder.append("- To create a new note: [CREATE:title|content]. To append to a note: [APPEND:id|content].\n\n")
+        }
+
+        // 10. Live User Query
+        if (userQueryOrInstruction.isNotBlank()) {
+            contentBuilder.append("=== DIRECT USER REQUEST / INSTRUCTION ===\n")
+            contentBuilder.append("💬 \"${userQueryOrInstruction.trim()}\"\n")
+            contentBuilder.append("👉 Address this directly in [${persona.getAdviceSectionTitle(AppLanguage.ENGLISH)}] and coordinate the task board accordingly.\n\n")
+        }
+
+        // 11. Notifications Data
+        contentBuilder.append("=== MESSAGE DATA (${notifications.size} messages) ===\n")
+
+        if (notifications.isEmpty()) {
+            contentBuilder.append("(No new messages in this shift. Please answer the user's direct query/request above in English).\n")
+        } else {
+            val coalesced = MessageCoalescer.coalesce(
+                notifications = notifications,
+                assignTicketIds = false,
+                sanitizePii = true
+            )
+            contentBuilder.append(MessageCoalescer.formatForPrompt(coalesced, withTicketIds = false))
+            contentBuilder.append("\n\n")
+        }
+
+        // 12. SYSTEM REASONING GUIDELINES (INTERNAL REASONING ONLY - NO SCRATCHPAD TAGS)
+        contentBuilder.append("\n=== SYSTEM REASONING GUIDELINES (INTERNAL REASONING ONLY) ===\n")
+        contentBuilder.append("Before outputting the official report, you MUST perform logical analysis internally following these 5 steps in English (DO NOT output scratchpad tags or reasoning steps, output directly clean results):\n")
+        contentBuilder.append("1. Time Anchor: Determine current time NOW (dd/MM/yyyy HH:mm). Convert relative time expressions (\"tomorrow\", \"this afternoon\", \"3pm\") into concrete dates/times.\n")
+        contentBuilder.append("2. Filter Intent & Commitment: Discard spam, OTP codes, social chitchat without action items. Retain only tasks with clear assigners or commitments.\n")
+        contentBuilder.append("3. Conflict Resolution: Identify reschedule, cancellation, and correction messages; cross-check with completed and cancelled tasks to prevent duplicate creation.\n")
+        contentBuilder.append("4. Overdue Audit: Compare each task's deadline with NOW. If overdue and unfinished, mark and retain for 1-2 sessions or auto-expire per user policy.\n")
+        contentBuilder.append("5. Smart Alarm Proposal: Calculate optimal alert triggers (15-30m prior for meetings; estimate 09:30 or 14:30 for open tasks).\n\n")
+
+        contentBuilder.append("=== MANDATORY OUTPUT FORMAT RULES (DIRECT 2-PART OUTPUT) ===\n\n")
+        contentBuilder.append("You MUST output directly in the following 2-PART structure (All content must be in ENGLISH, no scratchpad leaks or extra conversational filler):\n\n")
+
+        val adviceTitle = persona.getAdviceSectionTitle(AppLanguage.ENGLISH)
+        val noteTitle = persona.getNoteSectionTitle(AppLanguage.ENGLISH)
+        contentBuilder.append("=== PART 1: ${adviceTitle.uppercase()} & ${noteTitle.uppercase()} ===\n")
+        contentBuilder.append("1. [$adviceTitle]: ${persona.getAdviceDescription(AppLanguage.ENGLISH)}\n")
+        contentBuilder.append("2. [$noteTitle]: ${persona.getNoteDescription(AppLanguage.ENGLISH)}\n\n")
+
+        contentBuilder.append("=== PART 2: TASK DISPATCH BOARD ===\n")
+        contentBuilder.append("LINE-BY-LINE SYNTAX RULES (CRITICAL FOR PARSER COMPATIBILITY):\n")
+        contentBuilder.append("• Each task MUST be on EXACTLY ONE SINGLE LINE using syntax: [Concise task title] | Source: [Sender name] | Due: [Proposed time/date]\n")
+        contentBuilder.append("• NEVER use bold markdown (**) within the task title.\n")
+        contentBuilder.append("• NEVER insert line breaks within a single task line.\n")
+        contentBuilder.append("• You MUST use these exact 3 section headings:\n\n")
+
+        contentBuilder.append("### 🔴 TO-DO TASKS\n")
+        contentBuilder.append("(Includes new actionable tasks and retained overdue/ongoing items)\n")
+        contentBuilder.append("- [Task to do] | Source: [Sender] | Due: [Proposed time/date]\n\n")
+
+        contentBuilder.append("### 🟢 COMPLETED TASKS (DONE)\n")
+        contentBuilder.append("(Keep at most 1-2 important recently finished tasks with timestamps; do not list trivial finished items)\n")
+        contentBuilder.append("- [Important finished task] | Source: [Sender] | Time: [Completed at HH:mm]\n\n")
+
+        contentBuilder.append("### 🟡 PLANNED TASKS\n")
+        contentBuilder.append("- [Upcoming event/future plan] | Source: [Sender] | Target: [Date/Time]\n")
 
         return contentBuilder.toString()
     }

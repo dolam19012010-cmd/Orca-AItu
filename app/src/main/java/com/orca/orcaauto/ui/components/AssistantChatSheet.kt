@@ -98,6 +98,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.orca.orcaauto.data.local.SharedNoteEntity
 import com.orca.orcaauto.data.preferences.AssistantThinkingLevel
+import com.orca.orcaauto.ui.locale.AppLanguage
+import com.orca.orcaauto.ui.locale.LocalAppStrings
 import com.orca.orcaauto.data.preferences.UserPreferences
 import com.orca.orcaauto.domain.filter.SummaryParser
 import com.orca.orcaauto.domain.filter.TaskItem
@@ -351,6 +353,8 @@ private fun AssistantSheetHeader(
     isProcessing: Boolean,
     onClose: () -> Unit
 ) {
+    val strings = LocalAppStrings.current
+    val isEn = strings.language == AppLanguage.ENGLISH
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -377,13 +381,17 @@ private fun AssistantSheetHeader(
             Spacer(modifier = Modifier.width(10.dp))
             Column {
                 Text(
-                    text = "Trợ lý Orca",
+                    text = if (isEn) "Orca Assistant" else "Trợ lý Orca",
                     color = TextPrimaryDark,
                     fontSize = 17.sp,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = if (isProcessing) "Đang chuẩn bị câu trả lời..." else "Sẵn sàng hỗ trợ ghi chú & tin nhắn",
+                    text = if (isProcessing) {
+                        if (isEn) "Preparing response..." else "Đang chuẩn bị câu trả lời..."
+                    } else {
+                        if (isEn) "Ready to assist with notes & messages" else "Sẵn sàng hỗ trợ ghi chú & tin nhắn"
+                    },
                     color = if (isProcessing) AccentCyan else TextMutedDark,
                     fontSize = 11.5.sp
                 )
@@ -393,7 +401,7 @@ private fun AssistantSheetHeader(
         IconButton(onClick = onClose) {
             Icon(
                 imageVector = Icons.Default.Close,
-                contentDescription = "Đóng",
+                contentDescription = if (isEn) "Close" else "Đóng",
                 tint = TextSecondaryDark
             )
         }
@@ -1222,8 +1230,10 @@ private fun AssistantInputBar(
                     value = inputText,
                     onValueChange = onInputChanged,
                     placeholder = {
+                        val strings = LocalAppStrings.current
+                        val isEn = strings.language == AppLanguage.ENGLISH
                         Text(
-                            text = "Hỏi trợ lý về tin nhắn, ghi chú...",
+                            text = if (isEn) "Ask assistant about messages, notes..." else "Hỏi trợ lý về tin nhắn, ghi chú...",
                             color = TextMutedDark,
                             fontSize = 13.5.sp
                         )

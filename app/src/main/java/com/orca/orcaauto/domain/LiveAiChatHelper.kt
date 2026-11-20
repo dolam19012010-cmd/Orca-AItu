@@ -199,6 +199,12 @@ object LiveAiChatHelper {
             rawPreviousSummary
         }
 
+        val effectiveAiLang = when (session.safeAiLanguage) {
+            "vi" -> com.orca.orcaauto.ui.locale.AppLanguage.VIETNAMESE
+            "en" -> com.orca.orcaauto.ui.locale.AppLanguage.ENGLISH
+            else -> prefs.getEffectiveAiLanguage()
+        }
+
         val prompt = GeminiPromptBuilder.buildSummaryPrompt(
             notifications = filteredSessionNotifications,
             customFixedContext = fixedContext,
@@ -211,6 +217,7 @@ object LiveAiChatHelper {
             taskNotes = taskNotes,
             timezoneId = prefs.getUserTimezone(),
             autoCompleteOverdue = session.autoCompleteOverdue,
+            language = effectiveAiLang,
             notesSnippet = notesSnippet
         )
 

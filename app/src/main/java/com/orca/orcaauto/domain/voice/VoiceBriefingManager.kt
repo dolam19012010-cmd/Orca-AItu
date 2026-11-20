@@ -20,7 +20,7 @@ class VoiceBriefingManager private constructor(context: Context) : TextToSpeech.
     private var tts: TextToSpeech? = null
     private var isInitialized = false
     @Volatile
-    private var pendingSpeech: Pair<Long, String>? = null
+    private var pendingSpeech: Triple<Long, String, Boolean>? = null
     private val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
     private var audioFocusRequest: AudioFocusRequest? = null
 
@@ -65,8 +65,13 @@ class VoiceBriefingManager private constructor(context: Context) : TextToSpeech.
                 }
             })
             isInitialized = true
-            pendingSpeech?.let { (pendingId, pendingScript) ->
+            pendingSpeech?.let { (pendingId, pendingScript, pendingIsEnglish) ->
                 pendingSpeech = null
+                if (pendingIsEnglish) {
+                    tts?.setLanguage(Locale.US)
+                } else {
+                    tts?.setLanguage(Locale("vi", "VN"))
+                }
                 startSpeaking(pendingId, pendingScript)
             }
         } else {
@@ -75,7 +80,7 @@ class VoiceBriefingManager private constructor(context: Context) : TextToSpeech.
         }
     }
 
-    fun speakSummary(summaryId: Long, parsed: ParsedSummary) {
+    fun speakSummary(summaryId: Long, parsed: ParsedSummary, isEnglish: Boolean = false) {
         if (tts == null) {
             Log.w(TAG, "TextToSpeech chưa sẵn sàng.")
             return
@@ -91,12 +96,18 @@ class VoiceBriefingManager private constructor(context: Context) : TextToSpeech.
 
         stop() // Dừng câu đọc cũ nếu có
 
-        val script = buildSpokenScript(parsed)
+        val script = buildSpokenScript(parsed, isEnglish)
         if (script.isBlank()) return
 
         if (!isInitialized) {
-            pendingSpeech = summaryId to script
+            pendingSpeech = Triple(summaryId, script, isEnglish)
             return
+        }
+
+        if (isEnglish) {
+            tts?.setLanguage(Locale.US)
+        } else {
+            tts?.setLanguage(Locale("vi", "VN"))
         }
 
         startSpeaking(summaryId, script)
@@ -119,7 +130,7 @@ class VoiceBriefingManager private constructor(context: Context) : TextToSpeech.
         abandonAudioFocus()
     }
 
-    fun buildSpokenScript(parsed: ParsedSummary): String = Companion.buildSpokenScript(parsed)
+    fun buildSpokenScript(parsed: ParsedSummary, isEnglish: Boolean = false): String = Companion.buildSpokenScript(parsed, isEnglish)
 
     private fun requestAudioFocus() {
         val am = audioManager ?: return
@@ -172,33 +183,62 @@ class VoiceBriefingManager private constructor(context: Context) : TextToSpeech.
             }
         }
 
-        fun buildSpokenScript(parsed: ParsedSummary): String {
+        fun buildSpokenScript(parsed: ParsedSummary, isEnglish: Boolean = false): String {
             val sb = StringBuilder()
 
-            // 1. Đọc Phần Lời khuyên & Lưu ý
-            if (parsed.conciseAdvice.isNotBlank()) {
-                val cleanAdvice = cleanMarkdown(parsed.conciseAdvice)
-                sb.append("Lời khuyên dành cho bạn: ").append(cleanAdvice).append(". ")
-            }
+            if (isEnglish) {
+                // 1. Advice
+                if (parsed.conciseAdvice.isNotBlank()) {
+                    val cleanAdvice = cleanMarkdown(parsed.conciseAdvice)
+                    sb.append("Executive advice for you: ").append(cleanAdvice).append(". ")
+                }
 
-            // 2. Đọc Phần Nhiệm vụ cần thực hiện (To-Do & Planned)
-            val activeTasks = parsed.tasksToDo + parsed.tasksPlanned
-            if (activeTasks.isNotEmpty()) {
-                sb.append("Các nhiệm vụ cần thực hiện. ")
-                activeTasks.forEachIndexed { index, task ->
-                    val cleanTitle = cleanMarkdown(task.title)
-                    sb.append("Nhiệm vụ ").append(index + 1).append(": ").append(cleanTitle).append(". ")
-                    if (task.deadline.isNotBlank()) {
-                        sb.append("Hạn chót là ").append(cleanMarkdown(task.deadline)).append(". ")
+                // 2. Tasks (To-Do & Planned)
+                val activeTasks = parsed.tasksToDo + parsed.tasksPlanned
+                if (activeTasks.isNotEmpty()) {
+                    sb.append("Actionable tasks to complete. ")
+                    activeTasks.forEachIndexed { index, task ->
+                        val cleanTitle = cleanMarkdown(task.title)
+                        sb.append("Task ").append(index + 1).append(": ").append(cleanTitle).append(". ")
+                        if (task.deadline.isNotBlank()) {
+                            sb.append("Deadline is ").append(cleanMarkdown(task.deadline)).append(". ")
+                        }
                     }
                 }
-            }
 
-            // 3. Đọc Phần Lưu ý / Phản biện nếu có
-            if (parsed.criticalQuestions.isNotEmpty()) {
-                sb.append("Lưu ý quan trọng: ")
-                parsed.criticalQuestions.forEach { q ->
-                    sb.append(cleanMarkdown(q)).append(". ")
+                // 3. Notes
+                if (parsed.criticalQuestions.isNotEmpty()) {
+                    sb.append("Key notes: ")
+                    parsed.criticalQuestions.forEach { q ->
+                        sb.append(cleanMarkdown(q)).append(". ")
+                    }
+                }
+            } else {
+                // 1. Đọc Phần Lời khuyên & Lưu ý
+                if (parsed.conciseAdvice.isNotBlank()) {
+                    val cleanAdvice = cleanMarkdown(parsed.conciseAdvice)
+                    sb.append("Lời khuyên dành cho bạn: ").append(cleanAdvice).append(". ")
+                }
+
+                // 2. Đọc Phần Nhiệm vụ cần thực hiện (To-Do & Planned)
+                val activeTasks = parsed.tasksToDo + parsed.tasksPlanned
+                if (activeTasks.isNotEmpty()) {
+                    sb.append("Các nhiệm vụ cần thực hiện. ")
+                    activeTasks.forEachIndexed { index, task ->
+                        val cleanTitle = cleanMarkdown(task.title)
+                        sb.append("Nhiệm vụ ").append(index + 1).append(": ").append(cleanTitle).append(". ")
+                        if (task.deadline.isNotBlank()) {
+                            sb.append("Hạn chót là ").append(cleanMarkdown(task.deadline)).append(". ")
+                        }
+                    }
+                }
+
+                // 3. Đọc Phần Lưu ý / Phản biện nếu có
+                if (parsed.criticalQuestions.isNotEmpty()) {
+                    sb.append("Lưu ý quan trọng: ")
+                    parsed.criticalQuestions.forEach { q ->
+                        sb.append(cleanMarkdown(q)).append(". ")
+                    }
                 }
             }
 

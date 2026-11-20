@@ -1956,8 +1956,10 @@ class FloatingBubbleService : Service() {
         }
         titleContainer.addView(titleTv)
 
+        val isEn = UserPreferences.getInstance(this).getAppLanguage() == com.orca.orcaauto.ui.locale.AppLanguage.ENGLISH
+
         val modelTv = TextView(this).apply {
-            text = if (latestModelInfo.isNotBlank()) latestModelInfo else "Trợ lý AI điều phối thông minh"
+            text = if (latestModelInfo.isNotBlank()) latestModelInfo else (if (isEn) "Smart AI Dispatch Assistant" else "Trợ lý AI điều phối thông minh")
             setTextColor(Color.parseColor("#38BDF8"))
             textSize = 10.5f
         }
@@ -1965,7 +1967,7 @@ class FloatingBubbleService : Service() {
         headerRow.addView(titleContainer)
 
         val openAppBtn = TextView(this).apply {
-            text = "Mở app ↗"
+            text = if (isEn) "Open app ↗" else "Mở app ↗"
             setTextColor(Color.WHITE)
             textSize = 11f
             typeface = Typeface.DEFAULT_BOLD
@@ -2061,8 +2063,9 @@ class FloatingBubbleService : Service() {
                     performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                     val p = cachedParsedSummary ?: SummaryParser.parse(latestSummaryText)
                     val sp = SystemAlarmHelper.filterOutCancelledFast(p, alarmNormalizedTitleMap)
+                    val isEn = UserPreferences.getInstance(this@FloatingBubbleService).getAppLanguage() == com.orca.orcaauto.ui.locale.AppLanguage.ENGLISH
                     com.orca.orcaauto.domain.voice.VoiceBriefingManager.getInstance(this@FloatingBubbleService)
-                        .speakSummary(0L, sp)
+                        .speakSummary(0L, sp, isEnglish = isEn)
                 } catch (e: Exception) {
                     Log.e(TAG, "Voice briefing failed", e)
                 }
@@ -2145,9 +2148,9 @@ class FloatingBubbleService : Service() {
         }
 
         val thinkingLevels = listOf(
-            AssistantThinkingLevel.FAST to "⚡ Nhanh",
-            AssistantThinkingLevel.BALANCED to "⚖ Cân bằng",
-            AssistantThinkingLevel.DEEP to "🧠 Sâu sắc"
+            AssistantThinkingLevel.FAST to (if (isEn) "⚡ Fast" else "⚡ Nhanh"),
+            AssistantThinkingLevel.BALANCED to (if (isEn) "⚖ Balanced" else "⚖ Cân bằng"),
+            AssistantThinkingLevel.DEEP to (if (isEn) "🧠 Deep" else "🧠 Sâu sắc")
         )
 
         for ((index, item) in thinkingLevels.withIndex()) {
@@ -2213,7 +2216,7 @@ class FloatingBubbleService : Service() {
         }
 
         val cancelHintTv = TextView(this).apply {
-            text = "‹ Trượt sang trái để huỷ"
+            text = if (isEn) "‹ Slide left to cancel" else "‹ Trượt sang trái để huỷ"
             setTextColor(Color.parseColor("#94A3B8"))
             textSize = 11f
             gravity = Gravity.CENTER_VERTICAL or Gravity.END
@@ -2260,7 +2263,7 @@ class FloatingBubbleService : Service() {
         var updateThinkingChipsVisibility: ((Boolean) -> Unit)? = null
 
         val queryEt = SelectionAwareEditText(this).apply {
-            hint = if (isCallingAi) "AI đang xử lý..." else "Nhập lệnh hoặc câu hỏi..."
+            hint = if (isCallingAi) (if (isEn) "AI is thinking..." else "AI đang xử lý...") else (if (isEn) "Ask AI or command..." else "Nhập lệnh hoặc câu hỏi...")
             setHintTextColor(Color.parseColor("#71717A"))
             setTextColor(Color.WHITE)
             textSize = 12.5f
@@ -2402,7 +2405,7 @@ class FloatingBubbleService : Service() {
             }
         }
 
-        val pastePill = createActionPill("📋", "Dán") {
+        val pastePill = createActionPill("📋", if (isEn) "Paste" else "Dán") {
             if (!queryEt.isEnabled || isCallingAi) return@createActionPill
             val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
             val clipData = clipboard?.primaryClip
@@ -2428,17 +2431,17 @@ class FloatingBubbleService : Service() {
                     )
                     queryEt.setSelection(newCursor)
                 }
-                Toast.makeText(this@FloatingBubbleService, "✓ Đã dán", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@FloatingBubbleService, if (isEn) "✓ Pasted" else "✓ Đã dán", Toast.LENGTH_SHORT).show()
                 hideQuickActionBar(animated = true)
             } else {
-                Toast.makeText(this@FloatingBubbleService, "Bộ nhớ tạm đang trống", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@FloatingBubbleService, if (isEn) "Clipboard is empty" else "Bộ nhớ tạm đang trống", Toast.LENGTH_SHORT).show()
             }
         }
 
-        val copyPill = createActionPill("📑", "Sao chép") {
+        val copyPill = createActionPill("📑", if (isEn) "Copy" else "Sao chép") {
             val editable = queryEt.text
             if (editable.isNullOrEmpty()) {
-                Toast.makeText(this@FloatingBubbleService, "Không có nội dung để sao chép", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@FloatingBubbleService, if (isEn) "No content to copy" else "Không có nội dung để sao chép", Toast.LENGTH_SHORT).show()
                 return@createActionPill
             }
             val textToCopy = FloatingBubbleTextSelectionHelper.resolveCopyText(
@@ -2451,15 +2454,15 @@ class FloatingBubbleService : Service() {
                 val clip = ClipData.newPlainText("text", textToCopy)
                 clipboard?.setPrimaryClip(clip)
                 queryEt.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-                Toast.makeText(this@FloatingBubbleService, "✓ Đã chép", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@FloatingBubbleService, if (isEn) "✓ Copied" else "✓ Đã chép", Toast.LENGTH_SHORT).show()
             }
         }
 
-        val cutPill = createActionPill("✂️", "Cắt") {
+        val cutPill = createActionPill("✂️", if (isEn) "Cut" else "Cắt") {
             if (!queryEt.isEnabled || isCallingAi) return@createActionPill
             val editable = queryEt.text
             if (editable.isNullOrEmpty()) {
-                Toast.makeText(this@FloatingBubbleService, "Không có nội dung để cắt", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@FloatingBubbleService, if (isEn) "No content to cut" else "Không có nội dung để cắt", Toast.LENGTH_SHORT).show()
                 return@createActionPill
             }
             val cutRange = FloatingBubbleTextSelectionHelper.resolveCutRange(
@@ -2476,14 +2479,14 @@ class FloatingBubbleService : Service() {
                 editable.delete(start, end)
                 queryEt.setSelection(start)
                 queryEt.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-                Toast.makeText(this@FloatingBubbleService, "✓ Đã cắt", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@FloatingBubbleService, if (isEn) "✓ Cut" else "✓ Đã cắt", Toast.LENGTH_SHORT).show()
                 hideQuickActionBar(animated = true)
             } else {
-                Toast.makeText(this@FloatingBubbleService, "Chưa chọn đoạn chữ cần cắt", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@FloatingBubbleService, if (isEn) "No text selected to cut" else "Chưa chọn đoạn chữ cần cắt", Toast.LENGTH_SHORT).show()
             }
         }
 
-        val selectAllPill = createActionPill("🔘", "Chọn tất cả") {
+        val selectAllPill = createActionPill("🔘", if (isEn) "Select All" else "Chọn tất cả") {
             if (!queryEt.isEnabled || isCallingAi) return@createActionPill
             if (!queryEt.text.isNullOrEmpty()) {
                 queryEt.requestFocus()
@@ -2532,12 +2535,12 @@ class FloatingBubbleService : Service() {
                     btn.background = sendBtnBgCallingAi
                 }
                 SendBtnState.HAS_TEXT -> {
-                    btn.text = "Gửi"
+                    btn.text = if (isEn) "Send" else "Gửi"
                     btn.setTextColor(Color.parseColor("#0F172A"))
                     btn.background = sendBtnBgActive
                 }
                 SendBtnState.EMPTY -> {
-                    btn.text = "Gửi"
+                    btn.text = if (isEn) "Send" else "Gửi"
                     btn.setTextColor(Color.parseColor("#94A3B8"))
                     btn.background = sendBtnBgInactive
                 }
@@ -2557,7 +2560,7 @@ class FloatingBubbleService : Service() {
         })
 
         val sendBtn = TextView(this).apply {
-            text = if (isCallingAi) "..." else "Gửi"
+            text = if (isCallingAi) "..." else (if (isEn) "Send" else "Gửi")
             setTextColor(Color.parseColor("#94A3B8"))
             textSize = 12f
             gravity = Gravity.CENTER
@@ -2582,11 +2585,11 @@ class FloatingBubbleService : Service() {
                 isCallingAi = true
                 activeStreamingJob?.cancel()
 
-                val promptToSend = queryText.ifBlank { "Tóm tắt các tin nhắn quan trọng gần đây" }
+                val promptToSend = queryText.ifBlank { if (isEn) "Summarize recent key tasks and messages" else "Tóm tắt các tin nhắn quan trọng gần đây" }
                 queryEt.setText("")
                 queryEt.clearFocus()
                 queryEt.isEnabled = false
-                queryEt.hint = "AI đang xử lý..."
+                queryEt.hint = if (isEn) "AI is thinking..." else "AI đang xử lý..."
                 hideQuickActionBar(animated = false)
                 updateThinkingChipsVisibility?.invoke(false)
                 updateSendBtnState(false)
@@ -2609,7 +2612,7 @@ class FloatingBubbleService : Service() {
                 targetSec1Box.visibility = View.VISIBLE
                 targetNotesContainer.removeAllViews()
                 targetAdviceTv.isClickable = false
-                targetAdviceTv.text = "⏳ Đang kết nối AI..."
+                targetAdviceTv.text = if (isEn) "⏳ Connecting to AI..." else "⏳ Đang kết nối AI..."
                 startTextShimmer(targetAdviceTv)
 
                 val globalRequestStartedAt = System.currentTimeMillis()
@@ -2750,7 +2753,7 @@ class FloatingBubbleService : Service() {
                         activeWatchdogJob = null
                         isCallingAi = false
                         queryEt.isEnabled = true
-                        queryEt.hint = "Nhập lệnh hoặc câu hỏi..."
+                        queryEt.hint = if (isEn) "Ask AI or command..." else "Nhập lệnh hoặc câu hỏi..."
                         updateSendBtnState(queryEt.text?.isNotBlank() == true)
                         updateThinkingChipsVisibility?.invoke(false)
                         activeStreamingJob = null
@@ -2858,9 +2861,9 @@ class FloatingBubbleService : Service() {
                             v.parent?.requestDisallowInterceptTouchEvent(false)
                             v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(80L).start()
                             showFloatingConfirmationDialog(
-                                title = "Cần quyền Micro",
-                                message = "Để nhận diện giọng nói tiếng Việt và tự động điền câu lệnh, Orca cần quyền Microphone. Vui lòng cấp quyền trong Cài đặt.",
-                                confirmText = "Mở Cài đặt",
+                                title = if (isEn) "Microphone Permission Required" else "Cần quyền Micro",
+                                message = if (isEn) "To recognize voice and auto-fill prompts, Orca requires Microphone permission. Please grant it in Settings." else "Để nhận diện giọng nói tiếng Việt và tự động điền câu lệnh, Orca cần quyền Microphone. Vui lòng cấp quyền trong Cài đặt.",
+                                confirmText = if (isEn) "Open Settings" else "Mở Cài đặt",
                                 confirmColor = Color.parseColor("#38BDF8")
                             ) {
                                 try {
@@ -2878,7 +2881,7 @@ class FloatingBubbleService : Service() {
                             isSlopExceeded = true
                             v.parent?.requestDisallowInterceptTouchEvent(false)
                             v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(80L).start()
-                            Toast.makeText(this@FloatingBubbleService, "Thiết bị chưa hỗ trợ nhận diện giọng nói", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(this@FloatingBubbleService, if (isEn) "Voice recognition not supported on device" else "Thiết bị chưa hỗ trợ nhận diện giọng nói", Toast.LENGTH_SHORT).show()
                             return@Runnable
                         }
 
@@ -2924,7 +2927,7 @@ class FloatingBubbleService : Service() {
 
                         soundVisualizerView.startVisualizer()
                         soundVisualizerView.setCancelProgress(0f)
-                        cancelHintTv.text = "‹ Trượt sang trái để huỷ"
+                        cancelHintTv.text = if (isEn) "‹ Slide left to cancel" else "‹ Trượt sang trái để huỷ"
                         cancelHintTv.setTextColor(Color.parseColor("#94A3B8"))
 
                         try {
@@ -2946,9 +2949,9 @@ class FloatingBubbleService : Service() {
                                 override fun onError(error: Int) {
                                     val message = when (error) {
                                         SpeechRecognizer.ERROR_NETWORK,
-                                        SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Lỗi kết nối mạng khi nhận diện giọng nói"
-                                        SpeechRecognizer.ERROR_AUDIO -> "Lỗi ghi âm từ microphone"
-                                        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Chưa đủ quyền truy cập microphone"
+                                        SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> if (isEn) "Network connection error during voice recognition" else "Lỗi kết nối mạng khi nhận diện giọng nói"
+                                        SpeechRecognizer.ERROR_AUDIO -> if (isEn) "Microphone audio recording error" else "Lỗi ghi âm từ microphone"
+                                        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> if (isEn) "Insufficient microphone permission" else "Chưa đủ quyền truy cập microphone"
                                         else -> null
                                     }
                                     if (message != null) {
@@ -2987,8 +2990,9 @@ class FloatingBubbleService : Service() {
 
                             val speechIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "vi-VN")
-                                putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "vi-VN")
+                                val langTag = if (isEn) "en-US" else "vi-VN"
+                                putExtra(RecognizerIntent.EXTRA_LANGUAGE, langTag)
+                                putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, langTag)
                                 putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
                                 putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
@@ -3036,13 +3040,13 @@ class FloatingBubbleService : Service() {
                             isSlideCancelled = true
                             sendBtn.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
                             voiceVisualizerBubble.animate().scaleX(1.08f).scaleY(1.08f).setDuration(120L).start()
-                            cancelHintTv.text = "✕ Thả để hủy"
+                            cancelHintTv.text = if (isEn) "✕ Release to cancel" else "✕ Thả để hủy"
                             cancelHintTv.setTextColor(Color.parseColor("#F87171"))
                         } else if (FloatingBubbleVoiceHelper.didRevertFromCancel(hasCrossedThreshold, isExceeded)) {
                             hasCrossedThreshold = false
                             isSlideCancelled = false
                             voiceVisualizerBubble.animate().scaleX(1.0f).scaleY(1.0f).setDuration(120L).start()
-                            cancelHintTv.text = "‹ Trượt sang trái để huỷ"
+                            cancelHintTv.text = if (isEn) "‹ Slide left to cancel" else "‹ Trượt sang trái để huỷ"
                             cancelHintTv.setTextColor(Color.parseColor("#94A3B8"))
                         }
                     }
@@ -4894,10 +4898,12 @@ class FloatingBubbleService : Service() {
                 editable.replace(start, end, clipText)
                 val newCursor = (start + clipText.length).coerceAtMost(editable.length)
                 target.setSelection(newCursor)
-                Toast.makeText(this, "✓ Đã dán", Toast.LENGTH_SHORT).show()
+                val isEn = try { UserPreferences.getInstance(this).getAppLanguage() == com.orca.orcaauto.ui.locale.AppLanguage.ENGLISH } catch (_: Exception) { false }
+                Toast.makeText(this, if (isEn) "✓ Pasted" else "✓ Đã dán", Toast.LENGTH_SHORT).show()
                 true
             } else {
-                Toast.makeText(this, "Bộ nhớ tạm đang trống", Toast.LENGTH_SHORT).show()
+                val isEn = try { UserPreferences.getInstance(this).getAppLanguage() == com.orca.orcaauto.ui.locale.AppLanguage.ENGLISH } catch (_: Exception) { false }
+                Toast.makeText(this, if (isEn) "Clipboard is empty" else "Bộ nhớ tạm đang trống", Toast.LENGTH_SHORT).show()
                 true
             }
         } catch (e: Exception) {
@@ -4948,58 +4954,106 @@ class FloatingBubbleService : Service() {
         }
 
         fun buildAiErrorMessage(context: Context?, t: Throwable?, isWatchdogTimedOut: Boolean): Pair<String, String> {
+            val isEn = if (context != null) {
+                try {
+                    UserPreferences.getInstance(context).getAppLanguage() == com.orca.orcaauto.ui.locale.AppLanguage.ENGLISH
+                } catch (_: Exception) {
+                    false
+                }
+            } else false
+
             // 1. Device is physically offline or DNS failure
             if (isPhysicalNetworkOffline(context, t)) {
-                return Pair("Mất kết nối mạng", "Thiết bị chưa có kết nối Internet. Chạm để thử lại.")
+                return if (isEn) {
+                    Pair("No network connection", "Device is offline. Tap to retry.")
+                } else {
+                    Pair("Mất kết nối mạng", "Thiết bị chưa có kết nối Internet. Chạm để thử lại.")
+                }
             }
 
             // 2. Rate limit / Quota exhausted
             if (RateLimitDetector.isRateLimit(t)) {
-                return Pair("Hết hạn mức AI (HTTP 429)", "Tài khoản AI hoặc toàn bộ Key dự phòng đã chạm hạn mức. Vui lòng thêm Key mới trong Cài đặt.")
+                return if (isEn) {
+                    Pair("AI Quota Exceeded (HTTP 429)", "AI account or all fallback keys have hit the quota limit. Please add a new Key in Settings.")
+                } else {
+                    Pair("Hết hạn mức AI (HTTP 429)", "Tài khoản AI hoặc toàn bộ Key dự phòng đã chạm hạn mức. Vui lòng thêm Key mới trong Cài đặt.")
+                }
             }
 
             val msg = t?.message.orEmpty()
 
             // 2b. Global timeout ceiling across all failovers (120s)
             if (msg.contains("GLOBAL_REQUEST_TIMEOUT", ignoreCase = true)) {
-                return Pair("Tổng thời gian chờ quá lâu (>120s)", "Toàn bộ phiên kết nối AI vượt quá 120 giây. Chạm để thử lại.")
+                return if (isEn) {
+                    Pair("Request timed out (>120s)", "AI session exceeded 120 seconds. Tap to retry.")
+                } else {
+                    Pair("Tổng thời gian chờ quá lâu (>120s)", "Toàn bộ phiên kết nối AI vượt quá 120 giây. Chạm để thử lại.")
+                }
             }
 
             // 3. All keys in fallback pool failed
             if (msg.contains("danh sách dự phòng đều thất bại", ignoreCase = true) ||
                 msg.contains("đều phản hồi quá lâu", ignoreCase = true)
             ) {
-                return Pair("Toàn bộ API Key đều lỗi", "Tất cả các Key trong danh sách dự phòng đều thất bại hoặc phản hồi quá lâu. Vui lòng kiểm tra lại Key trong Cài đặt.")
+                return if (isEn) {
+                    Pair("All API Keys Failed", "All keys in the fallback pool failed or timed out. Please check your keys in Settings.")
+                } else {
+                    Pair("Toàn bộ API Key đều lỗi", "Tất cả các Key trong danh sách dự phòng đều thất bại hoặc phản hồi quá lâu. Vui lòng kiểm tra lại Key trong Cài đặt.")
+                }
             }
 
             // 4. Watchdog connection window timeout (90s)
             if (isWatchdogTimedOut || msg.contains("INITIAL_CONNECTION_TIMEOUT", ignoreCase = true)) {
-                return Pair("Máy chủ phản hồi quá lâu (>90s)", "Không nhận được phản hồi từ AI sau 90 giây. Chạm để thử lại.")
+                return if (isEn) {
+                    Pair("Server response timeout (>90s)", "No response from AI after 90 seconds. Tap to retry.")
+                } else {
+                    Pair("Máy chủ phản hồi quá lâu (>90s)", "Không nhận được phản hồi từ AI sau 90 giây. Chạm để thử lại.")
+                }
             }
 
             // 4b. AI provider timeout / slow response
             if (msg.contains("phản hồi quá lâu", ignoreCase = true)) {
-                return Pair("Máy chủ phản hồi quá lâu", "$msg. Chạm để thử lại.")
+                return if (isEn) {
+                    Pair("Server slow response", "$msg. Tap to retry.")
+                } else {
+                    Pair("Máy chủ phản hồi quá lâu", "$msg. Chạm để thử lại.")
+                }
             }
 
             // 5. In-flight streaming stall timeout (25s)
             if (msg.contains("SSE_STREAM_WATCHDOG_TIMEOUT", ignoreCase = true)) {
-                return Pair("Gián đoạn dữ liệu AI", "Dòng phản hồi AI bị ngắt quãng quá 25 giây. Chạm để thử lại.")
+                return if (isEn) {
+                    Pair("AI Stream Interrupted", "AI response stream was stalled for over 25s. Tap to retry.")
+                } else {
+                    Pair("Gián đoạn dữ liệu AI", "Dòng phản hồi AI bị ngắt quãng quá 25 giây. Chạm để thử lại.")
+                }
             }
 
             // 6. HTTP 401 / 403 API Key unauthorized / rejected
             if (msg.contains("401") || msg.contains("403") || msg.contains("Unauthorized", ignoreCase = true) || msg.contains("Forbidden", ignoreCase = true)) {
-                return Pair("API Key không hợp lệ (401/403)", "Khóa API bị từ chối hoặc hết hạn. Vui lòng kiểm tra lại Key trong Cài đặt.")
+                return if (isEn) {
+                    Pair("Invalid API Key (401/403)", "API Key was rejected or expired. Please check your key in Settings.")
+                } else {
+                    Pair("API Key không hợp lệ (401/403)", "Khóa API bị từ chối hoặc hết hạn. Vui lòng kiểm tra lại Key trong Cài đặt.")
+                }
             }
 
             // 7. HTTP 500 / 502 / 503 / 504 Server Error
             if (msg.contains("500") || msg.contains("502") || msg.contains("503") || msg.contains("504") || msg.contains("Bad Gateway", ignoreCase = true) || msg.contains("Service Unavailable", ignoreCase = true)) {
-                return Pair("Máy chủ AI quá tải (50x)", "Nhà cung cấp AI đang bận hoặc bảo trì. Chạm để thử lại.")
+                return if (isEn) {
+                    Pair("AI Server Overload (50x)", "AI provider is busy or under maintenance. Tap to retry.")
+                } else {
+                    Pair("Máy chủ AI quá tải (50x)", "Nhà cung cấp AI đang bận hoặc bảo trì. Chạm để thử lại.")
+                }
             }
 
             // 8. General AI error with clean extracted message
-            val cleanErr = msg.ifBlank { "Lỗi không xác định khi gọi AI" }
-            return Pair("Lỗi gọi AI", "$cleanErr. Chạm để thử lại.")
+            val cleanErr = msg.ifBlank { if (isEn) "Unknown error calling AI" else "Lỗi không xác định khi gọi AI" }
+            return if (isEn) {
+                Pair("AI Request Error", "$cleanErr. Tap to retry.")
+            } else {
+                Pair("Lỗi gọi AI", "$cleanErr. Chạm để thử lại.")
+            }
         }
 
         fun isNetworkException(t: Throwable?): Boolean {

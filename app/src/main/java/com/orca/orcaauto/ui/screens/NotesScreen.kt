@@ -81,6 +81,8 @@ import androidx.compose.ui.unit.sp
 import com.orca.orcaauto.data.local.SharedNoteEntity
 import com.orca.orcaauto.domain.notes.SharedNoteRepositoryImpl
 import com.orca.orcaauto.ui.components.AssistantChatSheet
+import com.orca.orcaauto.ui.locale.AppLanguage
+import com.orca.orcaauto.ui.locale.LocalAppStrings
 import com.orca.orcaauto.ui.theme.AccentAmber
 import com.orca.orcaauto.ui.theme.AccentCyan
 import com.orca.orcaauto.ui.theme.AccentEmerald
@@ -134,6 +136,7 @@ fun NotesScreen(
     var showClearTrashDialog by remember { mutableStateOf(false) }
 
     var showAssistantSheet by remember { mutableStateOf(initialOpenAssistant) }
+    val strings = LocalAppStrings.current
 
     // Filter calculation
     val displayedNotes = remember(filterMode, searchQuery, activeNotes, trashNotes) {
@@ -198,7 +201,7 @@ fun NotesScreen(
                     onValueChange = { searchQuery = it },
                     placeholder = {
                         Text(
-                            text = "Tìm kiếm ghi chú theo tiêu đề hoặc nội dung...",
+                            text = strings.notesSearchPlaceholder,
                             color = TextMutedDark,
                             fontSize = 14.sp
                         )
@@ -470,6 +473,7 @@ private fun NotesHeader(
     onToggleTrash: () -> Unit,
     onOpenAssistant: () -> Unit
 ) {
+    val strings = LocalAppStrings.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -480,7 +484,7 @@ private fun NotesHeader(
         Column {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = "Kho Ghi Chú",
+                    text = strings.notesTitle,
                     color = TextPrimaryDark,
                     fontSize = 22.sp,
                     fontWeight = FontWeight.Bold
@@ -502,7 +506,7 @@ private fun NotesHeader(
                 }
             }
             Text(
-                text = "Lưu trữ lâu dài trên thiết bị • Bảo vệ ghi chú riêng tư",
+                text = strings.notesSubtitle,
                 color = TextMutedDark,
                 fontSize = 12.sp
             )
@@ -516,7 +520,7 @@ private fun NotesHeader(
             IconButton(onClick = onToggleSearch) {
                 Icon(
                     imageVector = Icons.Default.Search,
-                    contentDescription = "Tìm kiếm",
+                    contentDescription = "Search",
                     tint = if (isSearchExpanded) AccentCyan else TextSecondaryDark
                 )
             }
@@ -526,7 +530,7 @@ private fun NotesHeader(
                 Box {
                     Icon(
                         imageVector = if (isTrashMode) Icons.Default.Restore else Icons.Default.DeleteSweep,
-                        contentDescription = "Thùng rác",
+                        contentDescription = "Trash",
                         tint = if (isTrashMode) AccentRose else TextSecondaryDark
                     )
                     if (!isTrashMode && trashCount > 0) {
@@ -554,13 +558,13 @@ private fun NotesHeader(
                 ) {
                     Icon(
                         imageVector = Icons.Default.AutoAwesome,
-                        contentDescription = "Trợ lý AI",
+                        contentDescription = strings.notesAssistantButton,
                         tint = AccentCyan,
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "Trợ lý AI",
+                        text = strings.notesAssistantButton,
                         color = AccentCyan,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold
@@ -580,20 +584,21 @@ private fun NotesFilterChipsRow(
     trashCount: Int,
     onModeSelected: (NoteFilterMode) -> Unit
 ) {
+    val strings = LocalAppStrings.current
     LazyRow(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         item {
             FilterChipItem(
-                label = "Tất cả ($allCount)",
+                label = "${strings.notesFilterAll} ($allCount)",
                 selected = currentMode == NoteFilterMode.ALL,
                 onClick = { onModeSelected(NoteFilterMode.ALL) }
             )
         }
         item {
             FilterChipItem(
-                label = "🔒 Riêng tư ($privateCount)",
+                label = "🔒 ${strings.notesFilterPrivate} ($privateCount)",
                 selected = currentMode == NoteFilterMode.PRIVATE,
                 highlightColor = AccentCyan,
                 onClick = { onModeSelected(NoteFilterMode.PRIVATE) }
@@ -601,14 +606,14 @@ private fun NotesFilterChipsRow(
         }
         item {
             FilterChipItem(
-                label = "Ghi chú thường ($normalCount)",
+                label = "${strings.notesFilterNormal} ($normalCount)",
                 selected = currentMode == NoteFilterMode.NORMAL,
                 onClick = { onModeSelected(NoteFilterMode.NORMAL) }
             )
         }
         item {
             FilterChipItem(
-                label = "Thùng rác ($trashCount)",
+                label = "${strings.notesFilterTrash} ($trashCount)",
                 selected = currentMode == NoteFilterMode.TRASH,
                 highlightColor = AccentRose,
                 onClick = { onModeSelected(NoteFilterMode.TRASH) }

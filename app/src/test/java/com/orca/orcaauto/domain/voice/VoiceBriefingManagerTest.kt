@@ -33,6 +33,30 @@ class VoiceBriefingManagerTest {
     }
 
     @Test
+    fun testBuildSpokenScript_english() {
+        val parsed = ParsedSummary(
+            rawCleanText = "Raw summary content",
+            conciseAdvice = "Remember to review the quarterly roadmap.",
+            tasksToDo = listOf(
+                TaskItem(title = "Send contract to client", deadline = "5:00 PM today")
+            ),
+            tasksDone = emptyList(),
+            tasksPlanned = listOf(
+                TaskItem(title = "Team weekly sync", deadline = "Tomorrow 9:00 AM")
+            ),
+            criticalQuestions = listOf("Has budget been approved?")
+        )
+
+        val script = VoiceBriefingManager.buildSpokenScript(parsed, isEnglish = true)
+
+        assertTrue(script.contains("Executive advice for you: Remember to review the quarterly roadmap."))
+        assertTrue(script.contains("Actionable tasks to complete."))
+        assertTrue(script.contains("Task 1: Send contract to client. Deadline is 5:00 PM today."))
+        assertTrue(script.contains("Task 2: Team weekly sync. Deadline is Tomorrow 9:00 AM."))
+        assertTrue(script.contains("Key notes: Has budget been approved?"))
+    }
+
+    @Test
     fun testCleanMarkdown() {
         val raw = "**Lưu ý** [ ] `quan trọng`: *xong việc* trước 12h."
         val cleaned = VoiceBriefingManager.cleanMarkdown(raw)

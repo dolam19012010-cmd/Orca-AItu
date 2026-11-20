@@ -206,4 +206,67 @@ class SummaryParserTest {
         assertTrue(parsed.tasksDone.isEmpty())
         assertTrue(parsed.tasksPlanned.isEmpty())
     }
+
+    @Test
+    fun testParseEnglishAiOutput() {
+        val englishAiOutput = """
+            === PART 1: GENTLE REMINDERS & THOUGHTFUL NOTES ===
+            1. [Gentle Reminder]: Please review the pull request before our standup at 10:00 AM.
+            2. [Key Observation]: Client approved the mockups without requested changes.
+
+            === PART 2: TASK DISPATCH BOARD ===
+            ### 🔴 TO-DO TASKS
+            - [ ] Review PR #42 | Due: 10:00 | Source: GitHub
+            - [ ] Submit weekly report | Deadline: 17:00 | Source: Slack
+
+            ### 🟢 COMPLETED TASKS
+            - [x] Merge sprint release branch | Source: Jira
+
+            ### 🟡 PLANNED TASKS
+            - [ ] Sprint retro meeting | Time: Friday | Source: Calendar
+        """.trimIndent()
+
+        val parsed = SummaryParser.parse(englishAiOutput)
+
+        // Advice
+        assertTrue(parsed.conciseAdvice.contains("Please review the pull request"))
+        assertTrue(parsed.conciseAdvice.contains("Client approved the mockups"))
+        assertTrue(parsed.criticalQuestions.isEmpty())
+
+        // To-Do
+        assertEquals(2, parsed.tasksToDo.size)
+        assertEquals("Review PR #42", parsed.tasksToDo[0].title)
+        assertEquals("10:00", parsed.tasksToDo[0].deadline)
+        assertEquals("GitHub", parsed.tasksToDo[0].source)
+        assertEquals(TaskStatus.TODO, parsed.tasksToDo[0].status)
+
+        assertEquals("Submit weekly report", parsed.tasksToDo[1].title)
+        assertEquals("17:00", parsed.tasksToDo[1].deadline)
+        assertEquals("Slack", parsed.tasksToDo[1].source)
+
+        // Done
+        assertEquals(1, parsed.tasksDone.size)
+        assertEquals("Merge sprint release branch", parsed.tasksDone[0].title)
+        assertEquals("Jira", parsed.tasksDone[0].source)
+        assertEquals(TaskStatus.DONE, parsed.tasksDone[0].status)
+
+        // Planned
+        assertEquals(1, parsed.tasksPlanned.size)
+        assertEquals("Sprint retro meeting", parsed.tasksPlanned[0].title)
+        assertEquals("Friday", parsed.tasksPlanned[0].deadline)
+        assertEquals("Calendar", parsed.tasksPlanned[0].source)
+        assertEquals(TaskStatus.PLANNED, parsed.tasksPlanned[0].status)
+
+        assertEquals(4, parsed.totalTaskCount)
+    }
+
+    @Test
+    fun testTaskStatusGetDisplayName() {
+        assertEquals("Phải làm", TaskStatus.TODO.getDisplayName(com.orca.orcaauto.ui.locale.AppLanguage.VIETNAMESE))
+        assertEquals("To-Do", TaskStatus.TODO.getDisplayName(com.orca.orcaauto.ui.locale.AppLanguage.ENGLISH))
+        assertEquals("Đã làm", TaskStatus.DONE.getDisplayName(com.orca.orcaauto.ui.locale.AppLanguage.VIETNAMESE))
+        assertEquals("Done", TaskStatus.DONE.getDisplayName(com.orca.orcaauto.ui.locale.AppLanguage.ENGLISH))
+        assertEquals("Kế hoạch", TaskStatus.PLANNED.getDisplayName(com.orca.orcaauto.ui.locale.AppLanguage.VIETNAMESE))
+        assertEquals("Planned", TaskStatus.PLANNED.getDisplayName(com.orca.orcaauto.ui.locale.AppLanguage.ENGLISH))
+    }
 }

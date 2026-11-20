@@ -61,4 +61,46 @@ class GeminiPromptBuilderTest {
         assertTrue(prompt.contains("Nguyễn Văn A"))
         assertTrue(prompt.contains("Giao hợp đồng trước 17h"))
     }
+
+    @Test
+    fun testBuildEnglishSummaryPromptDoesNotContainScratchpadAndHasEnglishGuidelines() {
+        val notifications = listOf(
+            NotificationEntity(
+                id = 2,
+                appPackage = "com.google.android.talk",
+                appName = "Google Chat",
+                sender = "Alice",
+                content = "Please submit the quarterly report by 5 PM"
+            )
+        )
+
+        val prompt = GeminiPromptBuilder.buildSummaryPrompt(
+            notifications = notifications,
+            customFixedContext = "I am a Product Manager at TechCorp",
+            persona = PromptPersona.GENTLE_ASSISTANT,
+            language = com.orca.orcaauto.ui.locale.AppLanguage.ENGLISH,
+            userQueryOrInstruction = "Focus on urgent deliverables",
+            previousSummary = "Previous session had 2 pending tickets",
+            notesSnippet = "[MEMORY BANK: User prefers concise bullet points]"
+        )
+
+        // Verify no scratchpad tags
+        assertFalse("English prompt must not contain <scratchpad>", prompt.contains("<scratchpad>"))
+        assertFalse("English prompt must not contain </scratchpad>", prompt.contains("</scratchpad>"))
+
+        // Verify English reasoning guidelines and output format
+        assertTrue("English prompt must contain internal reasoning guidelines", prompt.contains("=== SYSTEM REASONING GUIDELINES (INTERNAL REASONING ONLY) ==="))
+        assertTrue("English prompt must specify direct 2-part format", prompt.contains("DIRECT 2-PART OUTPUT"))
+
+        // Verify persona English fields
+        assertTrue(prompt.contains(PromptPersona.GENTLE_ASSISTANT.getSystemRole(com.orca.orcaauto.ui.locale.AppLanguage.ENGLISH)))
+
+        // Verify injected context, user query, previous summary, memory bank, and notifications
+        assertTrue(prompt.contains("I am a Product Manager at TechCorp"))
+        assertTrue(prompt.contains("Focus on urgent deliverables"))
+        assertTrue(prompt.contains("Previous session had 2 pending tickets"))
+        assertTrue(prompt.contains("[MEMORY BANK: User prefers concise bullet points]"))
+        assertTrue(prompt.contains("Alice"))
+        assertTrue(prompt.contains("Please submit the quarterly report by 5 PM"))
+    }
 }
