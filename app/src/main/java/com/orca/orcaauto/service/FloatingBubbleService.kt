@@ -182,11 +182,14 @@ class FloatingBubbleService : Service() {
     private var activeSpeechRecognizer: SpeechRecognizer? = null
     private var isRecordingVoice: Boolean = false
     private var activeHoldRunnable: Runnable? = null
+    private var activeOutsideHoldRunnable: Runnable? = null
     private var cancelActiveVoiceSession: (() -> Unit)? = null
 
     private fun cleanupVoiceRecording() {
         activeHoldRunnable?.let { bubbleLifecycleHandler.removeCallbacks(it) }
         activeHoldRunnable = null
+        activeOutsideHoldRunnable?.let { bubbleLifecycleHandler.removeCallbacks(it) }
+        activeOutsideHoldRunnable = null
         try {
             activeSpeechRecognizer?.cancel()
             activeSpeechRecognizer?.destroy()
@@ -1528,6 +1531,8 @@ class FloatingBubbleService : Service() {
         isSwipeAnimating = false
         currentSendBtnState = null
         cleanupVoiceRecording()
+        activeOutsideHoldRunnable?.let { bubbleLifecycleHandler.removeCallbacks(it) }
+        activeOutsideHoldRunnable = null
         try {
             com.orca.orcaauto.domain.voice.VoiceBriefingManager.getInstance(this).stop()
         } catch (_: Exception) {}
@@ -2518,6 +2523,7 @@ class FloatingBubbleService : Service() {
         fun updateSendBtnState(hasText: Boolean) {
             val btn = sendBtnRef ?: return
             if (isRecordingVoice) return
+            btn.isClickable = !isCallingAi
             val targetState = when {
                 isCallingAi -> SendBtnState.CALLING_AI
                 hasText -> SendBtnState.HAS_TEXT
@@ -2754,6 +2760,8 @@ class FloatingBubbleService : Service() {
                         isCallingAi = false
                         queryEt.isEnabled = true
                         queryEt.hint = if (isEn) "Ask AI or command..." else "Nhập lệnh hoặc câu hỏi..."
+                        sendBtnRef?.isClickable = true
+                        currentSendBtnState = null
                         updateSendBtnState(queryEt.text?.isNotBlank() == true)
                         updateThinkingChipsVisibility?.invoke(false)
                         activeStreamingJob = null
@@ -3013,10 +3021,8 @@ class FloatingBubbleService : Service() {
                     if (!isHoldTriggered) {
                         val dx = Math.abs(event.rawX - downRawX)
                         val dy = Math.abs(event.rawY - downRawY)
-                        if (dx > touchSlopPx || dy > touchSlopPx) {
-                            isSlopExceeded = true
-                            v.parent?.requestDisallowInterceptTouchEvent(false)
-                            v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(80L).start()
+                        val isInside = FloatingBubbleVoiceHelper.isTouchInsideView(event.x, event.y, v.width, v.height, touchSlopPx)
+                        if (!isInside || dx > touchSlopPx * 2 || dy > touchSlopPx * 2) {
                             activeHoldRunnable?.let { bubbleLifecycleHandler.removeCallbacks(it) }
                             activeHoldRunnable = null
                         }
@@ -3058,10 +3064,13 @@ class FloatingBubbleService : Service() {
                     activeHoldRunnable?.let { bubbleLifecycleHandler.removeCallbacks(it) }
                     activeHoldRunnable = null
 
+                    val isInsideButton = FloatingBubbleVoiceHelper.isTouchInsideView(event.x, event.y, v.width, v.height, touchSlopPx)
+                    val effectiveSlopExceeded = isSlopExceeded || (!isHoldTriggered && !isInsideButton)
+
                     val action = FloatingBubbleVoiceHelper.resolveTouchAction(
                         isHoldTriggered = isHoldTriggered,
                         isSlideCancelled = isSlideCancelled,
-                        isSlopExceeded = isSlopExceeded
+                        isSlopExceeded = effectiveSlopExceeded
                     )
 
                     when (action) {
@@ -3069,9 +3078,6 @@ class FloatingBubbleService : Service() {
                             v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(80L).start()
                             if (!isCallingAi) {
                                 val q = queryEt.text.toString().trim()
-                                if (q.isBlank()) {
-                                    return@setOnTouchListener true
-                                }
                                 executeAiCall(q)
                             }
                         }
@@ -3235,17 +3241,89 @@ class FloatingBubbleService : Service() {
         currentCardLayoutRef = cardLayout
         currentTasksBoardLayout = shell.tasksBoardLayout
 
-        // Outside-tap detector: tapping empty space collapses back to floating bubble
+        // Outside-tap detector with long-press abort:
+        // - Closes on finger release (ACTION_UP), not on press-down (ACTION_DOWN)
+        // - Holding down for >= 450ms cancels the close intent (haptic feedback confirms abort)
         val cardRect = Rect()
-        root.setOnTouchListener { _, event ->
-            if (event.action == MotionEvent.ACTION_DOWN) {
-                cardLayout.getGlobalVisibleRect(cardRect)
-                if (!cardRect.contains(event.rawX.toInt(), event.rawY.toInt())) {
-                    collapseExpandedCard(root)
-                    return@setOnTouchListener true
+        var outsideDownStarted = false
+        var outsideDownTime = 0L
+        var isOutsideHoldAborted = false
+
+        fun cleanupOutsideTouch() {
+            activeOutsideHoldRunnable?.let { bubbleLifecycleHandler.removeCallbacks(it) }
+            activeOutsideHoldRunnable = null
+            outsideDownStarted = false
+            isOutsideHoldAborted = false
+            outsideDownTime = 0L
+        }
+
+        root.setOnTouchListener { v, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    cardLayout.getGlobalVisibleRect(cardRect)
+                    val isOutside = !cardRect.contains(event.rawX.toInt(), event.rawY.toInt())
+                    if (isOutside) {
+                        outsideDownStarted = true
+                        outsideDownTime = System.currentTimeMillis()
+                        isOutsideHoldAborted = false
+
+                        activeOutsideHoldRunnable?.let { bubbleLifecycleHandler.removeCallbacks(it) }
+                        val r = Runnable {
+                            if (outsideDownStarted) {
+                                isOutsideHoldAborted = true
+                                v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                            }
+                        }
+                        activeOutsideHoldRunnable = r
+                        bubbleLifecycleHandler.postDelayed(r, FloatingBubbleVoiceHelper.OUTSIDE_HOLD_ABORT_THRESHOLD_MS)
+                        return@setOnTouchListener true
+                    }
+                    cleanupOutsideTouch()
+                    false
                 }
+
+                MotionEvent.ACTION_MOVE -> {
+                    if (outsideDownStarted) {
+                        cardLayout.getGlobalVisibleRect(cardRect)
+                        val isInsideCard = cardRect.contains(event.rawX.toInt(), event.rawY.toInt())
+                        if (isInsideCard) {
+                            // User dragged finger back into the card -> abort closing
+                            isOutsideHoldAborted = true
+                            activeOutsideHoldRunnable?.let { bubbleLifecycleHandler.removeCallbacks(it) }
+                            activeOutsideHoldRunnable = null
+                        }
+                        return@setOnTouchListener true
+                    }
+                    false
+                }
+
+                MotionEvent.ACTION_UP -> {
+                    if (outsideDownStarted) {
+                        val duration = System.currentTimeMillis() - outsideDownTime
+                        cardLayout.getGlobalVisibleRect(cardRect)
+                        val isReleaseOutside = !cardRect.contains(event.rawX.toInt(), event.rawY.toInt())
+                        val shouldCollapse = FloatingBubbleVoiceHelper.shouldCollapseOnOutsideRelease(
+                            downStartedOutside = true,
+                            isReleaseOutside = isReleaseOutside,
+                            pressDurationMs = duration,
+                            isHoldAborted = isOutsideHoldAborted
+                        )
+                        cleanupOutsideTouch()
+                        if (shouldCollapse) {
+                            collapseExpandedCard(root)
+                        }
+                        return@setOnTouchListener true
+                    }
+                    false
+                }
+
+                MotionEvent.ACTION_CANCEL -> {
+                    cleanupOutsideTouch()
+                    false
+                }
+
+                else -> false
             }
-            false
         }
 
         // Detach cardLayout if already attached to any parent

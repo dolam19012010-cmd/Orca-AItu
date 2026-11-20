@@ -24,6 +24,95 @@ class FloatingBubbleVoiceHelperTest {
             FloatingBubbleVoiceHelper.HOLD_THRESHOLD_MS
         )
         assertEquals(50f, FloatingBubbleVoiceHelper.CANCEL_THRESHOLD_DP, 0.001f)
+        assertEquals(450L, FloatingBubbleVoiceHelper.OUTSIDE_HOLD_ABORT_THRESHOLD_MS)
+    }
+
+    // =========================================================================
+    // 0B. OUTSIDE TOUCH DECISION & VIEW BOUNDS
+    // =========================================================================
+
+    @Test
+    fun testIsTouchInsideView() {
+        val w = 100
+        val h = 50
+
+        // Exact center
+        assertTrue(FloatingBubbleVoiceHelper.isTouchInsideView(50f, 25f, w, h))
+        // Corners
+        assertTrue(FloatingBubbleVoiceHelper.isTouchInsideView(0f, 0f, w, h))
+        assertTrue(FloatingBubbleVoiceHelper.isTouchInsideView(100f, 50f, w, h))
+
+        // Outside without slop
+        assertFalse(FloatingBubbleVoiceHelper.isTouchInsideView(-1f, 25f, w, h))
+        assertFalse(FloatingBubbleVoiceHelper.isTouchInsideView(101f, 25f, w, h))
+        assertFalse(FloatingBubbleVoiceHelper.isTouchInsideView(50f, -1f, w, h))
+        assertFalse(FloatingBubbleVoiceHelper.isTouchInsideView(50f, 51f, w, h))
+
+        // Outside with slop 10px
+        assertTrue(FloatingBubbleVoiceHelper.isTouchInsideView(-5f, 25f, w, h, slopPx = 10f))
+        assertTrue(FloatingBubbleVoiceHelper.isTouchInsideView(105f, 25f, w, h, slopPx = 10f))
+        assertFalse(FloatingBubbleVoiceHelper.isTouchInsideView(-15f, 25f, w, h, slopPx = 10f))
+    }
+
+    @Test
+    fun testShouldCollapseOnOutsideRelease() {
+        // Case 1: Standard quick outside tap (released in 150ms) -> collapses
+        assertTrue(
+            FloatingBubbleVoiceHelper.shouldCollapseOnOutsideRelease(
+                downStartedOutside = true,
+                isReleaseOutside = true,
+                pressDurationMs = 150L,
+                isHoldAborted = false
+            )
+        )
+
+        // Case 2: Held down for >= 450ms (user holds to prevent closing) -> does NOT collapse
+        assertFalse(
+            FloatingBubbleVoiceHelper.shouldCollapseOnOutsideRelease(
+                downStartedOutside = true,
+                isReleaseOutside = true,
+                pressDurationMs = 450L,
+                isHoldAborted = false
+            )
+        )
+        assertFalse(
+            FloatingBubbleVoiceHelper.shouldCollapseOnOutsideRelease(
+                downStartedOutside = true,
+                isReleaseOutside = true,
+                pressDurationMs = 600L,
+                isHoldAborted = false
+            )
+        )
+
+        // Case 3: Hold-aborted flag was triggered (via timer) -> does NOT collapse
+        assertFalse(
+            FloatingBubbleVoiceHelper.shouldCollapseOnOutsideRelease(
+                downStartedOutside = true,
+                isReleaseOutside = true,
+                pressDurationMs = 200L,
+                isHoldAborted = true
+            )
+        )
+
+        // Case 4: Finger dragged back inside the card -> does NOT collapse
+        assertFalse(
+            FloatingBubbleVoiceHelper.shouldCollapseOnOutsideRelease(
+                downStartedOutside = true,
+                isReleaseOutside = false,
+                pressDurationMs = 150L,
+                isHoldAborted = false
+            )
+        )
+
+        // Case 5: Touch started inside the card -> does NOT collapse
+        assertFalse(
+            FloatingBubbleVoiceHelper.shouldCollapseOnOutsideRelease(
+                downStartedOutside = false,
+                isReleaseOutside = true,
+                pressDurationMs = 150L,
+                isHoldAborted = false
+            )
+        )
     }
 
     // =========================================================================

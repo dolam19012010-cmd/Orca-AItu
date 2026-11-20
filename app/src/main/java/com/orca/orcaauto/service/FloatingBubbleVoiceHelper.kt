@@ -10,6 +10,7 @@ package com.orca.orcaauto.service
 internal object FloatingBubbleVoiceHelper {
     const val HOLD_THRESHOLD_MS = 1000L
     const val CANCEL_THRESHOLD_DP = 50f
+    const val OUTSIDE_HOLD_ABORT_THRESHOLD_MS = 450L
 
     enum class TouchAction {
         TAP,
@@ -33,6 +34,33 @@ internal object FloatingBubbleVoiceHelper {
             isSlideCancelled -> TouchAction.HOLD_RELEASE_CANCEL
             else -> TouchAction.HOLD_RELEASE_COMMIT
         }
+    }
+
+    /**
+     * Checks if a touch coordinate (x, y) falls within the bounds of a view with optional slop padding.
+     */
+    fun isTouchInsideView(x: Float, y: Float, viewWidth: Int, viewHeight: Int, slopPx: Float = 0f): Boolean {
+        return x >= -slopPx && x <= viewWidth + slopPx && y >= -slopPx && y <= viewHeight + slopPx
+    }
+
+    /**
+     * Determines whether releasing an outside touch should collapse the card.
+     * Returns true ONLY if:
+     * 1. Touch started outside the card bounds.
+     * 2. Release occurred outside the card bounds.
+     * 3. Touch duration was less than [OUTSIDE_HOLD_ABORT_THRESHOLD_MS] (not held to abort).
+     * 4. Hold-abort flag was not triggered.
+     */
+    fun shouldCollapseOnOutsideRelease(
+        downStartedOutside: Boolean,
+        isReleaseOutside: Boolean,
+        pressDurationMs: Long,
+        isHoldAborted: Boolean
+    ): Boolean {
+        if (!downStartedOutside || !isReleaseOutside) return false
+        if (isHoldAborted) return false
+        if (pressDurationMs >= OUTSIDE_HOLD_ABORT_THRESHOLD_MS) return false
+        return true
     }
 
     /**
