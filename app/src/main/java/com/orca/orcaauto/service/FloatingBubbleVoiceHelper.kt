@@ -37,13 +37,6 @@ internal object FloatingBubbleVoiceHelper {
     }
 
     /**
-     * Checks if a touch coordinate (x, y) falls within the bounds of a view with optional slop padding.
-     */
-    fun isTouchInsideView(x: Float, y: Float, viewWidth: Int, viewHeight: Int, slopPx: Float = 0f): Boolean {
-        return x >= -slopPx && x <= viewWidth + slopPx && y >= -slopPx && y <= viewHeight + slopPx
-    }
-
-    /**
      * Determines whether releasing an outside touch should collapse the card.
      * Returns true ONLY if:
      * 1. Touch started outside the card bounds.

@@ -32,29 +32,6 @@ class FloatingBubbleVoiceHelperTest {
     // =========================================================================
 
     @Test
-    fun testIsTouchInsideView() {
-        val w = 100
-        val h = 50
-
-        // Exact center
-        assertTrue(FloatingBubbleVoiceHelper.isTouchInsideView(50f, 25f, w, h))
-        // Corners
-        assertTrue(FloatingBubbleVoiceHelper.isTouchInsideView(0f, 0f, w, h))
-        assertTrue(FloatingBubbleVoiceHelper.isTouchInsideView(100f, 50f, w, h))
-
-        // Outside without slop
-        assertFalse(FloatingBubbleVoiceHelper.isTouchInsideView(-1f, 25f, w, h))
-        assertFalse(FloatingBubbleVoiceHelper.isTouchInsideView(101f, 25f, w, h))
-        assertFalse(FloatingBubbleVoiceHelper.isTouchInsideView(50f, -1f, w, h))
-        assertFalse(FloatingBubbleVoiceHelper.isTouchInsideView(50f, 51f, w, h))
-
-        // Outside with slop 10px
-        assertTrue(FloatingBubbleVoiceHelper.isTouchInsideView(-5f, 25f, w, h, slopPx = 10f))
-        assertTrue(FloatingBubbleVoiceHelper.isTouchInsideView(105f, 25f, w, h, slopPx = 10f))
-        assertFalse(FloatingBubbleVoiceHelper.isTouchInsideView(-15f, 25f, w, h, slopPx = 10f))
-    }
-
-    @Test
     fun testShouldCollapseOnOutsideRelease() {
         // Case 1: Standard quick outside tap (released in 150ms) -> collapses
         assertTrue(

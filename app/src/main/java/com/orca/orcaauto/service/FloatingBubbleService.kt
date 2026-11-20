@@ -3021,8 +3021,10 @@ class FloatingBubbleService : Service() {
                     if (!isHoldTriggered) {
                         val dx = Math.abs(event.rawX - downRawX)
                         val dy = Math.abs(event.rawY - downRawY)
-                        val isInside = FloatingBubbleVoiceHelper.isTouchInsideView(event.x, event.y, v.width, v.height, touchSlopPx)
-                        if (!isInside || dx > touchSlopPx * 2 || dy > touchSlopPx * 2) {
+                        if (dx > touchSlopPx || dy > touchSlopPx) {
+                            isSlopExceeded = true
+                            v.parent?.requestDisallowInterceptTouchEvent(false)
+                            v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(80L).start()
                             activeHoldRunnable?.let { bubbleLifecycleHandler.removeCallbacks(it) }
                             activeHoldRunnable = null
                         }
@@ -3064,13 +3066,10 @@ class FloatingBubbleService : Service() {
                     activeHoldRunnable?.let { bubbleLifecycleHandler.removeCallbacks(it) }
                     activeHoldRunnable = null
 
-                    val isInsideButton = FloatingBubbleVoiceHelper.isTouchInsideView(event.x, event.y, v.width, v.height, touchSlopPx)
-                    val effectiveSlopExceeded = isSlopExceeded || (!isHoldTriggered && !isInsideButton)
-
                     val action = FloatingBubbleVoiceHelper.resolveTouchAction(
                         isHoldTriggered = isHoldTriggered,
                         isSlideCancelled = isSlideCancelled,
-                        isSlopExceeded = effectiveSlopExceeded
+                        isSlopExceeded = isSlopExceeded
                     )
 
                     when (action) {
@@ -3078,6 +3077,9 @@ class FloatingBubbleService : Service() {
                             v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(80L).start()
                             if (!isCallingAi) {
                                 val q = queryEt.text.toString().trim()
+                                if (q.isBlank()) {
+                                    return@setOnTouchListener true
+                                }
                                 executeAiCall(q)
                             }
                         }
