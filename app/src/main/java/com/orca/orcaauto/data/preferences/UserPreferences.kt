@@ -715,8 +715,8 @@ class UserPreferences private constructor(context: Context) {
         }
     }
 
-    fun getSelectedSessionId(): String {
-        cachedSelectedSessionId?.let { return it }
+    fun getSelectedSessionId(): String = synchronized(sessionsLock) {
+        cachedSelectedSessionId?.let { return@synchronized it }
         val id = try {
             prefs.getString(KEY_SELECTED_SESSION_ID, SummarySessionConfig.MAIN_SESSION_ID)
                 ?: SummarySessionConfig.MAIN_SESSION_ID
@@ -724,10 +724,10 @@ class UserPreferences private constructor(context: Context) {
             SummarySessionConfig.MAIN_SESSION_ID
         }
         cachedSelectedSessionId = id
-        return id
+        id
     }
 
-    fun setSelectedSessionId(sessionId: String) {
+    fun setSelectedSessionId(sessionId: String) = synchronized(sessionsLock) {
         cachedSelectedSessionId = sessionId
         try {
             prefs.edit().putString(KEY_SELECTED_SESSION_ID, sessionId).apply()
@@ -737,10 +737,10 @@ class UserPreferences private constructor(context: Context) {
         }
     }
 
-    fun getSelectedSession(): SummarySessionConfig {
+    fun getSelectedSession(): SummarySessionConfig = synchronized(sessionsLock) {
         val selectedId = getSelectedSessionId()
         val all = loadSessions()
-        return all.find { it.id == selectedId }
+        all.find { it.id == selectedId }
             ?: all.firstOrNull { it.isMain }
             ?: SummarySessionConfig.createMainSession()
     }

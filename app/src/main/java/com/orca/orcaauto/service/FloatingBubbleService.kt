@@ -168,6 +168,7 @@ class FloatingBubbleService : Service() {
     @Volatile private var alarmNormalizedTitleMap = mapOf<String, SmartAlarmEntity>()
     @Volatile private var cachedParsedSummary: ParsedSummary? = null
     private var activeSummaryParseJob: Job? = null
+    private val summaryParseGen = AtomicLong(0L)
     @Volatile private var isUserInteractingWithTask: Boolean = false
     @Volatile private var hasPendingTaskBoardUpdate: Boolean = false
     private var currentAnimator: ValueAnimator? = null
@@ -247,6 +248,7 @@ class FloatingBubbleService : Service() {
 
     private fun updateSummaryTextAndParseEagerly(newSummary: String, scope: CoroutineScope = serviceScope) {
         latestSummaryText = newSummary
+        val currentGen = summaryParseGen.incrementAndGet()
         activeSummaryParseJob?.cancel()
         if (newSummary.isBlank()) {
             activeSummaryParseJob = null
@@ -257,10 +259,10 @@ class FloatingBubbleService : Service() {
             )
             return
         }
-        cachedParsedSummary = null
+        // Retain existing cachedParsedSummary during in-session streaming to avoid UI flicker
         activeSummaryParseJob = scope.launch(Dispatchers.Default) {
             val parsed = SummaryParser.parse(newSummary)
-            if (isActive) {
+            if (isActive && summaryParseGen.get() == currentGen) {
                 cachedParsedSummary = parsed
             }
         }
@@ -505,6 +507,9 @@ class FloatingBubbleService : Service() {
 
         val targetSessionId = intent?.getStringExtra(EXTRA_SESSION_ID)
         if (!targetSessionId.isNullOrBlank()) {
+            if (UserPreferences.getInstance(this).getSelectedSessionId() != targetSessionId) {
+                cachedParsedSummary = null
+            }
             UserPreferences.getInstance(this).setSelectedSessionId(targetSessionId)
         }
 
@@ -1817,6 +1822,7 @@ class FloatingBubbleService : Service() {
                     if (prefs.getSelectedSessionId() != targetSessionId) {
                         cleanupEditorHandlesAndToolbar(prewarmedCardShell)
                         prefs.setSelectedSessionId(targetSessionId)
+                        cachedParsedSummary = null
 
                         // Hot Cache Check: RAM hit -> 0ms immediate UI update
                         val cached = sessionSummaryCache[targetSessionId]
@@ -2653,7 +2659,7 @@ class FloatingBubbleService : Service() {
                             sessionSummaryCache[currentSession.id] = Pair(cleanSummary, latestModelInfo)
                             modelTv.text = latestModelInfo
 
-                            val parsed = cachedParsedSummary ?: SummaryParser.parse(cleanSummary).also { cachedParsedSummary = it }
+                            val parsed = SummaryParser.parse(cleanSummary).also { cachedParsedSummary = it }
                             val cleanAdvice = SummaryParser.cleanAdviceText(parsed.conciseAdvice)
                             targetAdviceTv.text = if (cleanAdvice.isNotBlank()) cleanAdvice else parsed.conciseAdvice.ifBlank { cleanSummary }
 

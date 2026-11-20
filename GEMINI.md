@@ -52,4 +52,31 @@ Every proposal or completion report from any agent must explicitly include:
 1. **Unit Test Verification:** Every logic change must pass 100% of `testDebugUnitTest` (rerun cleanly).
 2. **APK Compilation Discipline:** Only run full binary compilation (`.\gradlew.bat assembleDebug`) upon completing major updates that require on-device verification, after unit tests pass 100%. Small tweaks and refactors only run `testDebugUnitTest` to preserve time and battery.
 3. **Automated Git Push:** Automatically commit and `git push` to remote immediately upon passing the verification gate for the agreed scope.
-4. **Auto-Teamwork by Default:** All non-trivial code modifications, feature developments, and deep bug fixes automatically operate under multi-agent teamwork (specialized roles, independent audit, and empirical verification).
+4. **Auto-Teamwork by Default:** All non-trivial code modifications, feature developments, and deep bug fixes automatically operate under multi-agent teamwork governed by Section VI (Tiered Teamwork Operational Model).
+
+---
+
+## VI. Tiered Teamwork Operational Model (Tier 1 Fast-Path vs Tier 2 Full Swarm)
+
+### 1. Tier 1 (Fast-Path: 8–12 phút) — Bugfix & Small Patches
+Áp dụng cho bugfix / patch nhỏ (<= 150 dòng thay đổi, <= 5 tệp):
+- **Phân vai thực thi:**
+  - **1 Worker:** Đọc đúng trọng tâm bằng regex/line-range và sửa code chính xác, tránh đọc lan man.
+  - **Chạy song song trong cửa sổ ~2 phút:**
+    - **1 Build & Test Runner:** Chạy duy nhất 1 lần `testDebugUnitTest` (toàn bộ 348 bài) + `assembleDebug` và xuất log đầy đủ.
+    - **2 Specialized Adversarial Reviewers (B1 & B2):** Cấm tuyệt đối chạy Gradle để tránh xung đột daemon/lock; tập trung đọc 100% `git diff` và ngữ cảnh lân cận:
+      - **B1 (State, Concurrency & Data Integrity Specialist):** Kiểm tra triệt để lock (`synchronized`), coroutine scope, atomic (`AtomicLong`), race condition, memory barrier (`@Volatile`), memory leak.
+      - **B2 (UI, Lifecycle, Touch & Rollback Specialist):** Kiểm tra view padding, layout margin, touch intercept, job/handler teardown, và cơ chế error rollback (đặc biệt khi `SpeechRecognizer` văng lỗi).
+- **Luật "Chứng minh phản bác" (Falsification Proof):**
+  - Muốn cấp thẻ **PASS**, mỗi Reviewer bắt buộc nêu ít nhất 2 kịch bản phá hoại/thất bại khó chịu nhất và trích dẫn đúng dòng code thực tế trong repo chứng minh hệ thống đã được bảo vệ trước kịch bản đó.
+  - Nếu không chứng minh được bằng code thực tế, Reviewer tự động đánh **FAIL**.
+- **Luật 1 Fast Re-fix:**
+  - Nếu bất kỳ Reviewer nào đánh FAIL, Worker có duy nhất 1 lượt sửa nhanh (1-2 phút).
+  - Nếu lần 2 vẫn FAIL, kích hoạt escalation lên Tier 2 hoặc dừng lại hỏi ý kiến User.
+- **Thứ tự Delivery:**
+  - Chỉ được phép thực hiện `git commit` và `git push` sau khi nhận thẻ **PASS 100%** từ cả Runner (tests & build pass) lẫn B1 và B2.
+
+### 2. Tier 2 (Full Swarm / Deep Architecture)
+Áp dụng cho tính năng lớn, refactor core AI pipeline hoặc thay đổi Room DB schema:
+- Triển khai đầy đủ swarm đa đặc vụ: Lead Orchestrator, Deep Explorers, Specialized Planners, Parallel Implementers, và Empirical Challengers.
+- Bắt buộc thẩm định kiến trúc nhiều tầng và stress-test thực nghiệm trước khi đưa vào Delivery Gate.
