@@ -466,8 +466,10 @@ fun TwoPartSummaryCard(
     onCopy: () -> Unit
 ) {
     val context = LocalContext.current
+    val prefs = remember { UserPreferences.getInstance(context) }
     val parsed = remember(item.summaryContent) { SummaryParser.parse(item.summaryContent) }
     var showRawText by remember { mutableStateOf(false) }
+    var pinVersion by remember { mutableIntStateOf(0) }
     var selectedTaskForAlarm by remember { mutableStateOf<TaskItem?>(null) }
     var taskToConfirmCancel by remember { mutableStateOf<Pair<TaskItem, String>?>(null) }
     var taskToConfirmRestore by remember { mutableStateOf<Pair<TaskItem, String>?>(null) }
@@ -609,6 +611,19 @@ fun TwoPartSummaryCard(
                                     voiceManager.stop()
                                 }
                             },
+                            onDoubleClick = {
+                                val textToCopy = parsed.conciseAdvice.ifBlank { item.summaryContent }.trim()
+                                if (textToCopy.isNotBlank()) {
+                                    val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                                    clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("OrcaAuto Summary", textToCopy))
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    Toast.makeText(
+                                        context,
+                                        if (isEn) "✓ Summary copied to clipboard" else "✓ Đã sao chép tóm tắt",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            },
                             onLongClick = {
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                 val speakableParsed = SystemAlarmHelper.filterOutCancelled(parsed, allAlarmMap)
@@ -717,13 +732,22 @@ fun TwoPartSummaryCard(
                             )
                         }
 
-                        // Unified Task List: Color-coded (Red = To-Do, Yellow = Planned, Green = Done), zero redundant section headers!
-                        parsed.tasksToDo.forEach { task ->
+                        // Unified Task List: Pinned tasks first, then To-Do, Planned, Done
+                        val sortedToDo = remember(parsed.tasksToDo, pinVersion) {
+                            parsed.tasksToDo.sortedByDescending { prefs.isTaskPinned(it.title) }
+                        }
+                        val sortedPlanned = remember(parsed.tasksPlanned, pinVersion) {
+                            parsed.tasksPlanned.sortedByDescending { prefs.isTaskPinned(it.title) }
+                        }
+
+                        sortedToDo.forEach { task ->
                             val (alarmId, alarmEntity) = getAlarmInfoForTask(task)
+                            val isTaskPinned = remember(task.title, pinVersion) { prefs.isTaskPinned(task.title) }
                             SwipeableTaskItemRow(
                                 task = task,
                                 badgeColor = AccentRose,
                                 alarmEntity = alarmEntity,
+                                isPinned = isTaskPinned,
                                 onQuickAlarmToggle = { handleQuickAlarmToggle(task, alarmId, alarmEntity) },
                                 onOpenAlarmDetail = { selectedTaskForAlarm = task },
                                 onComplete = {
@@ -742,12 +766,14 @@ fun TwoPartSummaryCard(
                             )
                         }
 
-                        parsed.tasksPlanned.forEach { task ->
+                        sortedPlanned.forEach { task ->
                             val (alarmId, alarmEntity) = getAlarmInfoForTask(task)
+                            val isTaskPinned = remember(task.title, pinVersion) { prefs.isTaskPinned(task.title) }
                             SwipeableTaskItemRow(
                                 task = task,
                                 badgeColor = Color(0xFFF59E0B),
                                 alarmEntity = alarmEntity,
+                                isPinned = isTaskPinned,
                                 onQuickAlarmToggle = { handleQuickAlarmToggle(task, alarmId, alarmEntity) },
                                 onOpenAlarmDetail = { selectedTaskForAlarm = task },
                                 onComplete = {
@@ -808,17 +834,22 @@ fun TwoPartSummaryCard(
     if (selectedTaskForAlarm != null) {
         val task = selectedTaskForAlarm!!
         val (alarmId, existingAlarm) = getAlarmInfoForTask(task)
-        val stateText = existingAlarm?.let { "✓ ${it.targetDateLabel}" }
+        val stateText = existingAlarm?.takeIf { it.status == SmartAlarmStatus.ACTIVE }?.let { "✓ ${it.targetDateLabel}" }
         TaskAlarmConfigDialog(
             task = task,
             currentAlarmState = stateText,
             currentAlarmId = alarmId,
             onDismiss = { selectedTaskForAlarm = null },
             onAlarmSet = { _ ->
+                pinVersion++
                 selectedTaskForAlarm = null
             },
             onAlarmCancelled = {
+                pinVersion++
                 selectedTaskForAlarm = null
+            },
+            onPinChanged = {
+                pinVersion++
             }
         )
     }
@@ -938,6 +969,7 @@ private fun SwipeableTaskItemRow(
     task: TaskItem,
     badgeColor: Color,
     alarmEntity: SmartAlarmEntity?,
+    isPinned: Boolean = false,
     onQuickAlarmToggle: () -> Unit,
     onOpenAlarmDetail: () -> Unit,
     onComplete: () -> Unit,
@@ -1086,6 +1118,22 @@ private fun SwipeableTaskItemRow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
+                if (isPinned && !isCompleted && !isCancelled) {
+                    Box(
+                        modifier = Modifier
+                            .background(Color(0xFFF59E0B).copy(alpha = 0.16f), RoundedCornerShape(6.dp))
+                            .border(1.dp, Color(0xFFF59E0B).copy(alpha = 0.4f), RoundedCornerShape(6.dp))
+                            .padding(horizontal = 7.dp, vertical = 3.dp)
+                    ) {
+                        Text(
+                            text = if (isEn) "📌 Pinned" else "📌 Đã ghim",
+                            color = Color(0xFFFBBF24),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 10.5.sp
+                        )
+                    }
+                }
                 if (task.deadline.isNotBlank()) {
                     Box(
                         modifier = Modifier
@@ -1164,16 +1212,17 @@ fun TaskAlarmConfigDialog(
     currentAlarmId: String? = null,
     onDismiss: () -> Unit,
     onAlarmSet: (String) -> Unit,
-    onAlarmCancelled: () -> Unit = {}
+    onAlarmCancelled: () -> Unit = {},
+    onPinChanged: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val prefs = remember { UserPreferences.getInstance(context) }
     val cleanTitle = remember(task.title) {
         task.title.replace(Regex("""^[\[\(\-•*\d.]+\s*"""), "").trim()
     }
-    var taskNote by remember { mutableStateOf(prefs.getTaskNote(cleanTitle).orEmpty()) }
+    var isPinned by remember { mutableStateOf(prefs.isTaskPinned(cleanTitle)) }
     var isAlarmEnabled by remember {
-        mutableStateOf(currentAlarmState != null || task.deadline.isNotBlank())
+        mutableStateOf(currentAlarmState != null)
     }
 
     val parsedDateTime = remember(task.deadline) {
@@ -1220,7 +1269,7 @@ fun TaskAlarmConfigDialog(
                 Spacer(modifier = Modifier.width(8.dp))
                 Column {
                     Text(
-                        text = "Ghi Chú & Báo Thức Nhiệm Vụ",
+                        text = "Ghim & Báo Thức Nhiệm Vụ",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = TextPrimaryDark
@@ -1241,41 +1290,42 @@ fun TaskAlarmConfigDialog(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // Section 1: Ghi chú cho phiên sau
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        text = "📝 GHI CHÚ / LỜI DẶN CHO PHIÊN SAU",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = AccentCyan
-                    )
-                    OutlinedTextField(
-                        value = taskNote,
-                        onValueChange = { taskNote = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        placeholder = {
-                            Text(
-                                "Nhập lời dặn AI cho các ca tiếp theo (tùy chọn)...",
-                                fontSize = 12.sp,
-                                color = TextMutedDark
-                            )
-                        },
-                        textStyle = MaterialTheme.typography.bodyMedium.copy(color = TextPrimaryDark, fontSize = 13.sp),
-                        maxLines = 3,
-                        shape = RoundedCornerShape(8.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = AccentCyan,
-                            unfocusedBorderColor = CardBorder,
-                            focusedContainerColor = SurfaceVariantDark.copy(alpha = 0.5f),
-                            unfocusedContainerColor = SurfaceVariantDark.copy(alpha = 0.3f)
+                // Section 1: Ghim nhiệm vụ lên đầu bảng
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            if (isPinned) Color(0xFFF59E0B).copy(alpha = 0.15f) else SurfaceVariantDark.copy(alpha = 0.4f),
+                            RoundedCornerShape(8.dp)
                         )
+                        .border(
+                            width = 1.dp,
+                            color = if (isPinned) Color(0xFFF59E0B).copy(alpha = 0.5f) else CardBorder,
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                        .clickable { isPinned = !isPinned }
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        checked = isPinned,
+                        onCheckedChange = { isPinned = it },
+                        colors = CheckboxDefaults.colors(checkedColor = Color(0xFFF59E0B))
                     )
-                    Text(
-                        text = "💡 Lời dặn này sẽ được nạp trực tiếp vào AI trong các phiên tóm tắt kế tiếp để AI ưu tiên xử lý.",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = TextMutedDark,
-                        fontSize = 10.sp
-                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Column {
+                        Text(
+                            text = "📌 Ghim nhiệm vụ lên đầu",
+                            fontWeight = FontWeight.Bold,
+                            color = if (isPinned) Color(0xFFFBBF24) else TextSecondaryDark,
+                            fontSize = 13.sp
+                        )
+                        Text(
+                            text = if (isPinned) "Đang ghim cố định ở vị trí trên cùng" else "Giữ nhiệm vụ ở đầu bảng dù có tóm tắt mới",
+                            color = TextMutedDark,
+                            fontSize = 10.5.sp
+                        )
+                    }
                 }
 
                 // Section 2: Checkbox Báo Thức
@@ -1427,20 +1477,12 @@ fun TaskAlarmConfigDialog(
                                             .padding(vertical = 8.dp, horizontal = 4.dp),
                                         contentAlignment = Alignment.Center
                                     ) {
-                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                            Text(
-                                                text = mode.displayName,
-                                                color = if (isSelected) AccentCyan else TextPrimaryDark,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 11.sp
-                                            )
-                                            Text(
-                                                text = mode.subtitle,
-                                                color = if (isSelected) TextPrimaryDark else TextMutedDark,
-                                                fontSize = 9.sp,
-                                                maxLines = 1
-                                            )
-                                        }
+                                        Text(
+                                            text = mode.code,
+                                            color = if (isSelected) AccentCyan else TextPrimaryDark,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp
+                                        )
                                     }
                                 }
                             }
@@ -1561,8 +1603,9 @@ fun TaskAlarmConfigDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    // 1. Save or clear task note
-                    prefs.setTaskNote(cleanTitle, taskNote)
+                    // 1. Save pin state
+                    prefs.setTaskPinned(cleanTitle, isPinned)
+                    onPinChanged()
 
                     // 2. Handle alarm scheduling or cancellation
                     if (isAlarmEnabled) {
@@ -1582,10 +1625,10 @@ fun TaskAlarmConfigDialog(
                                 "$summaryText ${parsedDateTime.dateLabel}"
                             } else summaryText
 
-                            val noteMsg = if (taskNote.isNotBlank()) " và lưu ghi chú" else ""
+                            val pinMsg = if (isPinned) " và đã ghim" else ""
                             Toast.makeText(
                                 context,
-                                "Đã lên lịch ${schedules.size} báo thức$noteMsg (${parsedDateTime?.dateLabel ?: "Hôm nay"})!",
+                                "Đã lên lịch ${schedules.size} báo thức$pinMsg (${parsedDateTime?.dateLabel ?: "Hôm nay"})!",
                                 Toast.LENGTH_LONG
                             ).show()
                             onAlarmSet(fullSummary)
@@ -1602,7 +1645,7 @@ fun TaskAlarmConfigDialog(
                             SystemAlarmHelper.cancelSmartAlarms(context, task.title, currentAlarmId)
                             onAlarmCancelled()
                         }
-                        val toastMsg = if (taskNote.isNotBlank()) "Đã lưu ghi chú cho phiên sau!" else "Đã lưu thay đổi!"
+                        val toastMsg = if (isPinned) "Đã ghim nhiệm vụ lên đầu!" else "Đã lưu thay đổi!"
                         Toast.makeText(context, toastMsg, Toast.LENGTH_SHORT).show()
                         onDismiss()
                     }

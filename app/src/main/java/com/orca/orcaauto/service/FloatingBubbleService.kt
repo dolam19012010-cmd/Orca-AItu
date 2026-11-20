@@ -4549,7 +4549,7 @@ class FloatingBubbleService : Service() {
         var minute = targetCal.get(Calendar.MINUTE)
         var cascadeMode = AlarmCascadeMode.X1
         var cascadeIntervalMinutes = 15
-        var isAlarmEnabled = existingAlarm?.status == SmartAlarmStatus.ACTIVE || task.deadline.isNotBlank()
+        var isAlarmEnabled = existingAlarm?.status == SmartAlarmStatus.ACTIVE
 
         val modalScrim = FrameLayout(this).apply {
             tag = "TASK_CONFIG_SCRIM"
@@ -4822,9 +4822,9 @@ class FloatingBubbleService : Service() {
         val cascadeViews = mutableListOf<TextView>()
         AlarmCascadeMode.entries.forEach { mode ->
             val modeBtn = TextView(this).apply {
-                text = "${mode.displayName}\n${mode.subtitle}"
+                text = mode.code
                 setTextColor(if (mode == cascadeMode) Color.parseColor("#38BDF8") else Color.parseColor("#94A3B8"))
-                textSize = 9.5f
+                textSize = 12f
                 typeface = Typeface.DEFAULT_BOLD
                 gravity = Gravity.CENTER
                 background = GradientDrawable().apply {
@@ -4832,7 +4832,7 @@ class FloatingBubbleService : Service() {
                     cornerRadius = dpToPx(6).toFloat()
                     setStroke(dpToPx(1), if (mode == cascadeMode) Color.parseColor("#38BDF8") else Color.parseColor("#334155"))
                 }
-                setPadding(dpToPx(4), dpToPx(6), dpToPx(4), dpToPx(6))
+                setPadding(dpToPx(4), dpToPx(8), dpToPx(4), dpToPx(8))
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
                     setMargins(dpToPx(2), 0, dpToPx(2), 0)
                 }
