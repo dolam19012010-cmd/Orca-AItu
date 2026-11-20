@@ -13,6 +13,20 @@ import org.junit.Test
 class FloatingBubbleVoiceHelperTest {
 
     // =========================================================================
+    // 0. TIMING & THRESHOLD CONSTANTS
+    // =========================================================================
+
+    @Test
+    fun testHoldThresholdConstant_isOneSecond() {
+        assertEquals(
+            "Hold threshold for voice recording must be exactly 1.0 second (1000ms)",
+            1000L,
+            FloatingBubbleVoiceHelper.HOLD_THRESHOLD_MS
+        )
+        assertEquals(50f, FloatingBubbleVoiceHelper.CANCEL_THRESHOLD_DP, 0.001f)
+    }
+
+    // =========================================================================
     // 1. TOUCH ACTION RESOLUTION
     // =========================================================================
 
@@ -36,7 +50,7 @@ class FloatingBubbleVoiceHelperTest {
 
     @Test
     fun testResolveTouchAction_whenHoldNotTriggered_andSlopExceeded_resolvesToIgnore() {
-        // Dragging away before 1500ms aborts touch gesture -> IGNORE (do not send AI query)
+        // Dragging away before 1000ms aborts touch gesture -> IGNORE (do not send AI query)
         assertEquals(
             FloatingBubbleVoiceHelper.TouchAction.IGNORE,
             FloatingBubbleVoiceHelper.resolveTouchAction(

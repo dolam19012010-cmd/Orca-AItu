@@ -86,6 +86,7 @@ class UserPreferences private constructor(context: Context) {
     private val _filterRulesFlow = MutableStateFlow(loadAllFilterRules())
     val filterRulesFlow: StateFlow<Map<String, AppFilterRule>> = _filterRulesFlow.asStateFlow()
 
+    private val sessionsLock = Any()
     @Volatile private var cachedSessions: List<SummarySessionConfig>? = null
     @Volatile private var cachedSelectedSessionId: String? = null
 
@@ -617,8 +618,8 @@ class UserPreferences private constructor(context: Context) {
         }
     }
 
-    fun loadSessions(): List<SummarySessionConfig> {
-        cachedSessions?.let { return it }
+    fun loadSessions(): List<SummarySessionConfig> = synchronized(sessionsLock) {
+        cachedSessions?.let { return@synchronized it }
         val json = try {
             prefs.getString(KEY_SUMMARY_SESSIONS, null)
         } catch (e: Throwable) {
@@ -662,50 +663,56 @@ class UserPreferences private constructor(context: Context) {
                 .thenBy { it.createdAt }
         )
         cachedSessions = sorted
-        return sorted
+        sorted
     }
 
     fun saveSessions(sessions: List<SummarySessionConfig>) {
-        try {
-            val sanitized = sessions.toMutableList()
-            val mainIndex = sanitized.indexOfFirst { it.isMain || it.id == SummarySessionConfig.MAIN_SESSION_ID }
-            if (mainIndex == -1) {
-                sanitized.add(0, SummarySessionConfig.createMainSession())
+        synchronized(sessionsLock) {
+            try {
+                val sanitized = sessions.toMutableList()
+                val mainIndex = sanitized.indexOfFirst { it.isMain || it.id == SummarySessionConfig.MAIN_SESSION_ID }
+                if (mainIndex == -1) {
+                    sanitized.add(0, SummarySessionConfig.createMainSession())
+                }
+                val sorted = sanitized.sortedWith(
+                    compareByDescending<SummarySessionConfig> { it.isMain }
+                        .thenBy { it.createdAt }
+                )
+                cachedSessions = sorted
+                _sessionsFlow.value = sorted
+                prefs.edit().putString(KEY_SUMMARY_SESSIONS, gson.toJson(sorted)).apply()
+            } catch (e: Throwable) {
+                android.util.Log.e("UserPreferences", "Lỗi saveSessions: ${e.message}")
             }
-            val sorted = sanitized.sortedWith(
-                compareByDescending<SummarySessionConfig> { it.isMain }
-                    .thenBy { it.createdAt }
-            )
-            cachedSessions = sorted
-            _sessionsFlow.value = sorted
-            prefs.edit().putString(KEY_SUMMARY_SESSIONS, gson.toJson(sorted)).apply()
-        } catch (e: Throwable) {
-            android.util.Log.e("UserPreferences", "Lỗi saveSessions: ${e.message}")
         }
     }
 
     fun saveSession(session: SummarySessionConfig) {
-        val current = loadSessions().toMutableList()
-        val index = current.indexOfFirst { it.id == session.id }
-        if (index >= 0) {
-            current[index] = session
-        } else {
-            current.add(session)
+        synchronized(sessionsLock) {
+            val current = loadSessions().toMutableList()
+            val index = current.indexOfFirst { it.id == session.id }
+            if (index >= 0) {
+                current[index] = session
+            } else {
+                current.add(session)
+            }
+            saveSessions(current)
         }
-        saveSessions(current)
     }
 
     fun deleteSession(sessionId: String): Boolean {
         if (sessionId == SummarySessionConfig.MAIN_SESSION_ID) return false
-        val current = loadSessions().toMutableList()
-        val removed = current.removeAll { it.id == sessionId && !it.isMain }
-        if (removed) {
-            saveSessions(current)
-            if (getSelectedSessionId() == sessionId) {
-                setSelectedSessionId(SummarySessionConfig.MAIN_SESSION_ID)
+        synchronized(sessionsLock) {
+            val current = loadSessions().toMutableList()
+            val removed = current.removeAll { it.id == sessionId && !it.isMain }
+            if (removed) {
+                saveSessions(current)
+                if (getSelectedSessionId() == sessionId) {
+                    setSelectedSessionId(SummarySessionConfig.MAIN_SESSION_ID)
+                }
             }
+            return removed
         }
-        return removed
     }
 
     fun getSelectedSessionId(): String {

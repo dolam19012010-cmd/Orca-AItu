@@ -8,7 +8,7 @@ package com.orca.orcaauto.service
  * Fully decoupled from Android UI view hierarchies to enable empirical JVM testing.
  */
 internal object FloatingBubbleVoiceHelper {
-    const val HOLD_THRESHOLD_MS = 1500L
+    const val HOLD_THRESHOLD_MS = 1000L
     const val CANCEL_THRESHOLD_DP = 50f
 
     enum class TouchAction {

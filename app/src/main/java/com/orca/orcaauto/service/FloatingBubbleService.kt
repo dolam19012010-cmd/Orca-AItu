@@ -167,6 +167,7 @@ class FloatingBubbleService : Service() {
     @Volatile private var alarmDbMap = mapOf<String, SmartAlarmEntity>()
     @Volatile private var alarmNormalizedTitleMap = mapOf<String, SmartAlarmEntity>()
     @Volatile private var cachedParsedSummary: ParsedSummary? = null
+    private var activeSummaryParseJob: Job? = null
     @Volatile private var isUserInteractingWithTask: Boolean = false
     @Volatile private var hasPendingTaskBoardUpdate: Boolean = false
     private var currentAnimator: ValueAnimator? = null
@@ -246,7 +247,9 @@ class FloatingBubbleService : Service() {
 
     private fun updateSummaryTextAndParseEagerly(newSummary: String, scope: CoroutineScope = serviceScope) {
         latestSummaryText = newSummary
+        activeSummaryParseJob?.cancel()
         if (newSummary.isBlank()) {
+            activeSummaryParseJob = null
             cachedParsedSummary = ParsedSummary(
                 rawCleanText = "", reasoningNotes = null, conciseAdvice = "",
                 criticalQuestions = emptyList(), tasksToDo = emptyList(),
@@ -254,8 +257,12 @@ class FloatingBubbleService : Service() {
             )
             return
         }
-        scope.launch(Dispatchers.Default) {
-            cachedParsedSummary = SummaryParser.parse(newSummary)
+        cachedParsedSummary = null
+        activeSummaryParseJob = scope.launch(Dispatchers.Default) {
+            val parsed = SummaryParser.parse(newSummary)
+            if (isActive) {
+                cachedParsedSummary = parsed
+            }
         }
     }
 
@@ -1304,7 +1311,9 @@ class FloatingBubbleService : Service() {
                         }
                     }
                 }
-            } catch (_: Throwable) {}
+            } catch (t: Throwable) {
+                if (t is CancellationException) throw t
+            }
         }
     }
 
@@ -2471,6 +2480,8 @@ class FloatingBubbleService : Service() {
             if (targetState == currentSendBtnState) return
             currentSendBtnState = targetState
 
+            btn.setPadding(0, 0, 0, 0)
+            btn.setCompoundDrawables(null, null, null, null)
             when (targetState) {
                 SendBtnState.CALLING_AI -> {
                     btn.text = "..."
@@ -2733,6 +2744,9 @@ class FloatingBubbleService : Service() {
                 })
                 .start()
 
+            sendBtn.setPadding(0, 0, 0, 0)
+            sendBtn.setCompoundDrawables(null, null, null, null)
+            sendBtn.parent?.requestDisallowInterceptTouchEvent(false)
             sendBtn.animate().scaleX(1.0f).scaleY(1.0f).setDuration(100L).start()
             currentSendBtnState = null
             updateSendBtnState(!queryEt.text.isNullOrBlank())
@@ -2752,6 +2766,7 @@ class FloatingBubbleService : Service() {
 
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    v.parent?.requestDisallowInterceptTouchEvent(true)
                     downRawX = event.rawX
                     downRawY = event.rawY
                     isHoldTriggered = false
@@ -2765,7 +2780,6 @@ class FloatingBubbleService : Service() {
                     activeHoldRunnable?.let { bubbleLifecycleHandler.removeCallbacks(it) }
                     val r = Runnable {
                         if (isCallingAi) return@Runnable
-                        isHoldTriggered = true
 
                         // Check RECORD_AUDIO permission
                         val hasMic = ContextCompat.checkSelfPermission(
@@ -2774,6 +2788,8 @@ class FloatingBubbleService : Service() {
                         ) == PackageManager.PERMISSION_GRANTED
 
                         if (!hasMic) {
+                            isSlopExceeded = true
+                            v.parent?.requestDisallowInterceptTouchEvent(false)
                             v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(80L).start()
                             showFloatingConfirmationDialog(
                                 title = "Cần quyền Micro",
@@ -2793,16 +2809,31 @@ class FloatingBubbleService : Service() {
                         }
 
                         if (!SpeechRecognizer.isRecognitionAvailable(this@FloatingBubbleService)) {
+                            isSlopExceeded = true
+                            v.parent?.requestDisallowInterceptTouchEvent(false)
                             v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(80L).start()
                             Toast.makeText(this@FloatingBubbleService, "Thiết bị chưa hỗ trợ nhận diện giọng nói", Toast.LENGTH_SHORT).show()
                             return@Runnable
                         }
 
+                        // Checks passed -> Now officially trigger hold-to-talk
+                        isHoldTriggered = true
+                        v.parent?.requestDisallowInterceptTouchEvent(true)
+
                         // Trigger haptic feedback
                         sendBtn.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
 
                         // Morph Send button to Mic
-                        sendBtn.text = "🎙"
+                        sendBtn.text = ""
+                        val micDrawable = ContextCompat.getDrawable(this@FloatingBubbleService, R.drawable.ic_mic)?.mutate()?.apply {
+                            val size = dpToPx(18)
+                            setBounds(0, 0, size, size)
+                            setTint(Color.parseColor("#FFFFFF"))
+                        }
+                        val pad = (sendBtn.width - dpToPx(18)) / 2
+                        val horizontalPadding = if (pad > 0) pad else dpToPx(19)
+                        sendBtn.setPadding(horizontalPadding, 0, 0, 0)
+                        sendBtn.setCompoundDrawables(micDrawable, null, null, null)
                         sendBtn.setTextColor(Color.WHITE)
                         sendBtn.background = GradientDrawable().apply {
                             setColor(Color.parseColor("#1E3A5F"))
@@ -2900,6 +2931,7 @@ class FloatingBubbleService : Service() {
                             isRecordingVoice = true
                         } catch (e: Exception) {
                             Log.e("FloatingBubble", "Lỗi SpeechRecognizer: ${e.message}")
+                            cleanupVoiceSession(revertText = false, destroyRecognizer = true)
                         }
                     }
                     activeHoldRunnable = r
@@ -2913,11 +2945,13 @@ class FloatingBubbleService : Service() {
                         val dy = Math.abs(event.rawY - downRawY)
                         if (dx > touchSlopPx || dy > touchSlopPx) {
                             isSlopExceeded = true
+                            v.parent?.requestDisallowInterceptTouchEvent(false)
                             v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(80L).start()
                             activeHoldRunnable?.let { bubbleLifecycleHandler.removeCallbacks(it) }
                             activeHoldRunnable = null
                         }
                     } else if (isRecordingVoice) {
+                        v.parent?.requestDisallowInterceptTouchEvent(true)
                         val dragProgress = FloatingBubbleVoiceHelper.calculateCancelProgress(
                             downRawX,
                             event.rawX,
@@ -2950,6 +2984,7 @@ class FloatingBubbleService : Service() {
                 }
 
                 MotionEvent.ACTION_UP -> {
+                    v.parent?.requestDisallowInterceptTouchEvent(false)
                     activeHoldRunnable?.let { bubbleLifecycleHandler.removeCallbacks(it) }
                     activeHoldRunnable = null
 
@@ -2964,6 +2999,9 @@ class FloatingBubbleService : Service() {
                             v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(80L).start()
                             if (!isCallingAi) {
                                 val q = queryEt.text.toString().trim()
+                                if (q.isBlank()) {
+                                    return@setOnTouchListener true
+                                }
                                 executeAiCall(q)
                             }
                         }
@@ -2985,6 +3023,7 @@ class FloatingBubbleService : Service() {
                 }
 
                 MotionEvent.ACTION_CANCEL -> {
+                    v.parent?.requestDisallowInterceptTouchEvent(false)
                     activeHoldRunnable?.let { bubbleLifecycleHandler.removeCallbacks(it) }
                     activeHoldRunnable = null
                     if (isHoldTriggered) {
@@ -4698,6 +4737,8 @@ class FloatingBubbleService : Service() {
         activeWatchdogJob = null
         sessionSwitchJob?.cancel()
         sessionSwitchJob = null
+        activeSummaryParseJob?.cancel()
+        activeSummaryParseJob = null
         cleanupVoiceRecording()
         cancelActiveVoiceSession = null
         try {
