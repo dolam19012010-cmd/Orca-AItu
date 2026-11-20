@@ -6,6 +6,7 @@ import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.google.gson.reflect.TypeToken
 import com.orca.orcaauto.data.remote.ApiKeyConfig
+import com.orca.orcaauto.domain.alarm.SystemAlarmHelper
 import com.orca.orcaauto.domain.prompt.AiLanguage
 import com.orca.orcaauto.domain.prompt.PromptPersona
 import com.orca.orcaauto.ui.locale.AppLanguage
@@ -548,6 +549,44 @@ class UserPreferences private constructor(context: Context) {
         setTaskNote(taskTitle, "")
     }
 
+    fun getPinnedTaskTitles(): Set<String> {
+        val json = try {
+            prefs.getString(KEY_PINNED_TASKS, null)
+        } catch (_: Throwable) {
+            null
+        }
+        if (!json.isNullOrBlank()) {
+            val type = object : TypeToken<Set<String>>() {}.type
+            return try {
+                gson.fromJson<Set<String>>(json, type) ?: emptySet()
+            } catch (_: Throwable) {
+                emptySet()
+            }
+        }
+        return emptySet()
+    }
+
+    fun isTaskPinned(taskTitle: String): Boolean {
+        val clean = SystemAlarmHelper.cleanTaskTitle(taskTitle)
+        val pinned = getPinnedTaskTitles()
+        return pinned.any { SystemAlarmHelper.isTitleMatching(clean, it) || clean.equals(it, ignoreCase = true) }
+    }
+
+    fun setTaskPinned(taskTitle: String, pinned: Boolean) {
+        val clean = SystemAlarmHelper.cleanTaskTitle(taskTitle)
+        val current = getPinnedTaskTitles().toMutableSet()
+        if (pinned) {
+            current.add(clean)
+        } else {
+            current.removeAll { SystemAlarmHelper.isTitleMatching(clean, it) || clean.equals(it, ignoreCase = true) }
+        }
+        try {
+            prefs.edit().putString(KEY_PINNED_TASKS, gson.toJson(current)).apply()
+        } catch (e: Throwable) {
+            android.util.Log.e("UserPreferences", "Lỗi setTaskPinned: ${e.message}")
+        }
+    }
+
     fun getTargetAppName(packageName: String): String {
         return when (packageName) {
             PACKAGE_ZALO -> "Zalo"
@@ -829,6 +868,7 @@ class UserPreferences private constructor(context: Context) {
         private const val KEY_SHAKE_TO_WAKE = "key_shake_to_wake"
         private const val KEY_HAS_UNREAD_SUMMARY = "key_has_unread_summary"
         private const val KEY_TASK_NOTES = "key_task_notes"
+        private const val KEY_PINNED_TASKS = "key_pinned_tasks"
         private const val KEY_ASSISTANT_THINKING_LEVEL = "key_assistant_thinking_level"
 
         const val PACKAGE_ZALO = "com.zing.zalo"

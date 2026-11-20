@@ -103,4 +103,36 @@ class GeminiPromptBuilderTest {
         assertTrue(prompt.contains("Alice"))
         assertTrue(prompt.contains("Please submit the quarterly report by 5 PM"))
     }
+
+    @Test
+    fun testBuildSummaryPromptDoesNotContainTaskNotesSectionInVietnamese() {
+        val prompt = GeminiPromptBuilder.buildSummaryPrompt(
+            notifications = emptyList(),
+            language = com.orca.orcaauto.ui.locale.AppLanguage.VIETNAMESE
+        )
+        assertFalse(
+            "Prompt tiếng Việt không được chứa phần Lời dặn riêng của người dùng",
+            prompt.contains("LỜI DẶN RIÊNG CỦA NGƯỜI DÙNG CHO CÁC NHIỆM VỤ")
+        )
+        assertFalse(
+            "Prompt tiếng Việt không được chứa chỉ thị bắt buộc tuân thủ lời dặn",
+            prompt.contains("Bắt buộc tuân thủ lời dặn này")
+        )
+    }
+
+    @Test
+    fun testBuildSummaryPromptDoesNotContainTaskNotesSectionInEnglish() {
+        val prompt = GeminiPromptBuilder.buildSummaryPrompt(
+            notifications = emptyList(),
+            language = com.orca.orcaauto.ui.locale.AppLanguage.ENGLISH
+        )
+        assertFalse(
+            "English prompt must not contain task notes section",
+            prompt.contains("USER'S SPECIFIC INSTRUCTIONS FOR TASKS")
+        )
+        assertFalse(
+            "English prompt must not contain instructions directive",
+            prompt.contains("Must follow these instructions to adjust priority")
+        )
+    }
 }

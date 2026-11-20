@@ -1619,11 +1619,25 @@ class FloatingBubbleService : Service() {
         val allTasksPlanned = parsedTasksPlanned
         val allTasksDone = parsedTasksDone
 
-        class TaskRowItem(val task: TaskItem, val isPlanned: Boolean)
+        val prefs = UserPreferences.getInstance(this)
+        val pinnedTitles = prefs.getPinnedTaskTitles()
+
+        fun isTaskPinned(task: TaskItem): Boolean {
+            if (pinnedTitles.isEmpty()) return false
+            val clean = SystemAlarmHelper.cleanTaskTitle(task.title)
+            return pinnedTitles.any { SystemAlarmHelper.isTitleMatching(clean, it) || clean.equals(it, ignoreCase = true) }
+        }
+
+        val (pinnedToDo, unpinnedToDo) = allTasksToDo.partition { isTaskPinned(it) }
+        val (pinnedPlanned, unpinnedPlanned) = allTasksPlanned.partition { isTaskPinned(it) }
+
+        class TaskRowItem(val task: TaskItem, val isPlanned: Boolean, val isPinned: Boolean)
         val taskItems = ArrayList<TaskRowItem>(allTasksToDo.size + allTasksPlanned.size + allTasksDone.size)
-        allTasksToDo.forEach { taskItems.add(TaskRowItem(it, isPlanned = false)) }
-        allTasksPlanned.forEach { taskItems.add(TaskRowItem(it, isPlanned = true)) }
-        allTasksDone.forEach { taskItems.add(TaskRowItem(it, isPlanned = false)) }
+        pinnedToDo.forEach { taskItems.add(TaskRowItem(it, isPlanned = false, isPinned = true)) }
+        pinnedPlanned.forEach { taskItems.add(TaskRowItem(it, isPlanned = true, isPinned = true)) }
+        unpinnedToDo.forEach { taskItems.add(TaskRowItem(it, isPlanned = false, isPinned = false)) }
+        unpinnedPlanned.forEach { taskItems.add(TaskRowItem(it, isPlanned = true, isPinned = false)) }
+        allTasksDone.forEach { taskItems.add(TaskRowItem(it, isPlanned = false, isPinned = isTaskPinned(it))) }
 
         if (taskItems.isEmpty()) {
             if (container.childCount > 0) {
@@ -1650,9 +1664,9 @@ class FloatingBubbleService : Service() {
             val holder = child.tag as? TaskRowHolder
             val item = taskItems[i]
             if (holder != null) {
-                bindTaskRow(holder, item.task, item.isPlanned, cardLayout)
+                bindTaskRow(holder, item.task, item.isPlanned, cardLayout, item.isPinned)
             } else {
-                val newView = renderTaskRow(item.task, item.isPlanned, cardLayout)
+                val newView = renderTaskRow(item.task, item.isPlanned, cardLayout, item.isPinned)
                 container.removeViewAt(i)
                 container.addView(newView, i)
             }
@@ -1661,7 +1675,7 @@ class FloatingBubbleService : Service() {
         // 3. Append only new views if needed
         for (i in updateCount until targetCount) {
             val item = taskItems[i]
-            container.addView(renderTaskRow(item.task, item.isPlanned, cardLayout))
+            container.addView(renderTaskRow(item.task, item.isPlanned, cardLayout, item.isPinned))
         }
     }
 
@@ -2093,6 +2107,80 @@ class FloatingBubbleService : Service() {
             customSelectionActionModeCallback = suppressActionModeCallback
         }
         sec1Box.addView(adviceTv)
+
+        // R1: Double-tap to Copy Summary with haptic feedback & clean toast
+        val copySummaryToClipboard = {
+            if (isCallingAi) {
+                val isEn = UserPreferences.getInstance(this@FloatingBubbleService).getAppLanguage() == com.orca.orcaauto.ui.locale.AppLanguage.ENGLISH
+                Toast.makeText(
+                    this@FloatingBubbleService,
+                    if (isEn) "AI is generating summary..." else "AI đang tạo tóm tắt, vui lòng đợi...",
+                    Toast.LENGTH_SHORT
+                ).show()
+            } else {
+                val textToCopy = adviceTv.text?.toString()?.trim().orEmpty().ifBlank {
+                    val parsed = cachedParsedSummary ?: SummaryParser.parse(latestSummaryText)
+                    parsed.conciseAdvice.trim().ifBlank { latestSummaryText.trim() }
+                }
+                if (textToCopy.isNotBlank()) {
+                    val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                    val clip = ClipData.newPlainText("OrcaAuto Summary", textToCopy)
+                    clipboard?.setPrimaryClip(clip)
+                    triggerHapticFeedback()
+                    try {
+                        sec1Box.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                    } catch (_: Throwable) {}
+                    val isEn = UserPreferences.getInstance(this@FloatingBubbleService).getAppLanguage() == com.orca.orcaauto.ui.locale.AppLanguage.ENGLISH
+                    Toast.makeText(
+                        this@FloatingBubbleService,
+                        if (isEn) "✓ Summary copied to clipboard" else "✓ Đã sao chép tóm tắt vào bộ nhớ tạm",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+        }
+
+        var lastSummaryTapTime = 0L
+        var lastSummaryDownX = 0f
+        var lastSummaryDownY = 0f
+        val doubleTapTimeout = ViewConfiguration.getDoubleTapTimeout().toLong().coerceAtLeast(300L)
+        val touchSlop = ViewConfiguration.get(this).scaledTouchSlop
+
+        val summaryDoubleTapListener = View.OnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    lastSummaryDownX = event.x
+                    lastSummaryDownY = event.y
+                    false
+                }
+                MotionEvent.ACTION_UP -> {
+                    val dx = Math.abs(event.x - lastSummaryDownX)
+                    val dy = Math.abs(event.y - lastSummaryDownY)
+                    if (dx < touchSlop && dy < touchSlop) {
+                        val now = SystemClock.elapsedRealtime()
+                        if (now - lastSummaryTapTime < doubleTapTimeout) {
+                            lastSummaryTapTime = 0L
+                            copySummaryToClipboard()
+                            true
+                        } else {
+                            lastSummaryTapTime = now
+                            false
+                        }
+                    } else {
+                        lastSummaryTapTime = 0L
+                        false
+                    }
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    lastSummaryTapTime = 0L
+                    false
+                }
+                else -> false
+            }
+        }
+
+        sec1Box.setOnTouchListener(summaryDoubleTapListener)
+        adviceTv.setOnTouchListener(summaryDoubleTapListener)
 
         val notesContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -3490,8 +3578,17 @@ class FloatingBubbleService : Service() {
         }
     }
 
-    private fun bindTaskRow(holder: TaskRowHolder, task: TaskItem, isPlanned: Boolean, cardLayout: View) {
+    private fun bindTaskRow(
+        holder: TaskRowHolder,
+        task: TaskItem,
+        isPlanned: Boolean,
+        cardLayout: View,
+        isPinnedOverride: Boolean? = null
+    ) {
         val cleanTitle = SystemAlarmHelper.cleanTaskTitle(task.title)
+        val prefs = UserPreferences.getInstance(this)
+        val isPinned = isPinnedOverride ?: prefs.isTaskPinned(cleanTitle)
+
         val parsedDt = SystemAlarmHelper.parseDateTimeFromText(task.deadline)
         val targetCal = parsedDt?.calendar ?: Calendar.getInstance().apply { add(Calendar.HOUR_OF_DAY, 1) }
         val generatedAlarmId = SystemAlarmHelper.generateAlarmId(cleanTitle, targetCal)
@@ -3522,6 +3619,8 @@ class FloatingBubbleService : Service() {
                 setStroke(dpToPx(1), Color.parseColor("#59EF4444"))
             } else if (isCompleted) {
                 setStroke(dpToPx(1), Color.parseColor("#10B981"))
+            } else if (isPinned) {
+                setStroke(dpToPx(1), Color.parseColor("#F59E0B"))
             } else if (isPlanned) {
                 setStroke(dpToPx(1), Color.parseColor("#59F59E0B"))
             } else {
@@ -3552,6 +3651,27 @@ class FloatingBubbleService : Service() {
 
         // Badge row
         holder.badgeRow.removeAllViews()
+
+        if (isPinned && !isCompleted && !isCancelled) {
+            val pinPill = TextView(this).apply {
+                text = "📌 Đã ghim"
+                setTextColor(Color.parseColor("#38BDF8"))
+                textSize = 10f
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                typeface = Typeface.DEFAULT_BOLD
+                background = GradientDrawable().apply {
+                    setColor(Color.parseColor("#0C2A4D"))
+                    cornerRadius = dpToPx(4).toFloat()
+                    setStroke(dpToPx(1), Color.parseColor("#0284C7"))
+                }
+                setPadding(dpToPx(7), dpToPx(2), dpToPx(7), dpToPx(3))
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    rightMargin = dpToPx(6)
+                }
+            }
+            holder.badgeRow.addView(pinPill)
+        }
         if (task.deadline.isNotBlank()) {
             val deadlinePill = TextView(this).apply {
                 text = "⏰ ${task.deadline}"
@@ -3697,7 +3817,7 @@ class FloatingBubbleService : Service() {
     }
 
     @SuppressLint("ClickableViewAccessibility")
-    private fun renderTaskRow(task: TaskItem, isPlanned: Boolean, cardLayout: View): View {
+    private fun renderTaskRow(task: TaskItem, isPlanned: Boolean, cardLayout: View, isPinned: Boolean? = null): View {
         val dm = resources.displayMetrics
         val cardWidth = (dm.widthPixels * 0.94f).toInt().coerceAtMost(dpToPx(500))
 
@@ -3861,7 +3981,7 @@ class FloatingBubbleService : Service() {
         container.tag = holder
 
         // Initial binding
-        bindTaskRow(holder, task, isPlanned, cardLayout)
+        bindTaskRow(holder, task, isPlanned, cardLayout, isPinned)
 
         // checkCircle click listener
         checkCircle.setOnClickListener {
@@ -4417,9 +4537,9 @@ class FloatingBubbleService : Service() {
         val dialogWidth = (screenWidth * 0.92f).toInt().coerceAtMost(dpToPx(440))
         val dialogMaxHeight = (screenHeight * 0.74f).toInt().coerceAtMost(dpToPx(620))
 
-        val cleanTitle = task.title.replace(Regex("""^[\[\(\-•*\d.]+\s*"""), "").trim()
+        val cleanTitle = SystemAlarmHelper.cleanTaskTitle(task.title)
         val prefs = UserPreferences.getInstance(this)
-        val initialNote = prefs.getTaskNote(cleanTitle).orEmpty()
+        var isPinned = prefs.isTaskPinned(cleanTitle)
 
         val parsedDateTime = SystemAlarmHelper.parseDateTimeFromText(task.deadline)
         val targetCal = (parsedDateTime?.calendar?.clone() as? Calendar) ?: Calendar.getInstance().apply {
@@ -4473,7 +4593,7 @@ class FloatingBubbleService : Service() {
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
         val headerTitle = TextView(this).apply {
-            text = "Ghi Chú & Báo Thức Nhiệm Vụ"
+            text = "Cấu Hình Nhiệm Vụ"
             setTextColor(Color.WHITE)
             textSize = 14f
             typeface = Typeface.DEFAULT_BOLD
@@ -4506,44 +4626,65 @@ class FloatingBubbleService : Service() {
             orientation = LinearLayout.VERTICAL
         }
 
-        // Section 1: Ghi chú cho phiên sau
-        val noteSectionLabel = TextView(this).apply {
-            text = "📝 GHI CHÚ / LỜI DẶN CHO PHIÊN SAU"
-            setTextColor(Color.parseColor("#38BDF8"))
-            textSize = 10.5f
-            typeface = Typeface.DEFAULT_BOLD
-            setPadding(0, dpToPx(4), 0, dpToPx(4))
-        }
-        bodyLayout.addView(noteSectionLabel)
-
-        val noteEt = EditText(this).apply {
-            setText(initialNote)
-            hint = "Nhập dặn dò AI cho các ca tiếp theo (tùy chọn)..."
-            setHintTextColor(Color.parseColor("#71717A"))
-            setTextColor(Color.WHITE)
-            textSize = 12f
+        // Task Pinning Toggle Row
+        val togglePinRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
             background = GradientDrawable().apply {
-                setColor(Color.parseColor("#18181B"))
+                setColor(if (isPinned) Color.parseColor("#1AF59E0B") else Color.parseColor("#1A1E293B"))
                 cornerRadius = dpToPx(8).toFloat()
-                setStroke(dpToPx(1), Color.parseColor("#334155"))
+                setStroke(dpToPx(1), if (isPinned) Color.parseColor("#33F59E0B") else Color.parseColor("#334155"))
             }
             setPadding(dpToPx(10), dpToPx(8), dpToPx(10), dpToPx(8))
-            minLines = 2
-            maxLines = 3
-            gravity = Gravity.TOP or Gravity.START
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                isForceDarkAllowed = false
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                bottomMargin = dpToPx(10)
+            }
+            isClickable = true
+        }
+
+        val pinIconTv = TextView(this).apply {
+            text = if (isPinned) "📌" else "📍"
+            textSize = 16f
+            setPadding(0, 0, dpToPx(8), 0)
+        }
+        val pinLabelCol = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        val pinLabelMain = TextView(this).apply {
+            text = "Ghim lên đầu danh sách"
+            setTextColor(Color.WHITE)
+            textSize = 12.5f
+            typeface = Typeface.DEFAULT_BOLD
+        }
+        val pinLabelSub = TextView(this).apply {
+            text = if (isPinned) "Luôn hiển thị ở vị trí ưu tiên trên bảng nhiệm vụ" else "Không ghim ưu tiên"
+            setTextColor(Color.parseColor("#94A3B8"))
+            textSize = 10.5f
+        }
+        val pinCheckTv = TextView(this).apply {
+            text = if (isPinned) "☑" else "☐"
+            setTextColor(if (isPinned) Color.parseColor("#F59E0B") else Color.parseColor("#94A3B8"))
+            textSize = 18f
+        }
+        pinLabelCol.addView(pinLabelMain)
+        pinLabelCol.addView(pinLabelSub)
+        togglePinRow.addView(pinIconTv)
+        togglePinRow.addView(pinLabelCol)
+        togglePinRow.addView(pinCheckTv)
+
+        togglePinRow.setOnClickListener {
+            isPinned = !isPinned
+            pinIconTv.text = if (isPinned) "📌" else "📍"
+            pinCheckTv.text = if (isPinned) "☑" else "☐"
+            pinCheckTv.setTextColor(if (isPinned) Color.parseColor("#F59E0B") else Color.parseColor("#94A3B8"))
+            pinLabelSub.text = if (isPinned) "Luôn hiển thị ở vị trí ưu tiên trên bảng nhiệm vụ" else "Không ghim ưu tiên"
+            (togglePinRow.background as? GradientDrawable)?.apply {
+                setColor(if (isPinned) Color.parseColor("#1AF59E0B") else Color.parseColor("#1A1E293B"))
+                setStroke(dpToPx(1), if (isPinned) Color.parseColor("#33F59E0B") else Color.parseColor("#334155"))
             }
         }
-        bodyLayout.addView(noteEt)
-
-        val noteTip = TextView(this).apply {
-            text = "💡 Lời dặn này sẽ được nạp trực tiếp vào AI trong các phiên tóm tắt kế tiếp để AI ưu tiên xử lý."
-            setTextColor(Color.parseColor("#64748B"))
-            textSize = 10f
-            setPadding(0, dpToPx(2), 0, dpToPx(10))
-        }
-        bodyLayout.addView(noteTip)
+        bodyLayout.addView(togglePinRow)
 
         // Section 2: Checkbox Báo Thức
         val toggleAlarmRow = LinearLayout(this).apply {
@@ -4714,6 +4855,60 @@ class FloatingBubbleService : Service() {
         }
         alarmConfigContainer.addView(cascadeRow)
 
+        // Smart Alarm customizable interval selection: Options (5m, 10m, 15m default, 30m)
+        val intervalLabel = TextView(this).apply {
+            text = "KHOẢNG CÁCH GIỮA CÁC LẦN CHUÔNG:"
+            setTextColor(Color.parseColor("#38BDF8"))
+            textSize = 10f
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(0, dpToPx(4), 0, dpToPx(4))
+        }
+        alarmConfigContainer.addView(intervalLabel)
+
+        val intervalRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                bottomMargin = dpToPx(8)
+            }
+        }
+
+        val intervalOptions = listOf(5, 10, 15, 30)
+        val intervalViews = mutableListOf<TextView>()
+        intervalOptions.forEach { minutes ->
+            val intervalBtn = TextView(this).apply {
+                text = "${minutes}p"
+                setTextColor(if (minutes == cascadeIntervalMinutes) Color.parseColor("#38BDF8") else Color.parseColor("#94A3B8"))
+                textSize = 9.5f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                background = GradientDrawable().apply {
+                    setColor(if (minutes == cascadeIntervalMinutes) Color.parseColor("#260284C7") else Color.parseColor("#1A1E293B"))
+                    cornerRadius = dpToPx(6).toFloat()
+                    setStroke(dpToPx(1), if (minutes == cascadeIntervalMinutes) Color.parseColor("#38BDF8") else Color.parseColor("#334155"))
+                }
+                setPadding(dpToPx(4), dpToPx(6), dpToPx(4), dpToPx(6))
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    setMargins(dpToPx(2), 0, dpToPx(2), 0)
+                }
+                isClickable = true
+                setOnClickListener {
+                    cascadeIntervalMinutes = minutes
+                    intervalViews.forEachIndexed { idx, v ->
+                        val m = intervalOptions[idx]
+                        val sel = m == cascadeIntervalMinutes
+                        v.setTextColor(if (sel) Color.parseColor("#38BDF8") else Color.parseColor("#94A3B8"))
+                        (v.background as? GradientDrawable)?.apply {
+                            setColor(if (sel) Color.parseColor("#260284C7") else Color.parseColor("#1A1E293B"))
+                            setStroke(dpToPx(1), if (sel) Color.parseColor("#38BDF8") else Color.parseColor("#334155"))
+                        }
+                    }
+                }
+            }
+            intervalViews.add(intervalBtn)
+            intervalRow.addView(intervalBtn)
+        }
+        alarmConfigContainer.addView(intervalRow)
+
         // Cancel existing alarm button if active
         if (existingAlarm?.status == SmartAlarmStatus.ACTIVE) {
             val cancelAlarmBtn = TextView(this).apply {
@@ -4788,8 +4983,7 @@ class FloatingBubbleService : Service() {
             setPadding(dpToPx(16), dpToPx(8), dpToPx(16), dpToPx(8))
             isClickable = true
             setOnClickListener {
-                val noteText = noteEt.text.toString().trim()
-                prefs.setTaskNote(cleanTitle, noteText)
+                prefs.setTaskPinned(cleanTitle, isPinned)
 
                 if (isAlarmEnabled) {
                     if (existingAlarm != null) {
@@ -4803,8 +4997,8 @@ class FloatingBubbleService : Service() {
                         intervalMinutes = cascadeIntervalMinutes
                     )
                     res.onSuccess {
-                        val noteMsg = if (noteText.isNotBlank()) " và đã lưu ghi chú" else ""
-                        Toast.makeText(this@FloatingBubbleService, "Đã lên lịch báo thức$noteMsg (${parsedDateTime?.dateLabel ?: "Hôm nay"})!", Toast.LENGTH_SHORT).show()
+                        val pinMsg = if (isPinned) " (Đã ghim ưu tiên)" else ""
+                        Toast.makeText(this@FloatingBubbleService, "Đã lên lịch báo thức$pinMsg (${parsedDateTime?.dateLabel ?: "Hôm nay"})!", Toast.LENGTH_SHORT).show()
                     }.onFailure { err ->
                         Toast.makeText(this@FloatingBubbleService, "Lỗi đặt báo thức: ${err.message}", Toast.LENGTH_SHORT).show()
                     }
@@ -4812,8 +5006,8 @@ class FloatingBubbleService : Service() {
                     if (existingAlarm?.status == SmartAlarmStatus.ACTIVE) {
                         SystemAlarmHelper.cancelSmartAlarms(this@FloatingBubbleService, cleanTitle, alarmId)
                     }
-                    val msg = if (noteText.isNotBlank()) "Đã lưu ghi chú cho phiên sau!" else "Đã lưu thay đổi!"
-                    Toast.makeText(this@FloatingBubbleService, msg, Toast.LENGTH_SHORT).show()
+                    val pinMsg = if (isPinned) "Đã ghim nhiệm vụ lên đầu!" else "Đã lưu thiết lập nhiệm vụ!"
+                    Toast.makeText(this@FloatingBubbleService, pinMsg, Toast.LENGTH_SHORT).show()
                 }
 
                 root.removeView(modalScrim)

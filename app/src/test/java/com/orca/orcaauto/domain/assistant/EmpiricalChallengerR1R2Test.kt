@@ -82,7 +82,6 @@ class EmpiricalChallengerR1R2Test {
                 userQueryOrInstruction = "Tóm tắt nhanh tình hình",
                 previousSummary = "Ca trước đã bàn giao xong hồ sơ",
                 activeAlarms = activeAlarms,
-                taskNotes = mapOf("Họp lúc 14h" to "Chuẩn bị slide"),
                 autoCompleteOverdue = false,
                 notesSnippet = "=== GHI CHÚ #1: Ghi chú công khai ==="
             )

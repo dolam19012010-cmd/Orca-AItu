@@ -191,7 +191,6 @@ object LiveAiChatHelper {
         val activeAlarms = if (prefs.isLongTermTasksContextEnabled()) db.smartAlarmDao().getActiveAlarms() else emptyList()
         val cancelledTasks = SystemAlarmHelper.filterRecentCancelled(db.smartAlarmDao().getCancelledAlarms())
         val completedTasks = if (prefs.isLongTermTasksContextEnabled()) db.smartAlarmDao().getCompletedAlarms() else emptyList()
-        val taskNotes = prefs.getTaskNotes()
 
         val previousSummary = if (cancelledTasks.isNotEmpty() && rawPreviousSummary.isNotBlank()) {
             tagCancelledTasksInSummary(rawPreviousSummary, cancelledTasks)
@@ -214,7 +213,6 @@ object LiveAiChatHelper {
             activeAlarms = activeAlarms,
             cancelledTasks = cancelledTasks,
             completedTasks = completedTasks,
-            taskNotes = taskNotes,
             timezoneId = prefs.getUserTimezone(),
             autoCompleteOverdue = session.autoCompleteOverdue,
             language = effectiveAiLang,

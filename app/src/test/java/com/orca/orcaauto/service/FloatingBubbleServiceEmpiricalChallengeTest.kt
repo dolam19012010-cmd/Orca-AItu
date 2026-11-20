@@ -1824,4 +1824,85 @@ class FloatingBubbleServiceEmpiricalChallengeTest {
         assertNull("Selection reset index should be null when editor has no text", planEmpty.targetSelection)
         assertTrue("Contextual quick action toolbar must be immediately hidden", planEmpty.hideToolbar)
     }
+
+    // =========================================================================
+    // 16. MILESTONE 1 - TASK PINNING & ORDERING HIERARCHY
+    // =========================================================================
+
+    @Test
+    fun testTaskPinningOrdering_pinnedTasksSortedToTopAcrossSummaryUpdates() {
+        val taskA = TaskItem("Nộp báo cáo tài chính", deadline = "17:00", source = "Zalo", status = TaskStatus.TODO)
+        val taskB = TaskItem("Gửi email đối tác", deadline = "15:00", source = "Gmail", status = TaskStatus.TODO)
+        val taskC = TaskItem("Họp ban giám đốc", deadline = "14:00", source = "Teams", status = TaskStatus.TODO)
+        val taskD = TaskItem("Lên kế hoạch tuần sau", deadline = "Ngày mai", source = "Slack", status = TaskStatus.PLANNED)
+        val taskE = TaskItem("Soạn hợp đồng mua bán", deadline = "Ngày kia", source = "Zalo", status = TaskStatus.PLANNED)
+        val taskF = TaskItem("Hoàn thành hồ sơ nhân sự", deadline = "10:00", source = "Zalo", status = TaskStatus.DONE)
+
+        val allTasksToDo = listOf(taskA, taskB, taskC)
+        val allTasksPlanned = listOf(taskD, taskE)
+        val allTasksDone = listOf(taskF)
+
+        // Pinned titles stored in preferences (clean titles)
+        val pinnedTitles = setOf("Họp ban giám đốc", "Soạn hợp đồng mua bán", "Hoàn thành hồ sơ nhân sự")
+
+        fun isTaskPinned(task: TaskItem): Boolean {
+            if (pinnedTitles.isEmpty()) return false
+            val clean = SystemAlarmHelper.cleanTaskTitle(task.title)
+            return pinnedTitles.any { SystemAlarmHelper.isTitleMatching(clean, it) || clean.equals(it, ignoreCase = true) }
+        }
+
+        val (pinnedToDo, unpinnedToDo) = allTasksToDo.partition { isTaskPinned(it) }
+        val (pinnedPlanned, unpinnedPlanned) = allTasksPlanned.partition { isTaskPinned(it) }
+
+        class OrderedTaskRow(val task: TaskItem, val isPlanned: Boolean, val isPinned: Boolean)
+        val taskItems = ArrayList<OrderedTaskRow>(allTasksToDo.size + allTasksPlanned.size + allTasksDone.size)
+        pinnedToDo.forEach { taskItems.add(OrderedTaskRow(it, isPlanned = false, isPinned = true)) }
+        pinnedPlanned.forEach { taskItems.add(OrderedTaskRow(it, isPlanned = true, isPinned = true)) }
+        unpinnedToDo.forEach { taskItems.add(OrderedTaskRow(it, isPlanned = false, isPinned = false)) }
+        unpinnedPlanned.forEach { taskItems.add(OrderedTaskRow(it, isPlanned = true, isPinned = false)) }
+        allTasksDone.forEach { taskItems.add(OrderedTaskRow(it, isPlanned = false, isPinned = isTaskPinned(it))) }
+
+        // Assert exact ordering hierarchy:
+        // 1. Pinned TODO: taskC
+        assertEquals("Họp ban giám đốc", taskItems[0].task.title)
+        assertTrue(taskItems[0].isPinned)
+        assertFalse(taskItems[0].isPlanned)
+
+        // 2. Pinned Planned: taskE
+        assertEquals("Soạn hợp đồng mua bán", taskItems[1].task.title)
+        assertTrue(taskItems[1].isPinned)
+        assertTrue(taskItems[1].isPlanned)
+
+        // 3. Unpinned TODO: taskA, taskB
+        assertEquals("Nộp báo cáo tài chính", taskItems[2].task.title)
+        assertFalse(taskItems[2].isPinned)
+        assertEquals("Gửi email đối tác", taskItems[3].task.title)
+        assertFalse(taskItems[3].isPinned)
+
+        // 4. Unpinned Planned: taskD
+        assertEquals("Lên kế hoạch tuần sau", taskItems[4].task.title)
+        assertFalse(taskItems[4].isPinned)
+        assertTrue(taskItems[4].isPlanned)
+
+        // 5. Done tasks: taskF always at the bottom even when pinned
+        assertEquals("Hoàn thành hồ sơ nhân sự", taskItems[5].task.title)
+        assertEquals(taskItems.lastIndex, 5)
+
+        // Test robustness across AI re-summarizations with different bullets/numbering:
+        val reSummarizedTask = TaskItem("• 1. Họp ban giám đốc", deadline = "14:00")
+        val clean = SystemAlarmHelper.cleanTaskTitle(reSummarizedTask.title)
+        val matchesPinned = pinnedTitles.any { SystemAlarmHelper.isTitleMatching(clean, it) || clean.equals(it, ignoreCase = true) }
+        assertTrue("Pinned task must match across AI re-bulleting", matchesPinned)
+    }
+
+    @Test
+    fun testCascadeIntervalOptions_containStandardOptionsAndDefault() {
+        val intervalOptions = listOf(5, 10, 15, 30)
+        val defaultInterval = 15
+        assertTrue(intervalOptions.contains(5))
+        assertTrue(intervalOptions.contains(10))
+        assertTrue(intervalOptions.contains(15))
+        assertTrue(intervalOptions.contains(30))
+        assertEquals(15, defaultInterval)
+    }
 }

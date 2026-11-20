@@ -27,7 +27,6 @@ object GeminiPromptBuilder {
         activeAlarms: List<SmartAlarmEntity> = emptyList(),
         cancelledTasks: List<SmartAlarmEntity> = emptyList(),
         completedTasks: List<SmartAlarmEntity> = emptyList(),
-        taskNotes: Map<String, String> = emptyMap(),
         timezoneId: String = "Asia/Ho_Chi_Minh",
         autoCompleteOverdue: Boolean = false,
         language: AppLanguage = AppLanguage.VIETNAMESE,
@@ -43,7 +42,6 @@ object GeminiPromptBuilder {
                 activeAlarms = activeAlarms,
                 cancelledTasks = cancelledTasks,
                 completedTasks = completedTasks,
-                taskNotes = taskNotes,
                 timezoneId = timezoneId,
                 autoCompleteOverdue = autoCompleteOverdue,
                 notesSnippet = notesSnippet
@@ -58,7 +56,6 @@ object GeminiPromptBuilder {
                 activeAlarms = activeAlarms,
                 cancelledTasks = cancelledTasks,
                 completedTasks = completedTasks,
-                taskNotes = taskNotes,
                 timezoneId = timezoneId,
                 autoCompleteOverdue = autoCompleteOverdue,
                 notesSnippet = notesSnippet
@@ -75,7 +72,6 @@ object GeminiPromptBuilder {
         activeAlarms: List<SmartAlarmEntity>,
         cancelledTasks: List<SmartAlarmEntity>,
         completedTasks: List<SmartAlarmEntity>,
-        taskNotes: Map<String, String>,
         timezoneId: String,
         autoCompleteOverdue: Boolean,
         notesSnippet: String
@@ -135,18 +131,7 @@ object GeminiPromptBuilder {
             contentBuilder.append("⚡ Bắt buộc tôn trọng các nhãn trên: Việc có nhãn [ĐÃ HỦY] hoặc [ĐÃ HOÀN THÀNH] thì tuyệt đối không xếp vào mục cần làm (To-Do/Planned).\n\n")
         }
 
-        // 7. Task Notes
-        if (taskNotes.isNotEmpty()) {
-            contentBuilder.append("=== LỜI DẶN RIÊNG CỦA NGƯỜI DÙNG CHO CÁC NHIỆM VỤ ===\n")
-            for ((tTitle, tNote) in taskNotes) {
-                if (tTitle.isNotBlank() && tNote.isNotBlank()) {
-                    contentBuilder.append("- Việc: \"$tTitle\" ➜ Dặn: \"$tNote\"\n")
-                }
-            }
-            contentBuilder.append("⚡ Bắt buộc tuân thủ lời dặn này để điều chỉnh mức ưu tiên hoặc thời gian phù hợp.\n\n")
-        }
-
-        // 8. Custom User Context
+        // 7. Custom User Context
         if (customFixedContext.isNotBlank()) {
             contentBuilder.append("=== BỐI CẢNH CỦA NGƯỜI DÙNG ===\n")
             contentBuilder.append(customFixedContext.trim())
@@ -240,7 +225,6 @@ object GeminiPromptBuilder {
         activeAlarms: List<SmartAlarmEntity>,
         cancelledTasks: List<SmartAlarmEntity>,
         completedTasks: List<SmartAlarmEntity>,
-        taskNotes: Map<String, String>,
         timezoneId: String,
         autoCompleteOverdue: Boolean,
         notesSnippet: String
@@ -299,18 +283,7 @@ object GeminiPromptBuilder {
             contentBuilder.append("⚡ Strictly respect the above labels: Items with [CANCELLED] or [COMPLETED] MUST NOT be placed into To-Do or Planned tasks.\n\n")
         }
 
-        // 7. Task Notes
-        if (taskNotes.isNotEmpty()) {
-            contentBuilder.append("=== USER'S SPECIFIC INSTRUCTIONS FOR TASKS ===\n")
-            for ((tTitle, tNote) in taskNotes) {
-                if (tTitle.isNotBlank() && tNote.isNotBlank()) {
-                    contentBuilder.append("- Task: \"$tTitle\" ➜ Note: \"$tNote\"\n")
-                }
-            }
-            contentBuilder.append("⚡ Must follow these instructions to adjust priority or timing accordingly.\n\n")
-        }
-
-        // 8. Custom User Context
+        // 7. Custom User Context
         if (customFixedContext.isNotBlank()) {
             contentBuilder.append("=== USER CONTEXT ===\n")
             contentBuilder.append(customFixedContext.trim())
