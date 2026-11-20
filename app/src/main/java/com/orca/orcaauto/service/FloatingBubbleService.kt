@@ -124,6 +124,7 @@ import java.lang.ref.WeakReference
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Custom [EditText] subclass that hooks into [onSelectionChanged] to notify listeners of text
@@ -246,7 +247,7 @@ class FloatingBubbleService : Service() {
         var boundAlarm: SmartAlarmEntity? = null
     )
 
-    private fun updateSummaryTextAndParseEagerly(newSummary: String, scope: CoroutineScope = serviceScope) {
+    private fun updateSummaryTextAndParseEagerly(newSummary: String, scope: CoroutineScope = serviceScope, preParsed: ParsedSummary? = null) {
         latestSummaryText = newSummary
         val currentGen = summaryParseGen.incrementAndGet()
         activeSummaryParseJob?.cancel()
@@ -259,6 +260,7 @@ class FloatingBubbleService : Service() {
             )
             return
         }
+        if (preParsed != null) { activeSummaryParseJob = null; cachedParsedSummary = preParsed; return }
         // Retain existing cachedParsedSummary during in-session streaming to avoid UI flicker
         activeSummaryParseJob = scope.launch(Dispatchers.Default) {
             val parsed = SummaryParser.parse(newSummary)
@@ -266,6 +268,20 @@ class FloatingBubbleService : Service() {
                 cachedParsedSummary = parsed
             }
         }
+    }
+
+    private fun extractLiveStreamSnippet(raw: String): String {
+        var text = raw
+        for (tag in arrayOf("think", "scratchpad", "thought", "reasoning")) {
+            val closeIdx = text.lastIndexOf("</$tag>")
+            if (closeIdx != -1) {
+                text = text.substring(closeIdx + tag.length + 3)
+            } else {
+                val openIdx = text.indexOf("<$tag>")
+                if (openIdx != -1) text = text.substring(0, openIdx)
+            }
+        }
+        return text.trim()
     }
 
     private enum class SendBtnState {
@@ -371,6 +387,13 @@ class FloatingBubbleService : Service() {
                     Intent.ACTION_SCREEN_OFF -> {
                         isScreenOn = false
                         updateShakeDetectorState()
+                        stopTextShimmer(null); liveStatusShimmerAnimator?.cancel(); liveStatusShimmerAnimator = null
+                        cleanupVoiceRecording(); cancelActiveVoiceSession?.invoke()
+                        try { com.orca.orcaauto.domain.voice.VoiceBriefingManager.getInstance(this@FloatingBubbleService).stop() } catch (_: Exception) {}
+                        if (isExpanded) {
+                            bubbleRootView?.let { collapseExpandedCard(it, preserveStreamingJob = true, targetState = BubbleState.STATE_2_DIMMED) }
+                            transitionToBubbleState(BubbleState.STATE_2_DIMMED, animate = false)
+                        }
                     }
                     Intent.ACTION_SCREEN_ON, Intent.ACTION_USER_PRESENT -> {
                         isScreenOn = true
@@ -1382,9 +1405,14 @@ class FloatingBubbleService : Service() {
         }
         private val matrix = Matrix()
         private val shader = BitmapShader(bitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+        private val drawRectF = RectF()
+        private val strokeRectF = RectF()
 
         override fun onBoundsChange(bounds: Rect) {
             super.onBoundsChange(bounds)
+            drawRectF.set(bounds)
+            strokeRectF.set(bounds)
+            if (strokeWidth > 0f) strokeRectF.inset(strokeWidth / 2f, strokeWidth / 2f)
             if (bounds.width() <= 0 || bounds.height() <= 0) return
             val bw = bitmap.width.toFloat()
             val bh = bitmap.height.toFloat()
@@ -1407,13 +1435,11 @@ class FloatingBubbleService : Service() {
         }
 
         override fun draw(canvas: Canvas) {
-            val rectF = RectF(bounds)
-            canvas.drawRoundRect(rectF, cornerRadius, cornerRadius, paint)
-            canvas.drawRoundRect(rectF, cornerRadius, cornerRadius, scrimPaint)
+            canvas.drawRoundRect(drawRectF, cornerRadius, cornerRadius, paint)
+            canvas.drawRoundRect(drawRectF, cornerRadius, cornerRadius, scrimPaint)
             if (strokeWidth > 0f) {
                 val halfStroke = strokeWidth / 2f
-                rectF.inset(halfStroke, halfStroke)
-                canvas.drawRoundRect(rectF, cornerRadius - halfStroke, cornerRadius - halfStroke, strokePaint)
+                canvas.drawRoundRect(strokeRectF, cornerRadius - halfStroke, cornerRadius - halfStroke, strokePaint)
             }
         }
 
@@ -1483,9 +1509,15 @@ class FloatingBubbleService : Service() {
         } catch (_: Exception) {}
     }
 
-    private fun collapseExpandedCard(root: FrameLayout) {
-        activeStreamingJob?.cancel()
-        activeStreamingJob = null
+    private fun collapseExpandedCard(
+        root: FrameLayout,
+        preserveStreamingJob: Boolean = false,
+        targetState: BubbleState = BubbleState.STATE_1_ACTIVE
+    ) {
+        if (!preserveStreamingJob) {
+            activeStreamingJob?.cancel()
+            activeStreamingJob = null
+        }
         activeWatchdogJob?.cancel()
         activeWatchdogJob = null
         stopTextShimmer(null)
@@ -1508,6 +1540,21 @@ class FloatingBubbleService : Service() {
             it.animate().cancel()
             it.visibility = View.GONE
             it.alpha = 0f
+        }
+
+        val finalizeCollapse = {
+            isCollapsing = false
+            currentBubbleState = targetState
+            cleanupEditorHandlesAndToolbar(prewarmedCardShell)
+            prewarmedCardShell?.cardLayout?.let { cl -> (cl.parent as? ViewGroup)?.removeView(cl) }
+            renderCollapsedBubble(root)
+            transitionToBubbleState(targetState, animate = false)
+            if (prewarmedCardShell == null) preWarmCardShell()
+        }
+
+        if (!isScreenOn) {
+            finalizeCollapse()
+            return
         }
 
         val dm = resources.displayMetrics
@@ -1542,17 +1589,7 @@ class FloatingBubbleService : Service() {
         root.animate()
             .alpha(0f)
             .setDuration(190)
-            .withEndAction {
-                isCollapsing = false
-                currentBubbleState = BubbleState.STATE_1_ACTIVE
-                cleanupEditorHandlesAndToolbar(prewarmedCardShell)
-                prewarmedCardShell?.cardLayout?.let { cl ->
-                    (cl.parent as? ViewGroup)?.removeView(cl)
-                }
-                renderCollapsedBubble(root)
-                transitionToBubbleState(BubbleState.STATE_1_ACTIVE)
-                if (prewarmedCardShell == null) preWarmCardShell()
-            }
+            .withEndAction { finalizeCollapse() }
             .start()
     }
 
@@ -2611,9 +2648,12 @@ class FloatingBubbleService : Service() {
                 }
 
                 activeStreamingJob = serviceScope.launch(Dispatchers.Main) {
+                    var streamThrottleJob: Job? = null
                     try {
                         val currentSession = prefs.getSelectedSession()
                         val accumulatedLive = StringBuilder()
+                        var lastStreamUpdateMs = 0L
+                        val latestLiveText = AtomicReference("")
 
                         val result = withContext(Dispatchers.IO) {
                             LiveAiChatHelper.summarizeSession(
@@ -2627,13 +2667,26 @@ class FloatingBubbleService : Service() {
                                         accumulatedLive.append(delta)
                                         accumulatedLive.toString()
                                     }
-                                    val cleanLive = CommandStripper.cleanLive(raw)
-                                    val parsedLive = SummaryParser.parse(cleanLive)
-                                    val liveAdvice = SummaryParser.cleanAdviceText(parsedLive.conciseAdvice)
-                                    val displayText = if (liveAdvice.isNotBlank()) liveAdvice else if (cleanLive.isNotBlank()) cleanLive else "..."
-                                    serviceScope.launch(Dispatchers.Main) {
-                                        stopTextShimmer(targetAdviceTv)
-                                        targetAdviceTv.text = "$displayText ▌"
+                                    val liveSnippet = extractLiveStreamSnippet(raw)
+                                    val cleanLive = CommandStripper.cleanLive(liveSnippet)
+                                    val displayText = if (cleanLive.isNotBlank()) cleanLive else "..."
+                                    latestLiveText.set(displayText)
+
+                                    val now = android.os.SystemClock.uptimeMillis()
+                                    if (now - lastStreamUpdateMs >= 70L) {
+                                        lastStreamUpdateMs = now
+                                        streamThrottleJob?.cancel()
+                                        streamThrottleJob = null
+                                        serviceScope.launch(Dispatchers.Main) {
+                                            stopTextShimmer(targetAdviceTv)
+                                            targetAdviceTv.text = "${latestLiveText.get()} ▌"
+                                        }
+                                    } else if (streamThrottleJob == null || !streamThrottleJob!!.isActive) {
+                                        streamThrottleJob = serviceScope.launch(Dispatchers.Main) {
+                                            delay(70L)
+                                            stopTextShimmer(targetAdviceTv)
+                                            targetAdviceTv.text = "${latestLiveText.get()} ▌"
+                                        }
                                     }
                                 },
                                 onStatusUpdate = { statusMsg ->
@@ -2650,17 +2703,22 @@ class FloatingBubbleService : Service() {
                                 }
                             )
                         }
+                        streamThrottleJob?.cancel()
+                        streamThrottleJob = null
                         stopTextShimmer(targetAdviceTv)
                         if (result.isSuccess) {
                             val (cleanSummary, usedKey, shownCards) = result.getOrThrow()
-                            updateSummaryTextAndParseEagerly(cleanSummary)
+                            val (parsed, cleanAdvice) = withContext(Dispatchers.Default) {
+                                val p = SummaryParser.parse(cleanSummary)
+                                val a = SummaryParser.cleanAdviceText(p.conciseAdvice)
+                                p to a
+                            }
+                            updateSummaryTextAndParseEagerly(cleanSummary, preParsed = parsed)
                             activeChatAnswer = null
                             latestModelInfo = "${usedKey.provider.displayName} • ${usedKey.modelName}"
                             sessionSummaryCache[currentSession.id] = Pair(cleanSummary, latestModelInfo)
                             modelTv.text = latestModelInfo
 
-                            val parsed = SummaryParser.parse(cleanSummary).also { cachedParsedSummary = it }
-                            val cleanAdvice = SummaryParser.cleanAdviceText(parsed.conciseAdvice)
                             targetAdviceTv.text = if (cleanAdvice.isNotBlank()) cleanAdvice else parsed.conciseAdvice.ifBlank { cleanSummary }
 
                             renderLocalNoteCardsInBubble(targetNotesContainer, shownCards)
@@ -2685,6 +2743,8 @@ class FloatingBubbleService : Service() {
                         val (title, detail) = buildAiErrorMessage(this@FloatingBubbleService, t, isWatchdogTimedOut.get())
                         renderAiErrorUi(targetAdviceTv, targetNotesContainer, title, detail, promptToSend, executeAiCall)
                     } finally {
+                        streamThrottleJob?.cancel()
+                        streamThrottleJob = null
                         stopTextShimmer(targetAdviceTv)
                         activeWatchdogJob?.cancel()
                         activeWatchdogJob = null

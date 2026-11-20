@@ -16,7 +16,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import java.util.concurrent.ConcurrentHashMap
+import android.util.LruCache
 
 class NotificationMonitorService : NotificationListenerService() {
 
@@ -63,10 +63,10 @@ class NotificationMonitorService : NotificationListenerService() {
 
         val timestamp = sbn.postTime.takeIf { it > 0 } ?: System.currentTimeMillis()
 
-        // 1. In-memory rapid deduplication (8-second sliding window)
+        // 1. In-memory rapid deduplication (sliding window)
         // Drops Zalo/Messenger/Telegram reposts synchronously without launching coroutines or hitting disk
         if (isDuplicateNotification(packageName, title, content, timestamp)) {
-            Log.d(TAG, "Khử trùng lặp (in-memory 8s): Bỏ qua thông báo lặp từ [$appName] $title: ${content.take(40)}")
+            Log.d(TAG, "Khử trùng lặp (in-memory LRU): Bỏ qua thông báo lặp từ [$appName] $title: ${content.take(40)}")
             return
         }
 
@@ -155,19 +155,19 @@ class NotificationMonitorService : NotificationListenerService() {
 
     companion object {
         private const val TAG = "NotificationMonitor"
-        const val DEDUP_WINDOW_MS = 8_000L
+        const val DEDUP_WINDOW_MS = 6_000L
         private const val BURST_UNPROCESSED_THRESHOLD = 80 // When unread messages hit 80 between shifts (max 100)
         private const val BURST_COOLDOWN_MS = 15 * 60 * 1000L // 15-minute cooldown between auto-burst summaries
         private const val MAINTENANCE_INTERVAL_MS = 15 * 60 * 1000L // Run DB purge at most once every 15 mins to save battery
         private var lastBurstTriggerTime = 0L
         private var lastMaintenanceTime = 0L
 
-        // In-memory sliding window cache for rapid deduplication (sub-millisecond O(1) checks)
+        // In-memory O(1) LRU cache for rapid deduplication (sub-millisecond O(1) checks)
         // Key: packageName|sender|hash(content) -> timestamp
-        private val recentNotificationsMap = ConcurrentHashMap<String, Long>()
+        private val recentNotificationsLruCache = LruCache<String, Long>(128)
 
         /**
-         * Checks whether an incoming notification is a duplicate within the 8-second window.
+         * Checks whether an incoming notification is a duplicate within the deduplication window.
          * Returns true if duplicate (should be dropped), false otherwise.
          */
         fun isDuplicateNotification(
@@ -179,19 +179,18 @@ class NotificationMonitorService : NotificationListenerService() {
             val now = if (timestamp > 0) timestamp else System.currentTimeMillis()
             val key = "$packageName\u0000$sender\u0000${content.hashCode()}"
 
-            // Automatically purge old entries (> 30s) if the map grows to keep memory near 0 bytes
-            if (recentNotificationsMap.size > 100) {
-                val cutoff = now - 30_000L
-                recentNotificationsMap.entries.removeIf { it.value < cutoff }
+            synchronized(recentNotificationsLruCache) {
+                val lastSeen = recentNotificationsLruCache.get(key)
+                if (lastSeen != null && (now - lastSeen) < DEDUP_WINDOW_MS) {
+                    return true
+                }
+                recentNotificationsLruCache.put(key, now)
+                return false
             }
+        }
 
-            val lastSeen = recentNotificationsMap[key]
-            if (lastSeen != null && (now - lastSeen) < DEDUP_WINDOW_MS) {
-                return true
-            }
-
-            recentNotificationsMap[key] = now
-            return false
+        fun clearDeduplicationCacheForTesting() {
+            synchronized(recentNotificationsLruCache) { recentNotificationsLruCache.evictAll() }
         }
     }
 }
