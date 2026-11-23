@@ -12,6 +12,8 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.widget.Toast
+import com.orca.orcaauto.data.preferences.UserPreferences
+import com.orca.orcaauto.ui.locale.AppLanguage
 import java.text.Normalizer
 import java.util.concurrent.ConcurrentHashMap
 import java.util.zip.CRC32
@@ -91,6 +93,12 @@ class ChatTargetLruCache(
         return primaryMap.values.filter { it.packageName == packageName }.maxByOrNull { it.cachedAtMs }
     }
 
+    fun remove(refId: String): CachedChatTarget? = synchronized(lock) {
+        val target = primaryMap.remove(refId) ?: return null
+        secondaryIndex.remove("${target.packageName}|${target.normalizedRoomKey}")
+        target
+    }
+
     fun size(): Int = synchronized(lock) {
         purgeExpiredLocked(System.currentTimeMillis())
         primaryMap.size
@@ -141,14 +149,37 @@ object ChatIntentManager {
     // Legacy fallback cache
     private val intentCache = ConcurrentHashMap<String, CachedChatIntent>()
 
+    private val SENDER_PAREN_GROUP_REGEX = Regex("""^(.+?)\s*\((.+?)\)$""")
+    private val GROUP_ARROW_SENDER_REGEX = Regex("""^(.+?)\s*>\s*(.+)$""")
+    private val COUNT_IN_PAREN_REGEX = Regex("""\(\d+(\s*(tin nhắn|messages|msgs))?\)""", RegexOption.IGNORE_CASE)
+
     fun normalizeRoomKey(rawTitle: String): String {
         var title = rawTitle.trim()
-        if (title.contains(":")) {
-            title = title.substringBefore(":").trim()
-        } else if (title.contains(">")) {
-            title = title.substringBefore(">").trim()
+        if (title.isBlank()) return ""
+
+        // 1. Strip message count pattern like "(2 tin nhắn)", "(3 msgs)", or "(4)"
+        title = COUNT_IN_PAREN_REGEX.replace(title, "").trim()
+
+        // 2. Extract group title if formatted as "Speaker (Group Name)"
+        val parenMatch = SENDER_PAREN_GROUP_REGEX.find(title)
+        if (parenMatch != null) {
+            val group = parenMatch.groupValues[2].trim()
+            if (group.isNotBlank()) {
+                title = group
+            }
+        } else {
+            // 3. Extract group title if formatted as "Group Name > Speaker"
+            val arrowMatch = GROUP_ARROW_SENDER_REGEX.find(title)
+            if (arrowMatch != null) {
+                val group = arrowMatch.groupValues[1].trim()
+                if (group.isNotBlank()) {
+                    title = group
+                }
+            } else if (title.contains(":")) {
+                title = title.substringBefore(":").trim()
+            }
         }
-        title = title.replace(Regex("""\(\d+(\s*(tin nhắn|messages|msgs))?\)""", RegexOption.IGNORE_CASE), "").trim()
+
         val nfc = Normalizer.normalize(title, Normalizer.Form.NFC)
         return nfc.replace(Regex("""[^\p{L}\p{N}\s]"""), " ")
             .replace(Regex("""\s+"""), " ")
@@ -303,19 +334,28 @@ object ChatIntentManager {
         }
     }
 
+    private fun isEnglishLocale(context: Context): Boolean {
+        return try {
+            UserPreferences.getInstance(context).getAppLanguage() == AppLanguage.ENGLISH
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     fun openAppForTask(context: Context, sourceText: String, taskTitle: String): Boolean {
         val targetPackage = resolveTargetPackage(sourceText, taskTitle)
         val appName = getAppDisplayName(targetPackage)
+        val isEn = isEnglishLocale(context)
         return try {
             val launchIntent = context.packageManager.getLaunchIntentForPackage(targetPackage)?.apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
             }
             if (launchIntent != null) {
                 context.startActivity(launchIntent)
-                showToast(context, "🚀 Đang mở $appName...")
+                showToast(context, if (isEn) "🚀 Opening $appName..." else "🚀 Đang mở $appName...")
                 true
             } else {
-                showToast(context, "Không tìm thấy $appName trên thiết bị", Toast.LENGTH_SHORT)
+                showToast(context, if (isEn) "App $appName not found on device" else "Không tìm thấy $appName trên thiết bị", Toast.LENGTH_SHORT)
                 false
             }
         } catch (e: Exception) {
@@ -338,6 +378,7 @@ object ChatIntentManager {
     ): JumpResult {
         val targetPackage = resolveTargetPackage(sourceText, taskTitle, chatRefId)
         val appName = getAppDisplayName(targetPackage)
+        val isEn = isEnglishLocale(context)
 
         var target: CachedChatTarget? = null
         if (!chatRefId.isNullOrBlank()) {
@@ -357,6 +398,7 @@ object ChatIntentManager {
                 return JumpResult.OPENED_CONVERSATION
             }
             Log.w(TAG, "PendingIntent cho chatRefId=$chatRefId không thể khởi chạy (đã bị hủy hoặc chết). Chuyển sang Tier 2/3.")
+            targetCache.remove(target.refId)
         }
 
         val deepLinkOpened = launchDeepLinkForTask(context, targetPackage, sourceText, taskTitle)
@@ -376,9 +418,9 @@ object ChatIntentManager {
             return try {
                 context.startActivity(launchIntent)
                 if (hadPendingIntent || !chatRefId.isNullOrBlank()) {
-                    showToast(context, "Đã mất dấu phòng chat, đang mở $appName")
+                    showToast(context, if (isEn) "Lost direct chat link, opening $appName" else "Đã mất dấu phòng chat, đang mở $appName")
                 } else {
-                    showToast(context, "🚀 Đang mở $appName...")
+                    showToast(context, if (isEn) "🚀 Opening $appName..." else "🚀 Đang mở $appName...")
                 }
                 JumpResult.OPENED_APP
             } catch (e: Exception) {
@@ -386,7 +428,7 @@ object ChatIntentManager {
                 JumpResult.FAILED
             }
         } else {
-            showToast(context, "Không tìm thấy $appName trên thiết bị")
+            showToast(context, if (isEn) "App $appName not found on device" else "Không tìm thấy $appName trên thiết bị")
             return JumpResult.FAILED
         }
     }

@@ -74,6 +74,10 @@ class ChatIntentManagerTest {
     fun testNormalizeRoomKey_stripsGroupPrefixesAndSpecialChars() {
         assertEquals("nhóm dự án", ChatIntentManager.normalizeRoomKey("Nhóm Dự Án: Nam"))
         assertEquals("team marketing", ChatIntentManager.normalizeRoomKey("Team Marketing > Tuấn"))
+        assertEquals("nhóm dự án", ChatIntentManager.normalizeRoomKey("Nam (Nhóm Dự Án)"))
+        assertEquals("team marketing", ChatIntentManager.normalizeRoomKey("Tuấn (Team Marketing)"))
+        assertEquals("nhóm dự án", ChatIntentManager.normalizeRoomKey("Nam (Nhóm Dự Án) (2 tin nhắn)"))
+        assertEquals("lớp 12a1", ChatIntentManager.normalizeRoomKey("Bác Ba (Lớp 12A1) (3)"))
         assertEquals("gia đình", ChatIntentManager.normalizeRoomKey("Gia Đình (5 tin nhắn)"))
         assertEquals("sếp hùng", ChatIntentManager.normalizeRoomKey("Sếp Hùng (3 msgs)"))
         assertEquals("phòng kế toán", ChatIntentManager.normalizeRoomKey("  PHÒNG KẾ TOÁN: Chị Nga  "))
@@ -122,6 +126,22 @@ class ChatIntentManagerTest {
 
         // Query after TTL expires
         assertNull("Phải trả về null khi quá thời gian TTL", cache.get("z0001", startMs + 1500L))
+        assertEquals(0, cache.size())
+    }
+
+    @Test
+    fun testLruCacheRemove() {
+        val cache = ChatTargetLruCache(capacity = 5, ttlMs = 60_000L)
+        val target = CachedChatTarget("z0001", "com.zing.zalo", "room1", null, System.currentTimeMillis())
+        cache.put(target)
+        assertEquals(1, cache.size())
+        assertNotNull(cache.getBySecondary("com.zing.zalo", "room1"))
+
+        val removed = cache.remove("z0001")
+        assertNotNull(removed)
+        assertEquals("z0001", removed?.refId)
+        assertNull(cache.get("z0001"))
+        assertNull(cache.getBySecondary("com.zing.zalo", "room1"))
         assertEquals(0, cache.size())
     }
 

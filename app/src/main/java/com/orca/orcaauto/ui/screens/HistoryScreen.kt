@@ -1226,6 +1226,7 @@ fun TaskAlarmConfigDialog(
 ) {
     val context = LocalContext.current
     val prefs = remember { UserPreferences.getInstance(context) }
+    val isEn = remember { prefs.getAppLanguage() == AppLanguage.ENGLISH }
     val cleanTitle = remember(task.title) {
         task.title.replace(Regex("""^[\[\(\-•*\d.]+\s*"""), "").trim()
     }
@@ -1695,11 +1696,11 @@ fun TaskAlarmConfigDialog(
                         shape = RoundedCornerShape(8.dp),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
                     ) {
-                        Text("🚀 Mở đoạn chat", fontSize = 12.sp)
+                        Text(if (isEn) "🚀 Open chat" else "🚀 Mở đoạn chat", fontSize = 12.sp)
                     }
                 }
                 TextButton(onClick = onDismiss) {
-                    Text("Đóng", color = TextSecondaryDark)
+                    Text(if (isEn) "Close" else "Đóng", color = TextSecondaryDark)
                 }
             }
         }

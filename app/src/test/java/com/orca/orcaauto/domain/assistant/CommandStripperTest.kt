@@ -285,4 +285,27 @@ class CommandStripperTest {
         assertTrue(CommandStripper.extractCommands("Không có lệnh nào ở đây cả.").isEmpty())
         assertTrue(CommandStripper.extractCommands("[INVALID_COMMAND:123]").isEmpty())
     }
+
+    @Test
+    fun cleanLive_stripsCompletedAndStreamingChatRefIds() {
+        val complete = "Nộp báo cáo trước 17h [#z4k9m] nhé anh."
+        assertEquals("Nộp báo cáo trước 17h  nhé anh.", CommandStripper.cleanLive(complete))
+
+        val streamSequence = listOf(
+            "Nộp báo cáo trước 17h: ",
+            "Nộp báo cáo trước 17h: [",
+            "Nộp báo cáo trước 17h: [#",
+            "Nộp báo cáo trước 17h: [#z",
+            "Nộp báo cáo trước 17h: [#z4",
+            "Nộp báo cáo trước 17h: [#z4k",
+            "Nộp báo cáo trước 17h: [#z4k9",
+            "Nộp báo cáo trước 17h: [#z4k9m",
+            "Nộp báo cáo trước 17h: [#z4k9m]"
+        )
+        val expected = "Nộp báo cáo trước 17h:"
+        for (step in streamSequence) {
+            val cleaned = CommandStripper.cleanLive(step)
+            assertEquals("Step '$step' must suppress chat ref tag", expected, cleaned)
+        }
+    }
 }

@@ -521,16 +521,24 @@ object CommandStripper {
         RegexOption.IGNORE_CASE
     )
 
+    // Regex for completed ChatRefId tag: [#z4k9m]
+    private val completedChatRefRegex = Regex("""\[#[ztmo][0-9a-z]{4}\]""", RegexOption.IGNORE_CASE)
+
+    // Regex for pending/partial ChatRefId at the tail of a streaming string: [# or [#z or [#z4k9m
+    private val pendingTailChatRefRegex = Regex("""\[#(?:[ztmo][0-9a-z]{0,4})?$""", RegexOption.IGNORE_CASE)
+
     /**
      * Strips fully completed command tags AND temporarily suppresses unclosed trailing command tags
      * so that raw syntax does not flicker on the UI while being streamed.
      */
     fun cleanLive(raw: String): String {
         if (raw.isBlank()) return ""
-        // 1. Strip completed command tags
-        val stripped = completedCommandRegex.replace(raw, "")
-        // 2. Suppress unclosed trailing command prefix (including dangling '[')
-        return pendingTailCommandRegex.replace(stripped, "").trimEnd()
+        // 1. Strip completed command tags and completed chat ref IDs
+        var stripped = completedCommandRegex.replace(raw, "")
+        stripped = completedChatRefRegex.replace(stripped, "")
+        // 2. Suppress unclosed trailing command prefix (including dangling '[') and partial chat refs
+        val cleanTail = pendingTailCommandRegex.replace(stripped, "")
+        return pendingTailChatRefRegex.replace(cleanTail, "").trimEnd()
     }
 
     /**
@@ -539,9 +547,11 @@ object CommandStripper {
      */
     fun cleanFinal(raw: String): String {
         if (raw.isBlank()) return ""
-        val stripped = completedCommandRegex.replace(raw, "")
+        var stripped = completedCommandRegex.replace(raw, "")
+        stripped = completedChatRefRegex.replace(stripped, "")
         val cleanTail = pendingTailCommandRegex.replace(stripped, "")
-        return cleanTail.replace(Regex("""\n{3,}"""), "\n\n").trim()
+        val cleanRefTail = pendingTailChatRefRegex.replace(cleanTail, "")
+        return cleanRefTail.replace(Regex("""\n{3,}"""), "\n\n").trim()
     }
 
     /**
