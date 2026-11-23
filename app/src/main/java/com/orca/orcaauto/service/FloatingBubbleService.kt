@@ -3712,6 +3712,20 @@ class FloatingBubbleService : Service() {
                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                     rightMargin = dpToPx(6)
                 }
+                isClickable = true
+                isFocusable = true
+                setOnClickListener {
+                    val jumpResult = ChatIntentManager.jumpToChat(
+                        context = this@FloatingBubbleService,
+                        chatRefId = task.chatRefId,
+                        sourceText = task.source,
+                        taskTitle = task.title
+                    )
+                    val root = bubbleRootView
+                    if (root != null && jumpResult != ChatIntentManager.JumpResult.FAILED) {
+                        collapseExpandedCard(root)
+                    }
+                }
             }
             holder.sourcePill = sourcePill
             holder.badgeRow.addView(sourcePill)
@@ -4251,13 +4265,14 @@ class FloatingBubbleService : Service() {
                         removePillSafely()
 
                         if (isOutside) {
-                            ChatIntentManager.openAppForTask(
+                            val jumpResult = ChatIntentManager.jumpToChat(
                                 context = this@FloatingBubbleService,
+                                chatRefId = curTask.chatRefId,
                                 sourceText = curTask.source,
                                 taskTitle = cleanTitle
                             )
                             val root = bubbleRootView
-                            if (root != null) {
+                            if (root != null && jumpResult != ChatIntentManager.JumpResult.FAILED) {
                                 collapseExpandedCard(root)
                             }
                         } else {

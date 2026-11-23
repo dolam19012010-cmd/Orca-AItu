@@ -1414,7 +1414,7 @@ private fun MultiKeyPoolSection(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text(
-            text = "Tự động nhận diện: Gemini (3.8/3.5/2.5 Flash), Groq (Llama 3.3, GPT-OSS, Qwen), DeepSeek (V4/V3, R1), OpenRouter (Claude 3.7, Free), OpenAI (o3-mini, 4o). Nếu Key 1 quá tải, app tự động chuyển key tiếp theo.",
+            text = "Tự động nhận diện: Gemini (3.8/3.5 Flash, 4 Argon), Groq (Llama 3.3, GPT-OSS), DeepSeek (V4.1 Flash/Pro), OpenRouter (Claude 5.5, Free), OpenAI (GPT-5, o3-mini). Nếu Key 1 quá tải, app tự động chuyển key tiếp theo.",
             style = MaterialTheme.typography.bodySmall,
             color = TextSecondaryDark
         )
@@ -2755,7 +2755,7 @@ private fun EditKeyModelDialog(
 
     val suggestions = remember(config.provider) {
         config.provider.supportedModels.ifEmpty {
-            listOf("gemini-3.8-flash", "gemini-3.5-flash-lite", "llama-3.3-70b-versatile", "deepseek-chat", "gpt-4o-mini")
+            listOf("gemini-3.8-flash", "gemini-3.5-flash-lite", "deepseek-flash", "openai/gpt-oss-120b", "llama-3.3-70b-versatile", "gpt-5-mini", "openrouter/free")
         }
     }
 
@@ -2784,7 +2784,7 @@ private fun EditKeyModelDialog(
                     value = modelInput,
                     onValueChange = { modelInput = it },
                     singleLine = true,
-                    placeholder = { Text("Ví dụ: gemini-3.8-flash, deepseek-flash") },
+                    placeholder = { Text("Ví dụ: gemini-3.8-flash, deepseek-flash, openai/gpt-oss-120b") },
                     modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = PrimaryIndigo,

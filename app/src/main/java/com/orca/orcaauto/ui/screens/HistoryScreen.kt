@@ -63,6 +63,7 @@ import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import com.orca.orcaauto.domain.voice.VoiceBriefingManager
+import com.orca.orcaauto.service.ChatIntentManager
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -1154,6 +1155,14 @@ private fun SwipeableTaskItemRow(
                     Box(
                         modifier = Modifier
                             .background(Color.White.copy(alpha = 0.06f), RoundedCornerShape(6.dp))
+                            .clickable {
+                                ChatIntentManager.jumpToChat(
+                                    context = context,
+                                    chatRefId = task.chatRefId,
+                                    sourceText = task.source,
+                                    taskTitle = task.title
+                                )
+                            }
                             .padding(horizontal = 7.dp, vertical = 3.dp)
                     ) {
                         Text(
@@ -1671,8 +1680,27 @@ fun TaskAlarmConfigDialog(
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("\u0110\u00F3ng", color = TextSecondaryDark)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (task.source.isNotBlank() || !task.chatRefId.isNullOrBlank()) {
+                    OutlinedButton(
+                        onClick = {
+                            ChatIntentManager.jumpToChat(
+                                context = context,
+                                chatRefId = task.chatRefId,
+                                sourceText = task.source,
+                                taskTitle = task.title
+                            )
+                            onDismiss()
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Text("🚀 Mở đoạn chat", fontSize = 12.sp)
+                    }
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("Đóng", color = TextSecondaryDark)
+                }
             }
         }
     )

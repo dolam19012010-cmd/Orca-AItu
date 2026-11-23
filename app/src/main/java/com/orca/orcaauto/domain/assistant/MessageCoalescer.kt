@@ -3,6 +3,7 @@ package com.orca.orcaauto.domain.assistant
 import androidx.compose.runtime.Immutable
 import com.orca.orcaauto.data.local.NotificationEntity
 import com.orca.orcaauto.domain.filter.PiiSanitizer
+import com.orca.orcaauto.service.ChatIntentManager
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -301,7 +302,9 @@ object MessageCoalescer {
             sb.appendLine("【 Ứng dụng: $appName 】")
 
             for (conv in convList) {
-                sb.appendLine("💬 Hội thoại: ${conv.conversationTitle}")
+                val normalizedKey = ChatIntentManager.normalizeRoomKey(conv.conversationTitle)
+                val refId = ChatIntentManager.generateChatRefId(conv.appPackage, normalizedKey)
+                sb.appendLine("💬 Hội thoại: ${conv.conversationTitle} [#$refId]")
 
                 for (turn in conv.turns) {
                     val timeStr = formatTimestamp(turn.startTimestamp)

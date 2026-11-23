@@ -74,9 +74,9 @@ class NotificationMonitorService : NotificationListenerService() {
         val isGroupSummary = (sbn.notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0
         val contentIntent = sbn.notification.contentIntent
         if (!isGroupSummary && contentIntent != null) {
-            ChatIntentManager.cacheChatIntent(
+            ChatIntentManager.cacheChatTarget(
                 packageName = packageName,
-                senderTitle = title,
+                rawTitle = title,
                 pendingIntent = contentIntent
             )
         }
@@ -137,6 +137,34 @@ class NotificationMonitorService : NotificationListenerService() {
     override fun onListenerConnected() {
         super.onListenerConnected()
         Log.i(TAG, "NotificationListenerService connected.")
+        repopulateActiveChatIntents()
+    }
+
+    private fun repopulateActiveChatIntents() {
+        try {
+            val activeList = activeNotifications ?: return
+            for (sbn in activeList) {
+                val notif = sbn.notification ?: continue
+                val isGroupSummary = (notif.flags and Notification.FLAG_GROUP_SUMMARY) != 0
+                val contentIntent = notif.contentIntent
+                if (!isGroupSummary && contentIntent != null) {
+                    val extras = notif.extras
+                    val rawTitle = extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString()
+                        ?: extras?.getString("android.title")
+                        ?: ""
+                    if (rawTitle.isNotBlank()) {
+                        ChatIntentManager.cacheChatTarget(
+                            packageName = sbn.packageName,
+                            rawTitle = rawTitle,
+                            pendingIntent = contentIntent
+                        )
+                    }
+                }
+            }
+            Log.i(TAG, "Đã khôi phục cache chat target từ active notifications: ${ChatIntentManager.getCacheSize()} items")
+        } catch (e: Exception) {
+            Log.w(TAG, "Lỗi khi khôi phục active notifications cache: ${e.message}")
+        }
     }
 
     override fun onListenerDisconnected() {

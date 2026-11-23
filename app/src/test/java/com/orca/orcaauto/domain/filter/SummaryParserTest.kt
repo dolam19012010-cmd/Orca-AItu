@@ -269,4 +269,95 @@ class SummaryParserTest {
         assertEquals("Kế hoạch", TaskStatus.PLANNED.getDisplayName(com.orca.orcaauto.ui.locale.AppLanguage.VIETNAMESE))
         assertEquals("Planned", TaskStatus.PLANNED.getDisplayName(com.orca.orcaauto.ui.locale.AppLanguage.ENGLISH))
     }
+
+    @Test
+    fun testParseTaskWithChatRefIdExtractedAndStrippedFromSource() {
+        val sampleAiOutput = """
+            PHẦN 1: LỜI KHUYÊN & LƯU Ý
+            - Lời khuyên: Tập trung xử lý các việc gấp chiều nay.
+
+            PHẦN 2: BẢNG NHIỆM VỤ ĐIỀU PHỐI
+            Nhiệm vụ phải làm (To-Do):
+            - [ ] Gửi báo cáo quý | Nguồn: Sếp Hùng [#z4k9m] | Hạn: 17:00
+            - [ ] Kiểm tra lỗi server | Nguồn: Team DevOps [#t8a2c] | Hạn: 18:00
+            - [ ] Phản hồi khách hàng | Nguồn: Lan Anh [#m1p7x] | Hạn: 19:00
+        """.trimIndent()
+
+        val parsed = SummaryParser.parse(sampleAiOutput)
+
+        assertEquals(3, parsed.tasksToDo.size)
+
+        // Item 1: Zalo
+        val task1 = parsed.tasksToDo[0]
+        assertEquals("Gửi báo cáo quý", task1.title)
+        assertEquals("Sếp Hùng", task1.source)
+        assertEquals("17:00", task1.deadline)
+        assertEquals("z4k9m", task1.chatRefId)
+        assertFalse("Source không được chứa raw tag", task1.source.contains("[#z4k9m]"))
+        assertFalse("Source không được rò rỉ #z4k9m", task1.source.contains("#z4k9m"))
+
+        // Item 2: Telegram
+        val task2 = parsed.tasksToDo[1]
+        assertEquals("Kiểm tra lỗi server", task2.title)
+        assertEquals("Team DevOps", task2.source)
+        assertEquals("t8a2c", task2.chatRefId)
+
+        // Item 3: Messenger
+        val task3 = parsed.tasksToDo[2]
+        assertEquals("Phản hồi khách hàng", task3.title)
+        assertEquals("Lan Anh", task3.source)
+        assertEquals("m1p7x", task3.chatRefId)
+    }
+
+    @Test
+    fun testParseTaskWithoutChatRefIdDefaultsToNull() {
+        val sample = """
+            PHẦN 1: LỜI KHUYÊN
+            - Lời khuyên: Giữ sức khỏe.
+
+            PHẦN 2: BẢNG NHIỆM VỤ ĐIỀU PHỐI
+            Nhiệm vụ phải làm (To-Do):
+            - [ ] Việc tự do cá nhân | Nguồn: Người dùng | Hạn: 20:00
+        """.trimIndent()
+
+        val parsed = SummaryParser.parse(sample)
+        assertEquals(1, parsed.tasksToDo.size)
+        val task = parsed.tasksToDo[0]
+        assertEquals("Việc tự do cá nhân", task.title)
+        assertEquals("Người dùng", task.source)
+        assertEquals(null, task.chatRefId)
+    }
+
+    @Test
+    fun testCleanMarkdownRemovesChatRefId() {
+        val rawSource = "Nguồn: Sếp Hùng [#z4k9m]"
+        val cleaned = SummaryParser.cleanMarkdown(rawSource)
+        assertEquals("Nguồn: Sếp Hùng", cleaned)
+
+        val rawAdvice = "Lời khuyên: [#t8a2c] cần gửi hợp đồng sớm"
+        val cleanedAdvice = SummaryParser.cleanMarkdown(rawAdvice)
+        assertEquals("Lời khuyên: cần gửi hợp đồng sớm", cleanedAdvice)
+    }
+
+    @Test
+    fun testParseContinuationSubLineWithChatRefId() {
+        val sampleWithSublines = """
+            PHẦN 1: LỜI KHUYÊN
+            - Lời khuyên: Đọc kỹ tài liệu.
+
+            PHẦN 2: BẢNG NHIỆM VỤ ĐIỀU PHỐI
+            Nhiệm vụ phải làm (To-Do):
+            - [ ] Xem lại tài liệu kỹ thuật
+            Nguồn: Trưởng phòng [#m1p7x]
+            Hạn: 14:00
+        """.trimIndent()
+
+        val parsed = SummaryParser.parse(sampleWithSublines)
+        assertEquals(1, parsed.tasksToDo.size)
+        val task = parsed.tasksToDo[0]
+        assertEquals("Xem lại tài liệu kỹ thuật", task.title)
+        assertEquals("Trưởng phòng", task.source)
+        assertEquals("14:00", task.deadline)
+        assertEquals("m1p7x", task.chatRefId)
+    }
 }

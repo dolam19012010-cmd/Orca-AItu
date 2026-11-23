@@ -135,4 +135,50 @@ class GeminiPromptBuilderTest {
             prompt.contains("Must follow these instructions to adjust priority")
         )
     }
+
+    @Test
+    fun testBuildSummaryPromptContainsChatRefIdInstructionsInVietnamese() {
+        val prompt = GeminiPromptBuilder.buildSummaryPrompt(
+            notifications = emptyList(),
+            language = com.orca.orcaauto.ui.locale.AppLanguage.VIETNAMESE
+        )
+        assertTrue("Prompt tiếng Việt phải chứa hướng dẫn mã [#refId]", prompt.contains("[#refId]"))
+        assertTrue(
+            "Prompt tiếng Việt phải có quy tắc gắn [#refId] sau tên Người gửi",
+            prompt.contains("BẮT BUỘC gắn kèm mã [#refId] ngay sau tên Người gửi ở trường Nguồn:")
+        )
+    }
+
+    @Test
+    fun testBuildSummaryPromptContainsChatRefIdInstructionsInEnglish() {
+        val prompt = GeminiPromptBuilder.buildSummaryPrompt(
+            notifications = emptyList(),
+            language = com.orca.orcaauto.ui.locale.AppLanguage.ENGLISH
+        )
+        assertTrue("Prompt tiếng Anh phải chứa hướng dẫn mã [#refId]", prompt.contains("[#refId]"))
+        assertTrue(
+            "Prompt tiếng Anh phải có quy tắc gắn [#refId] trong trường Source",
+            prompt.contains("you MUST append [#refId] directly after the sender name in the Source field")
+        )
+    }
+
+    @Test
+    fun testBuildSummaryPromptWithNotificationsIncludesRefIdInConversationHeader() {
+        val notifications = listOf(
+            NotificationEntity(
+                id = 1,
+                appPackage = "com.zing.zalo",
+                appName = "Zalo",
+                sender = "Sếp Hùng",
+                content = "Gửi báo cáo gấp trước 15h",
+                timestamp = System.currentTimeMillis()
+            )
+        )
+        val prompt = GeminiPromptBuilder.buildSummaryPrompt(
+            notifications = notifications,
+            language = com.orca.orcaauto.ui.locale.AppLanguage.VIETNAMESE
+        )
+        assertTrue("Hội thoại Zalo phải được gắn tag [#z...]", prompt.contains("[#z"))
+        assertTrue("Hội thoại phải chứa tên người gửi Sếp Hùng", prompt.contains("💬 Hội thoại: Sếp Hùng [#z"))
+    }
 }

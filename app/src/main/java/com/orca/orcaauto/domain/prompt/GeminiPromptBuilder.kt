@@ -197,21 +197,23 @@ object GeminiPromptBuilder {
 
         contentBuilder.append("=== PHẦN 2: BẢNG ĐIỀU PHỐI NHIỆM VỤ ===\n")
         contentBuilder.append("QUY TẮC CÚ PHÁP TỪNG DÒNG NHIỆM VỤ (BẮT BUỘC CHUẨN XÁC ĐỂ HỆ THỐNG PARSE MÁY):\n")
-        contentBuilder.append("• Mỗi nhiệm vụ trên ĐÚNG 1 DÒNG DUY NHẤT theo cú pháp: [Tên nhiệm vụ ngắn gọn] | Nguồn: [Tên người gửi ngắn] | Hạn: [Thời gian/Giờ đề xuất]\n")
+        contentBuilder.append("• Mỗi nhiệm vụ trên ĐÚNG 1 DÒNG DUY NHẤT theo cú pháp: [Tên nhiệm vụ ngắn gọn] | Nguồn: [Tên người gửi ngắn] [#refId] | Hạn: [Thời gian/Giờ đề xuất]\n")
+        contentBuilder.append("• Nếu nguồn việc xuất phát từ tin nhắn/hội thoại có mã [#refId] (ví dụ [#z4k9m]), BẮT BUỘC gắn kèm mã [#refId] ngay sau tên Người gửi ở trường Nguồn: (ví dụ: Nguồn: Sếp Hùng [#z4k9m]).\n")
+        contentBuilder.append("• Nếu nhiệm vụ do người dùng tự yêu cầu trực tiếp hoặc không bắt nguồn từ tin nhắn hội thoại, để trống/không ghi mã [#refId] (ví dụ: Nguồn: Người dùng).\n")
         contentBuilder.append("• TUYỆT ĐỐI KHÔNG dùng dấu sao in đậm (**) trong tên nhiệm vụ.\n")
         contentBuilder.append("• TUYỆT ĐỐI KHÔNG tự ý ngắt dòng, xuống dòng giữa chừng trong một nhiệm vụ.\n")
         contentBuilder.append("• Bắt buộc dùng đúng 3 nhóm tiêu đề chuẩn sau:\n\n")
 
         contentBuilder.append("### 🔴 NHIỆM VỤ PHẢI LÀM (TO-DO)\n")
         contentBuilder.append("(Bao gồm việc mới và các việc quá hạn/hoàn thành thụ động được giữ lại theo dõi thêm 1-2 phiên)\n")
-        contentBuilder.append("- [Tên nhiệm vụ cần làm] | Nguồn: [Người gửi] | Hạn: [Giờ/Ngày đề xuất]\n\n")
+        contentBuilder.append("- [Tên nhiệm vụ cần làm] | Nguồn: [Người gửi] [#refId] | Hạn: [Giờ/Ngày đề xuất]\n\n")
 
         contentBuilder.append("### 🟢 NHIỆM VỤ ĐÃ LÀM (DONE)\n")
         contentBuilder.append("(Chỉ giữ tối đa 1-2 việc quan trọng vừa hoàn tất gần đây có mốc giờ rõ; không liệt kê việc lặt vặt đã xong)\n")
-        contentBuilder.append("- [Tên việc quan trọng đã xong] | Nguồn: [Người gửi] | Thời gian: [Đã xong lúc HH:mm]\n\n")
+        contentBuilder.append("- [Tên việc quan trọng đã xong] | Nguồn: [Người gửi] [#refId] | Thời gian: [Đã xong lúc HH:mm]\n\n")
 
         contentBuilder.append("### 🟡 KẾ HOẠCH DỰ KIẾN (PLANNED)\n")
-        contentBuilder.append("- [Tên lịch hẹn/kế hoạch tương lai] | Nguồn: [Người gửi] | Mục tiêu: [Ngày/Giờ]\n")
+        contentBuilder.append("- [Tên lịch hẹn/kế hoạch tương lai] | Nguồn: [Người gửi] [#refId] | Mục tiêu: [Ngày/Giờ]\n")
 
         return contentBuilder.toString()
     }
@@ -351,21 +353,23 @@ object GeminiPromptBuilder {
 
         contentBuilder.append("=== PART 2: TASK DISPATCH BOARD ===\n")
         contentBuilder.append("LINE-BY-LINE SYNTAX RULES (CRITICAL FOR PARSER COMPATIBILITY):\n")
-        contentBuilder.append("• Each task MUST be on EXACTLY ONE SINGLE LINE using syntax: [Concise task title] | Source: [Sender name] | Due: [Proposed time/date]\n")
+        contentBuilder.append("• Each task MUST be on EXACTLY ONE SINGLE LINE using syntax: [Concise task title] | Source: [Sender name] [#refId] | Due: [Proposed time/date]\n")
+        contentBuilder.append("• If the task originates from a chat conversation with a [#refId] tag (e.g. [#z4k9m]), you MUST append [#refId] directly after the sender name in the Source field (e.g., Source: Boss [#z4k9m]).\n")
+        contentBuilder.append("• If the task was requested directly by the user or has no chat origin, omit the [#refId] tag (e.g., Source: User).\n")
         contentBuilder.append("• NEVER use bold markdown (**) within the task title.\n")
         contentBuilder.append("• NEVER insert line breaks within a single task line.\n")
         contentBuilder.append("• You MUST use these exact 3 section headings:\n\n")
 
         contentBuilder.append("### 🔴 TO-DO TASKS\n")
         contentBuilder.append("(Includes new actionable tasks and retained overdue/ongoing items)\n")
-        contentBuilder.append("- [Task to do] | Source: [Sender] | Due: [Proposed time/date]\n\n")
+        contentBuilder.append("- [Task to do] | Source: [Sender] [#refId] | Due: [Proposed time/date]\n\n")
 
         contentBuilder.append("### 🟢 COMPLETED TASKS (DONE)\n")
         contentBuilder.append("(Keep at most 1-2 important recently finished tasks with timestamps; do not list trivial finished items)\n")
-        contentBuilder.append("- [Important finished task] | Source: [Sender] | Time: [Completed at HH:mm]\n\n")
+        contentBuilder.append("- [Important finished task] | Source: [Sender] [#refId] | Time: [Completed at HH:mm]\n\n")
 
         contentBuilder.append("### 🟡 PLANNED TASKS\n")
-        contentBuilder.append("- [Upcoming event/future plan] | Source: [Sender] | Target: [Date/Time]\n")
+        contentBuilder.append("- [Upcoming event/future plan] | Source: [Sender] [#refId] | Target: [Date/Time]\n")
 
         return contentBuilder.toString()
     }

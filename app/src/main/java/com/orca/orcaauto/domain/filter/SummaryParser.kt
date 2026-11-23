@@ -23,7 +23,8 @@ data class TaskItem(
     val title: String,
     val source: String = "",
     val deadline: String = "",
-    val status: TaskStatus = TaskStatus.TODO
+    val status: TaskStatus = TaskStatus.TODO,
+    val chatRefId: String? = null
 )
 
 @Immutable
@@ -95,6 +96,7 @@ object SummaryParser {
     private val QUESTION_BULLET_START_REGEX = Regex("^\\?\\s*")
     private val QUESTION_BULLET_MID_REGEX = Regex("(?<=\\s)\\?\\s*")
     private val BRACKET_STRIP_REGEX = Regex("\\[(.*?)\\]")
+    private val CHAT_REF_ID_REGEX = Regex("""\[#([ztmo][0-9a-z]{4})\]""", RegexOption.IGNORE_CASE)
 
     private val ADVICE_BULLET_PREFIX_REGEX = Regex("""^([\\-•*]\s*|\d+\.\s*)""")
     private val ADVICE_BOLD_HEADER_REGEX = Regex("""^\*\*([^*]+)\*\*:?\s*""")
@@ -111,6 +113,7 @@ object SummaryParser {
 
     fun cleanMarkdown(text: String): String {
         return text
+            .replace(CHAT_REF_ID_REGEX, "")
             .replace(MARKDOWN_TAGS_REGEX, "")
             .replace(BOLD_STARS_REGEX, "")
             .replace(UNDERLINE_REGEX, "")
@@ -119,6 +122,7 @@ object SummaryParser {
             .replace(QUESTION_BULLET_START_REGEX, "")
             .replace(QUESTION_BULLET_MID_REGEX, "")
             .replace(BRACKET_STRIP_REGEX, "$1")
+            .replace(Regex("""[ \t]{2,}"""), " ")
             .trim()
     }
 
@@ -296,9 +300,13 @@ object SummaryParser {
                     val lastTask = targetList.lastOrNull()
                     if (lastTask != null) {
                         targetList.removeAt(targetList.size - 1)
+                        val refMatch = CHAT_REF_ID_REGEX.find(trimmed)
+                        val subChatRefId = refMatch?.groupValues?.get(1)?.lowercase()
+                        val cleanedTrimmed = trimmed.replace(CHAT_REF_ID_REGEX, "").trim()
+
                         var s = lastTask.source
                         var d = lastTask.deadline
-                        val subParts = trimmed.split("•", "|")
+                        val subParts = cleanedTrimmed.split("•", "|")
                         for (part in subParts) {
                             val lowerPart = part.trim().lowercase()
                             if (lowerPart.startsWith("nguồn:") || lowerPart.startsWith("source:") || lowerPart.startsWith("from:")) s = cleanMarkdown(part.trim().substringAfter(":"))
@@ -307,7 +315,7 @@ object SummaryParser {
                                 d = cleanMarkdown(part.trim().substringAfter(":"))
                             }
                         }
-                        targetList.add(lastTask.copy(source = s, deadline = d))
+                        targetList.add(lastTask.copy(source = s, deadline = d, chatRefId = subChatRefId ?: lastTask.chatRefId))
                     }
                 }
             }
@@ -339,9 +347,13 @@ object SummaryParser {
     private fun parseTaskLine(line: String, status: TaskStatus): TaskItem? {
         if (line.isBlank()) return null
 
+        val refMatch = CHAT_REF_ID_REGEX.find(line)
+        val chatRefId = refMatch?.groupValues?.get(1)?.lowercase()
+        val cleanLineWithoutRef = line.replace(CHAT_REF_ID_REGEX, "").trim()
+
         // Format expected: [Title] | Nguồn: [Source] | Hạn chót: [Deadline]
-        val parts = line.split("|").map { it.trim() }
-        var rawTitle = parts.getOrNull(0) ?: line
+        val parts = cleanLineWithoutRef.split("|").map { it.trim() }
+        var rawTitle = parts.getOrNull(0) ?: cleanLineWithoutRef
         // Strip bullet / number prefix: "- ", "* ", "1. ", etc.
         rawTitle = rawTitle.replace(TASK_LINE_PREFIX_REGEX, "")
         // Strip markdown checkbox: "[ ] ", "[x] ", "[X] ", etc.
@@ -371,7 +383,8 @@ object SummaryParser {
             title = title,
             source = source,
             deadline = deadline,
-            status = status
+            status = status,
+            chatRefId = chatRefId
         )
     }
 }
