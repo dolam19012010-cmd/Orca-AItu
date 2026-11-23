@@ -39,6 +39,7 @@ class ShakeDetector(
         private const val COOLDOWN_NS = 1_200_000_000L   // 1.2s hồi chiêu chống kích hoạt lặp
     }
 
+    @Volatile
     private var isRunning = false
     private var lastShakeTimestampNs = 0L
     private var lastPeakTimestampNs = 0L
