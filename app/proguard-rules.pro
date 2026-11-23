@@ -4,8 +4,7 @@
 -keep class * extends androidx.room.RoomDatabase
 -dontwarn androidx.room.paging.**
 
-# Google Generative AI & Networking
--keep class com.google.ai.client.generativeai.** { *; }
+# Gson & Networking
 -keep class com.google.gson.** { *; }
 -keepclassmembers class * {
     @com.google.gson.annotations.SerializedName <fields>;
@@ -14,3 +13,9 @@
 # Data models
 -keep class com.orca.orcaauto.data.local.** { *; }
 -keep class com.orca.orcaauto.data.remote.** { *; }
+-keep class com.orca.orcaauto.data.preferences.** { *; }
+-keep class com.orca.orcaauto.data.backup.** { *; }
+-keep class com.orca.orcaauto.domain.** { *; }
+
+# Preserve source file and line numbers for CrashActivity stack trace
+-keepattributes SourceFile,LineNumberTable

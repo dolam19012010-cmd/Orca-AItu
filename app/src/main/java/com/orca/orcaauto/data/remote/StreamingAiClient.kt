@@ -17,7 +17,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.TimeoutCancellationException
 import okhttp3.Call
-import okhttp3.ConnectionPool
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -636,8 +635,7 @@ class StreamingAiClient(
 
     companion object {
         val defaultStreamingClient: OkHttpClient by lazy {
-            OkHttpClient.Builder()
-                .connectionPool(ConnectionPool(5, 5, TimeUnit.MINUTES))
+            UniversalAiClient.sharedHttpClient.newBuilder()
                 .connectTimeout(20, TimeUnit.SECONDS)
                 .readTimeout(120, TimeUnit.SECONDS)
                 .writeTimeout(30, TimeUnit.SECONDS)

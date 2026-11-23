@@ -24,7 +24,9 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -87,16 +89,11 @@ dependencies {
     // WorkManager
     implementation(libs.androidx.work.runtime.ktx)
 
-    // Security (EncryptedSharedPreferences)
-    implementation(libs.androidx.security.crypto)
-
     // Coroutines
     implementation(libs.kotlinx.coroutines.android)
 
-    // Gemini AI & Networking
-    implementation(libs.google.generativeai)
+    // Networking & Serialization
     implementation(libs.okhttp)
-    implementation(libs.okhttp.logging)
     implementation(libs.gson)
 
     // Unit Testing
