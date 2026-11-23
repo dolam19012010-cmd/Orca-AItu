@@ -7,7 +7,6 @@ import android.hardware.SensorManager
 import android.os.Handler
 import android.util.Log
 import kotlin.math.abs
-import kotlin.math.sqrt
 
 /**
  * ShakeDetector: Bộ nhận diện cử chỉ lắc cổ tay chuẩn công nghiệp.
@@ -24,7 +23,7 @@ import kotlin.math.sqrt
  * 4. Zero-allocation trong runtime loop để tránh tạo rác và giật khung hình (GC pauses).
  */
 class ShakeDetector(
-    private val onShakeListener: () -> Unit
+    private val onShakeListener: () -> Unit = {}
 ) : SensorEventListener {
 
     companion object {
@@ -32,6 +31,7 @@ class ShakeDetector(
 
         // Tham số vàng (Golden Parameters) được chuẩn hóa cho cử chỉ lắc cổ tay tự nhiên
         private const val SHAKE_THRESHOLD = 12.0f        // m/s² gia tốc tuyến tính (khoảng 1.25g)
+        private const val SHAKE_THRESHOLD_SQ = 144.0f    // (12.0f)^2 để tránh sqrt trong runtime loop
         private const val MIN_REVERSALS = 3              // Tối thiểu 3 lần đổi cực tính (+ -> - -> +)
         private const val TIME_WINDOW_NS = 750_000_000L  // Cửa sổ quan sát 750ms
         private const val MIN_INTERVAL_NS = 70_000_000L  // Lọc nhiễu cơ học tần số cao (> 14Hz)
@@ -74,6 +74,7 @@ class ShakeDetector(
             this,
             sensor,
             SensorManager.SENSOR_DELAY_GAME,
+            100_000,
             handler
         )
         if (registered) {
@@ -102,8 +103,9 @@ class ShakeDetector(
     fun isStarted(): Boolean = isRunning
 
     override fun onSensorChanged(event: SensorEvent) {
+        if (!isRunning) return
         val now = event.timestamp
-        if (now - lastShakeTimestampNs < COOLDOWN_NS) return // Đang trong thời gian hồi chiêu 1.2s
+        if (lastShakeTimestampNs > 0L && now - lastShakeTimestampNs < COOLDOWN_NS) return // Đang trong thời gian hồi chiêu 1.2s
 
         val linearX: Float
         val linearY: Float
@@ -124,10 +126,16 @@ class ShakeDetector(
             linearZ = event.values[2] - gravityZ
         }
 
-        // Tính độ lớn vector gia tốc tuyến tính 3 chiều
-        val magnitude = sqrt(linearX * linearX + linearY * linearY + linearZ * linearZ)
+        processAcceleration(linearX, linearY, linearZ, now)
+    }
 
-        if (magnitude > SHAKE_THRESHOLD) {
+    internal fun processAcceleration(linearX: Float, linearY: Float, linearZ: Float, timestampNs: Long): Boolean {
+        if (lastShakeTimestampNs > 0L && timestampNs - lastShakeTimestampNs < COOLDOWN_NS) return false // Đang trong thời gian hồi chiêu 1.2s
+
+        // Tính bình phương độ lớn vector gia tốc tuyến tính 3 chiều (triệt tiêu sqrt mỗi chu kỳ 20ms)
+        val magSq = linearX * linearX + linearY * linearY + linearZ * linearZ
+
+        if (magSq > SHAKE_THRESHOLD_SQ) {
             // Xác định trục chiếm ưu thế biên độ lớn nhất (thường là trục X hoặc Y khi lắc cổ tay)
             val dominantVal = if (abs(linearX) > abs(linearY)) {
                 if (abs(linearX) > abs(linearZ)) linearX else linearZ
@@ -139,37 +147,39 @@ class ShakeDetector(
             if (lastSign == 0) {
                 // Nhịp đỉnh đầu tiên
                 lastSign = currentSign
-                lastPeakTimestampNs = now
+                lastPeakTimestampNs = timestampNs
                 reversalCount = 1
             } else if (currentSign != lastSign) {
-                val timeDiff = now - lastPeakTimestampNs
+                val timeDiff = timestampNs - lastPeakTimestampNs
 
                 // Kiểm tra khoảng cách thời gian giữa 2 nhịp đảo chiều (70ms <= dt <= 420ms)
                 if (timeDiff in MIN_INTERVAL_NS..MAX_INTERVAL_NS) {
                     reversalCount++
                     lastSign = currentSign
-                    lastPeakTimestampNs = now
+                    lastPeakTimestampNs = timestampNs
 
                     // Kích hoạt khi thỏa mãn đủ số lần đảo chiều trong cửa sổ quan sát
                     if (reversalCount >= MIN_REVERSALS) {
-                        lastShakeTimestampNs = now
+                        lastShakeTimestampNs = timestampNs
                         resetState()
                         Log.i(TAG, "⚡ Phát hiện cử chỉ lắc tay hợp lệ! Kích hoạt callback.")
                         onShakeListener.invoke()
+                        return true
                     }
                 } else if (timeDiff > MAX_INTERVAL_NS) {
                     // Khoảng cách nhịp quá dài (nhịp đi bộ chậm) -> Reset bắt đầu nhịp mới
                     lastSign = currentSign
-                    lastPeakTimestampNs = now
+                    lastPeakTimestampNs = timestampNs
                     reversalCount = 1
                 }
             }
         } else {
             // Quá thời gian TIME_WINDOW_NS mà không có dao động mới -> Reset trạng thái tĩnh
-            if (now - lastPeakTimestampNs > TIME_WINDOW_NS) {
+            if (timestampNs - lastPeakTimestampNs > TIME_WINDOW_NS) {
                 resetState()
             }
         }
+        return false
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {

@@ -5,6 +5,7 @@ import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
 import android.annotation.SuppressLint
+import android.app.KeyguardManager
 import android.app.Service
 import android.content.BroadcastReceiver
 import android.content.ClipData
@@ -389,7 +390,7 @@ class FloatingBubbleService : Service() {
                 when (intent?.action) {
                     Intent.ACTION_SCREEN_OFF -> {
                         isScreenOn = false
-                        updateShakeDetectorState()
+                        updateShakeDetectorState(forceScreenOff = true)
                         stopTextShimmer(null); liveStatusShimmerAnimator?.cancel(); liveStatusShimmerAnimator = null
                         cleanupVoiceRecording(); cancelActiveVoiceSession?.invoke()
                         try { com.orca.orcaauto.domain.voice.VoiceBriefingManager.getInstance(this@FloatingBubbleService).stop() } catch (_: Exception) {}
@@ -655,12 +656,19 @@ class FloatingBubbleService : Service() {
         bubbleLifecycleHandler.postDelayed({ preWarmCardShell() }, 400L)
     }
 
-    private fun updateShakeDetectorState() {
+    private fun updateShakeDetectorState(forceScreenOff: Boolean = false) {
         val prefs = UserPreferences.getInstance(this)
-        isScreenOn = (getSystemService(Context.POWER_SERVICE) as? PowerManager)?.isInteractive ?: true
+        if (forceScreenOff) {
+            isScreenOn = false
+        } else if (isScreenOn) {
+            isScreenOn = (getSystemService(Context.POWER_SERVICE) as? PowerManager)?.isInteractive ?: true
+        }
+        val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+        val isLocked = keyguardManager?.isKeyguardLocked ?: false
         val shouldListen = !isExpanded &&
                 currentBubbleState == BubbleState.STATE_3_HIDDEN &&
                 isScreenOn &&
+                !isLocked &&
                 prefs.isShakeToWakeEnabled()
 
         val sm = sensorManager ?: return
