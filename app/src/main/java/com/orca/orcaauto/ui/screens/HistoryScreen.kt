@@ -7,12 +7,19 @@ import android.widget.Toast
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -99,6 +106,7 @@ import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -192,38 +200,78 @@ fun HistoryScreen() {
     var promptInput by rememberSaveable { mutableStateOf("") }
     var activeChatQuery by rememberSaveable { mutableStateOf<String?>(null) }
     var showAssistantSheet by rememberSaveable { mutableStateOf(false) }
+    var isHeaderExpanded by rememberSaveable { mutableStateOf(true) }
     val thinkingLevel by preferences.assistantThinkingLevelFlow.collectAsState()
     val strings = LocalAppStrings.current
     val isEn = strings.language == AppLanguage.ENGLISH
+
+    val summaryListState = rememberLazyListState()
+    val notificationListState = rememberLazyListState()
+
+    val nestedScrollConnection = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                val delta = available.y
+                if (delta < -12f && isHeaderExpanded) {
+                    isHeaderExpanded = false
+                } else if (delta > 12f && !isHeaderExpanded) {
+                    isHeaderExpanded = true
+                }
+                return Offset.Zero
+            }
+        }
+    }
+
+    val currentListState = if (selectedTab == 0) summaryListState else notificationListState
+    LaunchedEffect(currentListState) {
+        snapshotFlow { currentListState.firstVisibleItemIndex to currentListState.firstVisibleItemScrollOffset }
+            .collect { (index, offset) ->
+                if (index == 0 && offset < 20 && !isHeaderExpanded) {
+                    isHeaderExpanded = true
+                }
+            }
+    }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Transparent)
+            .nestedScroll(nestedScrollConnection)
             .padding(16.dp)
     ) {
-        // Title Header: Clean & Modern
-        Text(
-            text = if (isEn) "AI Memory & Tasks" else "Trí nhớ AI",
-            style = MaterialTheme.typography.titleLarge,
-            color = TextPrimaryDark,
-            fontWeight = FontWeight.Bold
-        )
-        Text(
-            text = if (isEn) "Shift summaries & automated task dispatch" else "Báo cáo ca & Nhiệm vụ tự động",
-            style = MaterialTheme.typography.bodySmall,
-            color = TextSecondaryDark
-        )
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        // In-App AI Prompt Card (Hỏi AItu / Ra lệnh như trong bóng chat)
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = GlassSurfaceCard),
-            border = BorderStroke(1.dp, CardBorder)
+        // Collapsible Top Section (Tiêu đề + Thẻ lệnh AI + Bong bóng)
+        AnimatedVisibility(
+            visible = isHeaderExpanded,
+            enter = expandVertically(
+                animationSpec = tween(durationMillis = 240, easing = FastOutSlowInEasing)
+            ) + fadeIn(animationSpec = tween(200)),
+            exit = shrinkVertically(
+                animationSpec = tween(durationMillis = 240, easing = FastOutSlowInEasing)
+            ) + fadeOut(animationSpec = tween(180))
         ) {
+            Column {
+                // Title Header: Clean & Modern
+                Text(
+                    text = if (isEn) "AI Memory & Tasks" else "Trí nhớ AI",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = TextPrimaryDark,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = if (isEn) "Shift summaries & automated task dispatch" else "Báo cáo ca & Nhiệm vụ tự động",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondaryDark
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // In-App AI Prompt Card (Hỏi AItu / Ra lệnh như trong bóng chat)
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = GlassSurfaceCard),
+                    border = BorderStroke(1.dp, CardBorder)
+                ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -388,6 +436,8 @@ fun HistoryScreen() {
                 }
             }
         }
+            }
+        }
 
         Spacer(modifier = Modifier.height(10.dp))
 
@@ -416,36 +466,45 @@ fun HistoryScreen() {
             )
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
-
-        // Horizontal Session Tabs Bar
-        if (selectedTab == 0 && sessions.isNotEmpty()) {
-            LazyRow(
-                modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                items(sessions, key = { it.id }) { session ->
-                    val isSelected = session.id == selectedSessionId
-                    Surface(
-                        onClick = { preferences.setSelectedSessionId(session.id) },
-                        shape = RoundedCornerShape(16.dp),
-                        color = if (isSelected) Color(0xFF2563EB) else GlassSurfaceDark,
-                        border = BorderStroke(1.dp, if (isSelected) Color(0xFF60A5FA) else GlassBorderSubtle),
-                        modifier = Modifier.height(32.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        // Horizontal Session Tabs Bar (Tự động thu gọn mượt mà khi cuộn xem danh sách)
+        AnimatedVisibility(
+            visible = isHeaderExpanded && selectedTab == 0 && sessions.isNotEmpty(),
+            enter = expandVertically(
+                animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing)
+            ) + fadeIn(animationSpec = tween(160)),
+            exit = shrinkVertically(
+                animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing)
+            ) + fadeOut(animationSpec = tween(160))
+        ) {
+            Column {
+                Spacer(modifier = Modifier.height(8.dp))
+                LazyRow(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    items(sessions, key = { it.id }) { session ->
+                        val isSelected = session.id == selectedSessionId
+                        Surface(
+                            onClick = { preferences.setSelectedSessionId(session.id) },
+                            shape = RoundedCornerShape(16.dp),
+                            color = if (isSelected) Color(0xFF2563EB) else GlassSurfaceDark,
+                            border = BorderStroke(1.dp, if (isSelected) Color(0xFF60A5FA) else GlassBorderSubtle),
+                            modifier = Modifier.height(32.dp)
                         ) {
-                            Text(text = session.iconEmoji, fontSize = 12.sp)
-                            Text(
-                                text = session.name,
-                                fontSize = 12.sp,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                color = if (isSelected) Color.White else Color(0xFFCBD5E1)
-                            )
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(text = session.iconEmoji, fontSize = 12.sp)
+                                Text(
+                                    text = session.name,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isSelected) Color.White else Color(0xFFCBD5E1)
+                                )
+                            }
                         }
                     }
                 }
@@ -482,6 +541,7 @@ fun HistoryScreen() {
                         )
                     } else {
                         LazyColumn(
+                            state = summaryListState,
                             verticalArrangement = Arrangement.spacedBy(16.dp),
                             contentPadding = PaddingValues(bottom = 80.dp)
                         ) {
@@ -551,6 +611,7 @@ fun HistoryScreen() {
                             }
 
                             LazyColumn(
+                                state = notificationListState,
                                 verticalArrangement = Arrangement.spacedBy(10.dp),
                                 contentPadding = PaddingValues(bottom = 80.dp)
                             ) {
