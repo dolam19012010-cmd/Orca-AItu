@@ -160,7 +160,8 @@ data class AssistantChatMessage(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AssistantChatSheet(
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    initialQuery: String? = null
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -326,6 +327,15 @@ fun AssistantChatSheet(
                             }
                         }
                     }
+                }
+            }
+
+            // Auto-trigger initial query if launched from in-app input bar
+            var hasSentInitial by remember(initialQuery) { mutableStateOf(false) }
+            LaunchedEffect(initialQuery) {
+                if (!initialQuery.isNullOrBlank() && !hasSentInitial) {
+                    hasSentInitial = true
+                    sendMessage(initialQuery)
                 }
             }
 

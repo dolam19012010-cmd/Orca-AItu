@@ -64,6 +64,13 @@ import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material3.CircularProgressIndicator
 import com.orca.orcaauto.worker.WorkScheduler
+import androidx.compose.ui.draw.clip
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.ui.text.input.ImeAction
+import com.orca.orcaauto.ui.components.AssistantChatSheet
+import com.orca.orcaauto.data.preferences.AssistantThinkingLevel
 import com.orca.orcaauto.service.FloatingBubbleService
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -181,6 +188,10 @@ fun HistoryScreen() {
     }
 
     var showClearConfirmDialog by remember { mutableStateOf(false) }
+    var promptInput by remember { mutableStateOf("") }
+    var activeChatQuery by remember { mutableStateOf<String?>(null) }
+    var showAssistantSheet by remember { mutableStateOf(false) }
+    val thinkingLevel by preferences.assistantThinkingLevelFlow.collectAsState()
     val strings = LocalAppStrings.current
     val isEn = strings.language == AppLanguage.ENGLISH
 
@@ -205,75 +216,181 @@ fun HistoryScreen() {
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        // Quick Command Actions: Trigger Immediate AI Summary & Open Floating Chat Bubble
-        var isTestingAi by remember { mutableStateOf(false) }
-        Row(
+        // In-App AI Prompt Card (Hỏi AItu / Ra lệnh như trong bóng chat)
+        Card(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = GlassSurfaceCard),
+            border = BorderStroke(1.dp, CardBorder)
         ) {
-            Button(
-                onClick = {
-                    val activeKeys = preferences.getKeyPool().filter { it.isEnabled && it.rawKey.isNotBlank() }
-                    if (activeKeys.isEmpty()) {
-                        Toast.makeText(context, if (isEn) "Please add at least 1 API Key in Settings first!" else "Vui lòng thêm ít nhất 1 API Key trong Cài đặt trước!", Toast.LENGTH_LONG).show()
-                        return@Button
-                    }
-                    isTestingAi = true
-                    WorkScheduler.triggerImmediateSummary(context)
-                    Toast.makeText(context, if (isEn) "AI summary requested via WorkManager..." else "Đã gửi lệnh tóm tắt AI. Đang xử lý ngầm qua WorkManager...", Toast.LENGTH_SHORT).show()
-                    scope.launch {
-                        kotlinx.coroutines.delay(2000)
-                        isTestingAi = false
-                    }
-                },
-                modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = PrimaryIndigo,
-                    contentColor = BackgroundDark
-                ),
-                shape = RoundedCornerShape(10.dp),
-                enabled = !isTestingAi
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp)
             ) {
-                if (isTestingAi) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(16.dp),
-                        color = BackgroundDark,
-                        strokeWidth = 2.dp
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(strings.processing, fontSize = 12.sp, color = BackgroundDark, fontWeight = FontWeight.Bold)
-                } else {
-                    Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp), tint = BackgroundDark)
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(strings.btnInstantAi, fontSize = 12.sp, color = BackgroundDark, fontWeight = FontWeight.Bold)
-                }
-            }
-
-            OutlinedButton(
-                onClick = {
-                    scope.launch {
-                        val selectedId = preferences.getSelectedSessionId()
-                        val sessionRecord = database.summaryDao().getLatestSummaryForSession(selectedId)
-                        val activeSession = preferences.getSelectedSession()
-                        val content = sessionRecord?.summaryContent?.ifBlank { null }
-                            ?: (if (isEn) "No summaries recorded yet for session ${activeSession.name}. Bubble is ready!" else "Chưa có bản tóm tắt nào cho ca ${activeSession.name}. Bong bóng đã sẵn sàng!")
-                        FloatingBubbleService.show(
-                            context = context,
-                            summaryContent = content,
-                            modelInfo = sessionRecord?.modelInfo ?: "${activeSession.iconEmoji} ${activeSession.name}",
-                            sessionId = selectedId
+                // Top row: Thinking Level Chips + Open Bubble Button
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        HistoryThinkingChip(
+                            label = if (isEn) "⚡ Fast" else "⚡ Nhanh",
+                            selected = thinkingLevel == AssistantThinkingLevel.FAST,
+                            onClick = {
+                                scope.launch {
+                                    preferences.setAssistantThinkingLevel(AssistantThinkingLevel.FAST)
+                                }
+                            }
                         )
-                        Toast.makeText(context, if (isEn) "Opened chat bubble (${activeSession.name})!" else "Đã mở bong bóng chat (${activeSession.name})!", Toast.LENGTH_SHORT).show()
+                        HistoryThinkingChip(
+                            label = if (isEn) "⚖ Balanced" else "⚖ Cân bằng",
+                            selected = thinkingLevel == AssistantThinkingLevel.BALANCED,
+                            onClick = {
+                                scope.launch {
+                                    preferences.setAssistantThinkingLevel(AssistantThinkingLevel.BALANCED)
+                                }
+                            }
+                        )
+                        HistoryThinkingChip(
+                            label = if (isEn) "🧠 Deep" else "🧠 Sâu sắc",
+                            selected = thinkingLevel == AssistantThinkingLevel.DEEP,
+                            onClick = {
+                                scope.launch {
+                                    preferences.setAssistantThinkingLevel(AssistantThinkingLevel.DEEP)
+                                }
+                            }
+                        )
                     }
-                },
-                modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(10.dp),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimaryDark),
-                border = BorderStroke(1.dp, GlassBorder)
-            ) {
-                Icon(imageVector = Icons.Default.ChatBubbleOutline, contentDescription = null, modifier = Modifier.size(16.dp), tint = AccentCyan)
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(strings.btnOpenBubble, fontSize = 12.sp, color = TextPrimaryDark)
+
+                    // Compact Bubble Action Pill
+                    Surface(
+                        onClick = {
+                            scope.launch {
+                                val selectedId = preferences.getSelectedSessionId()
+                                val sessionRecord = database.summaryDao().getLatestSummaryForSession(selectedId)
+                                val activeSession = preferences.getSelectedSession()
+                                val content = sessionRecord?.summaryContent?.ifBlank { null }
+                                    ?: (if (isEn) "No summaries recorded yet for session ${activeSession.name}. Bubble is ready!" else "Chưa có bản tóm tắt nào cho ca ${activeSession.name}. Bong bóng đã sẵn sàng!")
+                                FloatingBubbleService.show(
+                                    context = context,
+                                    summaryContent = content,
+                                    modelInfo = sessionRecord?.modelInfo ?: "${activeSession.iconEmoji} ${activeSession.name}",
+                                    sessionId = selectedId
+                                )
+                                Toast.makeText(context, if (isEn) "Opened chat bubble (${activeSession.name})!" else "Đã mở bong bóng chat (${activeSession.name})!", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        color = GlassSurfaceInner,
+                        border = BorderStroke(1.dp, GlassBorderSubtle),
+                        modifier = Modifier.height(26.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ChatBubbleOutline,
+                                contentDescription = null,
+                                modifier = Modifier.size(12.dp),
+                                tint = AccentCyan
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = if (isEn) "Bubble" else "Bong bóng",
+                                fontSize = 11.sp,
+                                color = TextPrimaryDark,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Input Bar with Send Button
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = promptInput,
+                        onValueChange = { promptInput = it },
+                        modifier = Modifier.weight(1f),
+                        placeholder = {
+                            Text(
+                                text = if (isEn) "Ask AItu or give a command..." else "Hỏi AItu hoặc ra lệnh...",
+                                fontSize = 13.sp,
+                                color = TextMutedDark
+                            )
+                        },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = GlassSurfaceInner,
+                            unfocusedContainerColor = GlassSurfaceInner,
+                            focusedBorderColor = AccentCyan,
+                            unfocusedBorderColor = GlassBorderSubtle,
+                            focusedTextColor = TextPrimaryDark,
+                            unfocusedTextColor = TextPrimaryDark,
+                            cursorColor = AccentCyan
+                        ),
+                        shape = RoundedCornerShape(20.dp),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                        keyboardActions = KeyboardActions(
+                            onSend = {
+                                val trimmed = promptInput.trim()
+                                if (trimmed.isNotBlank()) {
+                                    activeChatQuery = trimmed
+                                    promptInput = ""
+                                    showAssistantSheet = true
+                                }
+                            }
+                        )
+                    )
+
+                    Spacer(modifier = Modifier.width(8.dp))
+
+                    IconButton(
+                        onClick = {
+                            val trimmed = promptInput.trim()
+                            activeChatQuery = trimmed.ifBlank { null }
+                            promptInput = ""
+                            showAssistantSheet = true
+                        },
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (promptInput.isNotBlank()) PrimaryIndigo else GlassSurfaceInner
+                            )
+                            .border(
+                                1.dp,
+                                if (promptInput.isNotBlank()) AccentCyan else GlassBorderSubtle,
+                                CircleShape
+                            )
+                    ) {
+                        if (promptInput.isNotBlank()) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.Send,
+                                contentDescription = "Send",
+                                tint = BackgroundDark,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.AutoAwesome,
+                                contentDescription = "AI Assistant",
+                                tint = AccentCyan,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
             }
         }
 
@@ -535,6 +652,43 @@ fun HistoryScreen() {
             },
             containerColor = SurfaceDark
         )
+    }
+
+    if (showAssistantSheet) {
+        AssistantChatSheet(
+            onDismiss = {
+                showAssistantSheet = false
+                activeChatQuery = null
+            },
+            initialQuery = activeChatQuery
+        )
+    }
+}
+
+@Composable
+private fun HistoryThinkingChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(12.dp),
+        color = if (selected) PrimaryIndigo.copy(alpha = 0.25f) else Color.Transparent,
+        border = BorderStroke(1.dp, if (selected) AccentCyan else GlassBorderSubtle),
+        modifier = Modifier.height(26.dp)
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+        ) {
+            Text(
+                text = label,
+                fontSize = 11.sp,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                color = if (selected) AccentCyan else TextSecondaryDark
+            )
+        }
     }
 }
 
