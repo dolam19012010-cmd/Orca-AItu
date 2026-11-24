@@ -3792,7 +3792,7 @@ class FloatingBubbleService : Service() {
                     val curExisting = holder.boundAlarm ?: existingAlarm
 
                     if (currentAlarmActive) {
-                        SystemAlarmHelper.cancelSmartAlarms(this@FloatingBubbleService, curTitle, curAlarmId)
+                        SystemAlarmHelper.disarmAlarmHardwareOnly(this@FloatingBubbleService, curTitle, curAlarmId)
                         val disarmed = (curExisting ?: SmartAlarmEntity(
                             alarmId = curAlarmId,
                             taskTitle = curTitle,
@@ -3804,6 +3804,13 @@ class FloatingBubbleService : Service() {
                         alarmNormalizedTitleMap = alarmNormalizedTitleMap + (SystemAlarmHelper.normalizeTitle(curTitle) to disarmed)
                         currentAlarmActive = false
                         updatePillVisuals(false)
+                        serviceScope.launch {
+                            try {
+                                val dao = AppDatabase.getDatabase(this@FloatingBubbleService).smartAlarmDao()
+                                dao.updateStatus(curAlarmId, SmartAlarmStatus.PROPOSED)
+                                dao.updateStatusByTitle(curTitle, SmartAlarmStatus.PROPOSED)
+                            } catch (_: Exception) {}
+                        }
                         Toast.makeText(this@FloatingBubbleService, "Đã tắt chuông báo: ${curTitle.take(24)}...", Toast.LENGTH_SHORT).show()
                     } else {
                         val result = SystemAlarmHelper.scheduleSmartAlarms(
@@ -4951,13 +4958,32 @@ class FloatingBubbleService : Service() {
                 }
                 isClickable = true
                 setOnClickListener {
-                    SystemAlarmHelper.cancelSmartAlarms(this@FloatingBubbleService, cleanTitle, alarmId)
+                    val activeAlarmId = existingAlarm?.alarmId ?: alarmId
+                    SystemAlarmHelper.disarmAlarmHardwareOnly(this@FloatingBubbleService, cleanTitle, activeAlarmId)
+                    val proposedTime = parsedDateTime?.timeLabel ?: "Hẹn giờ"
+                    val generatedAlarmId = SystemAlarmHelper.generateAlarmId(cleanTitle, targetCal)
+                    val disarmed = (existingAlarm ?: SmartAlarmEntity(
+                        alarmId = activeAlarmId,
+                        taskTitle = cleanTitle,
+                        targetTimeMillis = targetCal.timeInMillis,
+                        targetDateLabel = proposedTime,
+                        status = SmartAlarmStatus.PROPOSED
+                    )).copy(status = SmartAlarmStatus.PROPOSED, updatedAt = System.currentTimeMillis())
+                    alarmDbMap = alarmDbMap + (activeAlarmId to disarmed) + (generatedAlarmId to disarmed)
+                    alarmNormalizedTitleMap = alarmNormalizedTitleMap + (SystemAlarmHelper.normalizeTitle(cleanTitle) to disarmed)
+                    serviceScope.launch {
+                        try {
+                            val dao = AppDatabase.getDatabase(this@FloatingBubbleService).smartAlarmDao()
+                            dao.updateStatus(activeAlarmId, SmartAlarmStatus.PROPOSED)
+                            dao.updateStatusByTitle(cleanTitle, SmartAlarmStatus.PROPOSED)
+                        } catch (_: Exception) {}
+                    }
                     isAlarmEnabled = false
                     checkTv.text = "☐"
                     checkTv.setTextColor(Color.parseColor("#94A3B8"))
                     labelSub.text = "Không đặt chuông báo cho việc này"
                     alarmConfigContainer.visibility = View.GONE
-                    Toast.makeText(this@FloatingBubbleService, "Đã hủy chuông báo cho: ${cleanTitle.take(20)}...", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@FloatingBubbleService, "Đã tắt chuông báo cho: ${cleanTitle.take(20)}...", Toast.LENGTH_SHORT).show()
                 }
             }
             alarmConfigContainer.addView(cancelAlarmBtn)
@@ -5020,15 +5046,48 @@ class FloatingBubbleService : Service() {
                         intervalMinutes = cascadeIntervalMinutes
                     )
                     res.onSuccess {
+                        val activeAlarmId = existingAlarm?.alarmId ?: alarmId
+                        val proposedTime = parsedDateTime?.timeLabel ?: "Hẹn giờ"
+                        val generatedAlarmId = SystemAlarmHelper.generateAlarmId(cleanTitle, targetCal)
+                        val armed = (existingAlarm ?: SmartAlarmEntity(
+                            alarmId = activeAlarmId,
+                            taskTitle = cleanTitle,
+                            targetTimeMillis = targetCal.timeInMillis,
+                            targetDateLabel = proposedTime,
+                            status = SmartAlarmStatus.ACTIVE
+                        )).copy(status = SmartAlarmStatus.ACTIVE, updatedAt = System.currentTimeMillis())
+                        alarmDbMap = alarmDbMap + (activeAlarmId to armed) + (generatedAlarmId to armed)
+                        alarmNormalizedTitleMap = alarmNormalizedTitleMap + (SystemAlarmHelper.normalizeTitle(cleanTitle) to armed)
+
                         val pinMsg = if (isPinned) " (Đã ghim ưu tiên)" else ""
                         Toast.makeText(this@FloatingBubbleService, "Đã lên lịch báo thức$pinMsg (${parsedDateTime?.dateLabel ?: "Hôm nay"})!", Toast.LENGTH_SHORT).show()
                     }.onFailure { err ->
                         Toast.makeText(this@FloatingBubbleService, "Lỗi đặt báo thức: ${err.message}", Toast.LENGTH_SHORT).show()
                     }
                 } else {
-                    if (existingAlarm?.status == SmartAlarmStatus.ACTIVE) {
-                        SystemAlarmHelper.cancelSmartAlarms(this@FloatingBubbleService, cleanTitle, alarmId)
+                    val activeAlarmId = existingAlarm?.alarmId ?: alarmId
+                    SystemAlarmHelper.disarmAlarmHardwareOnly(this@FloatingBubbleService, cleanTitle, activeAlarmId)
+
+                    val proposedTime = parsedDateTime?.timeLabel ?: "Hẹn giờ"
+                    val generatedAlarmId = SystemAlarmHelper.generateAlarmId(cleanTitle, targetCal)
+                    val disarmed = (existingAlarm ?: SmartAlarmEntity(
+                        alarmId = activeAlarmId,
+                        taskTitle = cleanTitle,
+                        targetTimeMillis = targetCal.timeInMillis,
+                        targetDateLabel = proposedTime,
+                        status = SmartAlarmStatus.PROPOSED
+                    )).copy(status = SmartAlarmStatus.PROPOSED, updatedAt = System.currentTimeMillis())
+                    alarmDbMap = alarmDbMap + (activeAlarmId to disarmed) + (generatedAlarmId to disarmed)
+                    alarmNormalizedTitleMap = alarmNormalizedTitleMap + (SystemAlarmHelper.normalizeTitle(cleanTitle) to disarmed)
+
+                    serviceScope.launch {
+                        try {
+                            val dao = AppDatabase.getDatabase(this@FloatingBubbleService).smartAlarmDao()
+                            dao.updateStatus(activeAlarmId, SmartAlarmStatus.PROPOSED)
+                            dao.updateStatusByTitle(cleanTitle, SmartAlarmStatus.PROPOSED)
+                        } catch (_: Exception) {}
                     }
+
                     val pinMsg = if (isPinned) "Đã ghim nhiệm vụ lên đầu!" else "Đã lưu thiết lập nhiệm vụ!"
                     Toast.makeText(this@FloatingBubbleService, pinMsg, Toast.LENGTH_SHORT).show()
                 }

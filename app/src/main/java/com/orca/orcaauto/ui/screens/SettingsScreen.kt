@@ -1,6 +1,11 @@
 package com.orca.orcaauto.ui.screens
 
+import android.app.AlarmManager
+import android.content.Context
+import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -366,6 +371,15 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
     var isNotificationAccessGranted by remember { mutableStateOf(false) }
     var isBatteryOptIgnored by remember { mutableStateOf(false) }
     var isOverlayGranted by remember { mutableStateOf(false) }
+    var isExactAlarmGranted by remember {
+        mutableStateOf(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                (context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager)?.canScheduleExactAlarms() ?: true
+            } else {
+                true
+            }
+        )
+    }
     var isBannerDismissed by remember { mutableStateOf(preferences.isPermissionBannerDismissed()) }
     var showIntroDialog by remember { mutableStateOf(false) }
 
@@ -376,6 +390,11 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
                     isNotificationAccessGranted = OemSurvivalHelper.isNotificationAccessGranted(context)
                     isBatteryOptIgnored = OemSurvivalHelper.isBatteryOptimizationIgnored(context)
                     isOverlayGranted = FloatingBubbleService.isOverlayPermissionGranted(context)
+                    isExactAlarmGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        (context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager)?.canScheduleExactAlarms() ?: true
+                    } else {
+                        true
+                    }
                 } catch (e: Throwable) {
                     android.util.Log.w("SettingsScreen", "Lỗi kiểm tra quyền: ${e.message}")
                 }
@@ -387,7 +406,7 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
         }
     }
 
-    val allPermissionsGranted = isNotificationAccessGranted && isBatteryOptIgnored && isOverlayGranted
+    val allPermissionsGranted = isNotificationAccessGranted && isBatteryOptIgnored && isOverlayGranted && isExactAlarmGranted
 
     Column(
         modifier = Modifier
@@ -414,6 +433,7 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
                 isNotificationAccessGranted = isNotificationAccessGranted,
                 isBatteryOptIgnored = isBatteryOptIgnored,
                 isOverlayGranted = isOverlayGranted,
+                isExactAlarmGranted = isExactAlarmGranted,
                 onDismiss = {
                     preferences.setPermissionBannerDismissed(true)
                     isBannerDismissed = true
@@ -959,7 +979,8 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
             PermissionsSection(
                 isNotificationAccessGranted = isNotificationAccessGranted,
                 isBatteryOptIgnored = isBatteryOptIgnored,
-                isOverlayGranted = isOverlayGranted
+                isOverlayGranted = isOverlayGranted,
+                isExactAlarmGranted = isExactAlarmGranted
             )
         }
 
@@ -1918,9 +1939,11 @@ private fun RecommendedPermissionsBanner(
     isNotificationAccessGranted: Boolean,
     isBatteryOptIgnored: Boolean,
     isOverlayGranted: Boolean,
+    isExactAlarmGranted: Boolean = true,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
+    val strings = LocalAppStrings.current
 
     Card(
         modifier = Modifier
@@ -2029,6 +2052,33 @@ private fun RecommendedPermissionsBanner(
                             context.startActivity(intent)
                         } catch (e: Exception) {
                             Toast.makeText(context, "Mở cài đặt quyền hiển thị nổi thất bại", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                )
+            }
+
+            if (!isExactAlarmGranted && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                PermissionActionRow(
+                    icon = Icons.Default.Schedule,
+                    iconTint = AccentRose,
+                    title = strings.permExactAlarmTitle,
+                    desc = strings.permExactAlarmDesc,
+                    buttonText = strings.btnGrant,
+                    onGrantClick = {
+                        try {
+                            val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+                                data = Uri.parse("package:${context.packageName}")
+                            }
+                            context.startActivity(intent)
+                        } catch (e: Exception) {
+                            try {
+                                val fallbackIntent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                    data = Uri.parse("package:${context.packageName}")
+                                }
+                                context.startActivity(fallbackIntent)
+                            } catch (e2: Exception) {
+                                Toast.makeText(context, "Mở cài đặt báo thức thất bại", Toast.LENGTH_SHORT).show()
+                            }
                         }
                     }
                 )
@@ -2248,9 +2298,11 @@ private fun WallpaperSection(
 private fun PermissionsSection(
     isNotificationAccessGranted: Boolean,
     isBatteryOptIgnored: Boolean,
-    isOverlayGranted: Boolean
+    isOverlayGranted: Boolean,
+    isExactAlarmGranted: Boolean
 ) {
     val context = LocalContext.current
+    val strings = LocalAppStrings.current
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(
             text = "Trạng thái cấp các quyền hệ thống cốt lõi để trợ lý AI hoạt động bền bỉ trong nền.",
@@ -2287,6 +2339,30 @@ private fun PermissionsSection(
                 }
             }
         )
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            PermissionStatusRow(
+                title = strings.permExactAlarmTitle,
+                isGranted = isExactAlarmGranted,
+                onGrant = {
+                    try {
+                        val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+                            data = Uri.parse("package:${context.packageName}")
+                        }
+                        context.startActivity(intent)
+                    } catch (e: Exception) {
+                        try {
+                            val fallbackIntent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                data = Uri.parse("package:${context.packageName}")
+                            }
+                            context.startActivity(fallbackIntent)
+                        } catch (e2: Exception) {
+                            Toast.makeText(context, "Mở cài đặt báo thức thất bại", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            )
+        }
 
 
         OutlinedButton(

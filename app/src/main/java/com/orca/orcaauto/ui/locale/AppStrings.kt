@@ -52,6 +52,8 @@ data class AppStrings(
     val permOverlayDesc: String,
     val permBatteryTitle: String,
     val permBatteryDesc: String,
+    val permExactAlarmTitle: String,
+    val permExactAlarmDesc: String,
     val btnGrant: String,
 
     // History & Tasks
@@ -201,6 +203,8 @@ val AppStringsVi = AppStrings(
     permOverlayDesc = "Cho phép bong bóng chat nổi xuất hiện trên màn hình",
     permBatteryTitle = "Bỏ Qua Tối Ưu Hóa Pin",
     permBatteryDesc = "Tránh bị hệ điều hành tắt nhầm tiến trình chạy ngầm",
+    permExactAlarmTitle = "Báo thức chính xác",
+    permExactAlarmDesc = "Cho phép trợ lý kích hoạt chuông báo nhắc việc đúng từng giây",
     btnGrant = "Cấp quyền",
 
     tabSummaries = "Tóm Tắt Ca",
@@ -344,6 +348,8 @@ val AppStringsEn = AppStrings(
     permOverlayDesc = "Allows the floating chat bubble to appear on your screen",
     permBatteryTitle = "Battery Optimization Exemption",
     permBatteryDesc = "Prevents the OS from terminating background processes",
+    permExactAlarmTitle = "Exact Alarms",
+    permExactAlarmDesc = "Allow assistant to trigger task reminder alarms with exact timing",
     btnGrant = "Grant Access",
 
     tabSummaries = "Shift Summaries",

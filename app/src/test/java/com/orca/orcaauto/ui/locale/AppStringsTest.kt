@@ -70,6 +70,10 @@ class AppStringsTest {
             // Settings & Localization
             assertTrue(vi.settingsTitle.isNotBlank())
             assertTrue(en.settingsTitle.isNotBlank())
+            assertTrue(vi.permExactAlarmTitle.isNotBlank())
+            assertTrue(en.permExactAlarmTitle.isNotBlank())
+            assertTrue(vi.permExactAlarmDesc.isNotBlank())
+            assertTrue(en.permExactAlarmDesc.isNotBlank())
             assertTrue(vi.catLanguageTitle.isNotBlank())
             assertTrue(en.catLanguageTitle.isNotBlank())
             assertTrue(vi.labelUiLanguage.isNotBlank())

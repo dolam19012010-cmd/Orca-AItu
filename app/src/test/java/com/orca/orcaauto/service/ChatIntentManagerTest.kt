@@ -220,4 +220,43 @@ class ChatIntentManagerTest {
         val pkgFromTitle = ChatIntentManager.resolveTargetPackage("", "Nhắn tin Zalo cho khách hàng")
         assertEquals("com.zing.zalo", pkgFromTitle)
     }
+
+    @Test
+    fun testTwoTierPackageResolutionWithPhoneInTitle() {
+        // Verify that having phone numbers or usernames in title does not break package resolution
+        val pkgZalo = ChatIntentManager.resolveTargetPackage("Zalo", "Gọi khách hàng 0987654321 trao đổi")
+        assertEquals("com.zing.zalo", pkgZalo)
+        assertEquals("Zalo", ChatIntentManager.getAppDisplayName(pkgZalo))
+
+        val pkgTele = ChatIntentManager.resolveTargetPackage("Telegram", "Liên hệ @dev_support để nhận tài liệu")
+        assertEquals("org.telegram.messenger", pkgTele)
+        assertEquals("Telegram", ChatIntentManager.getAppDisplayName(pkgTele))
+    }
+
+    @Test
+    fun testTwoTierTargetCacheLookupAndFallbackFlow() {
+        val now = System.currentTimeMillis()
+        val target = CachedChatTarget(
+            refId = "z1234",
+            packageName = "com.zing.zalo",
+            normalizedRoomKey = "dự án orca",
+            pendingIntent = null,
+            cachedAtMs = now
+        )
+        ChatIntentManager.targetCache.put(target)
+
+        // Tier 1: Target is available in cache
+        val foundTier1 = ChatIntentManager.targetCache.get("z1234", now)
+        assertNotNull("Tier 1 target must be found in cache", foundTier1)
+        assertEquals("com.zing.zalo", foundTier1?.packageName)
+
+        // When PendingIntent is dead or invalid, it is evicted
+        ChatIntentManager.targetCache.remove("z1234")
+        assertNull("Evicted target must return null", ChatIntentManager.targetCache.get("z1234", now))
+
+        // Tier 2: Resolves target package directly
+        val fallbackPackage = ChatIntentManager.resolveTargetPackage("Zalo", "Dự án Orca", "z1234")
+        assertEquals("com.zing.zalo", fallbackPackage)
+        assertEquals("Zalo", ChatIntentManager.getAppDisplayName(fallbackPackage))
+    }
 }

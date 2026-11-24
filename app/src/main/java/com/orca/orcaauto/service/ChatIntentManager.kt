@@ -6,7 +6,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -127,10 +126,9 @@ class ChatTargetLruCache(
 }
 
 /**
- * Quản lý bộ nhớ đệm Intent và điều hướng 3 tầng:
+ * Quản lý bộ nhớ đệm Intent và điều hướng 2 tầng:
  * Tầng 1: PendingIntent (sbn.notification.contentIntent) kèm BAL Opt-in cho Android 14/15
- * Tầng 2: Deep Link (tg://, t.me, m.me, zalo.me)
- * Tầng 3: Fallback Native App Launch (getLaunchIntentForPackage) + Toast cảnh báo mất dấu
+ * Tầng 2: Fallback Native App Launch (getLaunchIntentForPackage) + Toast cảnh báo mất dấu
  */
 object ChatIntentManager {
     private const val TAG = "ChatIntentManager"
@@ -365,10 +363,9 @@ object ChatIntentManager {
     }
 
     /**
-     * Nhảy vào cuộc trò chuyện 3 tầng:
+     * Nhảy vào cuộc trò chuyện 2 tầng:
      * - Tầng 1: PendingIntent từ cache (theo chatRefId hoặc soft match normalizedRoomKey)
-     * - Tầng 2: Deep Link (tg://, https://m.me/, zalo.me)
-     * - Tầng 3: Mở App qua getLaunchIntentForPackage. Nếu PendingIntent đã chết/mất, Toast thông báo "Đã mất dấu phòng chat, đang mở $appName".
+     * - Tầng 2: Mở App qua getLaunchIntentForPackage. Nếu PendingIntent đã chết/mất, Toast thông báo "Đã mất dấu phòng chat, đang mở $appName".
      */
     fun jumpToChat(
         context: Context,
@@ -397,13 +394,8 @@ object ChatIntentManager {
             if (launched) {
                 return JumpResult.OPENED_CONVERSATION
             }
-            Log.w(TAG, "PendingIntent cho chatRefId=$chatRefId không thể khởi chạy (đã bị hủy hoặc chết). Chuyển sang Tier 2/3.")
+            Log.w(TAG, "PendingIntent cho chatRefId=$chatRefId không thể khởi chạy (đã bị hủy hoặc chết). Chuyển sang Tier 2 (mở app đích).")
             targetCache.remove(target.refId)
-        }
-
-        val deepLinkOpened = launchDeepLinkForTask(context, targetPackage, sourceText, taskTitle)
-        if (deepLinkOpened) {
-            return JumpResult.OPENED_CONVERSATION
         }
 
         val launchIntent = try {
@@ -446,23 +438,6 @@ object ChatIntentManager {
         return res != JumpResult.FAILED
     }
 
-    private fun launchDeepLinkForTask(
-        context: Context,
-        targetPackage: String,
-        sourceText: String,
-        taskTitle: String
-    ): Boolean {
-        // Try extracting potential identifier or phone from source/title
-        val combined = "$sourceText $taskTitle"
-        val phoneMatch = Regex("""(\+84|0)\d{9,10}""").find(combined)?.value
-        val usernameMatch = Regex("""@([a-zA-Z0-9_]{4,})""").find(combined)?.groupValues?.get(1)
-        val identifier = phoneMatch ?: usernameMatch
-        if (identifier != null) {
-            return launchDeepLink(context, targetPackage, identifier)
-        }
-        return false
-    }
-
     private fun launchPendingIntent(context: Context, pendingIntent: PendingIntent): Boolean {
         return try {
             val fillInIntent = Intent().apply {
@@ -487,45 +462,6 @@ object ChatIntentManager {
         } catch (e: Exception) {
             Log.e(TAG, "Lỗi khi kích hoạt PendingIntent: ${e.message}")
             false
-        }
-    }
-
-    private fun launchDeepLink(context: Context, packageName: String, targetIdentifier: String?): Boolean {
-        if (targetIdentifier.isNullOrBlank()) return false
-        try {
-            val uri = when (packageName) {
-                "org.telegram.messenger" -> {
-                    if (targetIdentifier.startsWith("+") || targetIdentifier.all { it.isDigit() }) {
-                        Uri.parse("tg://resolve?phone=$targetIdentifier")
-                    } else {
-                        Uri.parse("tg://resolve?domain=$targetIdentifier")
-                    }
-                }
-                "com.facebook.orca" -> {
-                    if (targetIdentifier.all { it.isDigit() }) {
-                        Uri.parse("fb-messenger://user/$targetIdentifier")
-                    } else {
-                        Uri.parse("https://m.me/$targetIdentifier")
-                    }
-                }
-                "com.zing.zalo" -> {
-                    val cleanPhone = targetIdentifier.replace(" ", "").replace("+84", "0")
-                    if (cleanPhone.matches(Regex("^[0-9]{10,11}$"))) {
-                        Uri.parse("https://zalo.me/$cleanPhone")
-                    } else null
-                }
-                else -> null
-            } ?: return false
-
-            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
-                setPackage(packageName)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            context.startActivity(intent)
-            return true
-        } catch (e: Exception) {
-            Log.e(TAG, "Lỗi khi mở Deep Link [$targetIdentifier]: ${e.message}")
-            return false
         }
     }
 

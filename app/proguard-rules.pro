@@ -5,6 +5,9 @@
 -dontwarn androidx.room.paging.**
 
 # Gson & Networking
+-keepattributes Signature,InnerClasses,EnclosingMethod
+-keep class * extends com.google.gson.reflect.TypeToken
+-keep class com.google.gson.reflect.TypeToken { *; }
 -keep class com.google.gson.** { *; }
 -keepclassmembers class * {
     @com.google.gson.annotations.SerializedName <fields>;
