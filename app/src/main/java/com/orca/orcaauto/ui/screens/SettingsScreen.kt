@@ -959,8 +959,23 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
                     }
                 },
                 onRestartBubble = {
-                    FloatingBubbleService.show(context, summaryContent = "Bong bóng chat AItu đã sẵn sàng hoạt động!")
-                    Toast.makeText(context, "Đã khởi động bong bóng chat AItu", Toast.LENGTH_SHORT).show()
+                    scope.launch {
+                        val db = com.orca.orcaauto.data.local.AppDatabase.getDatabase(context)
+                        val selectedId = preferences.getSelectedSessionId()
+                        val sessionRecord = db.summaryDao().getLatestSummaryForSession(selectedId)
+                        val activeSession = preferences.getSelectedSession()
+                        val isEn = preferences.getAppLanguage() == com.orca.orcaauto.ui.locale.AppLanguage.ENGLISH
+                        val content = sessionRecord?.summaryContent?.ifBlank { null }
+                            ?: (if (isEn) "AItu floating bubble is ready! No summaries recorded yet for session ${activeSession.name}." else "Bong bóng chat AItu đã sẵn sàng! Chưa có bản tóm tắt nào cho ca ${activeSession.name}.")
+                        val model = sessionRecord?.modelInfo ?: "${activeSession.iconEmoji} ${activeSession.name}"
+                        FloatingBubbleService.show(
+                            context = context,
+                            summaryContent = content,
+                            modelInfo = model,
+                            sessionId = selectedId
+                        )
+                        Toast.makeText(context, if (isEn) "Opened chat bubble (${activeSession.name})!" else "Đã khởi động bong bóng chat (${activeSession.name})", Toast.LENGTH_SHORT).show()
+                    }
                 }
             )
         }

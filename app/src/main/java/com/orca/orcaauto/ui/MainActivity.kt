@@ -50,7 +50,6 @@ import com.orca.orcaauto.service.OemSurvivalHelper
 import com.orca.orcaauto.ui.components.AppWallpaperBackground
 import com.orca.orcaauto.ui.components.OnboardingGuideDialog
 import com.orca.orcaauto.ui.navigation.Screen
-import com.orca.orcaauto.ui.screens.DashboardScreen
 import com.orca.orcaauto.ui.screens.HistoryScreen
 import com.orca.orcaauto.ui.screens.NotesScreen
 import com.orca.orcaauto.ui.screens.SettingsScreen
@@ -274,7 +273,6 @@ fun MainAppNavHost(navigationTarget: String? = null) {
                         label = "MainAppScreenTransition"
                     ) { targetScreen ->
                         when (targetScreen) {
-                            is Screen.Dashboard -> DashboardScreen()
                             is Screen.History -> HistoryScreen()
                             is Screen.Notes -> NotesScreen(
                                 initialOpenAssistant = navigationTarget == "assistant"
@@ -282,6 +280,7 @@ fun MainAppNavHost(navigationTarget: String? = null) {
                             is Screen.Settings -> SettingsScreen(
                                 initialExpandedCategory = if (navigationTarget == "advanced_sessions") 99 else null
                             )
+                            is Screen.Dashboard -> HistoryScreen()
                         }
                     }
                 }

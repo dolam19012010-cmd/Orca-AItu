@@ -58,8 +58,13 @@ import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.PendingActions
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material3.CircularProgressIndicator
+import com.orca.orcaauto.worker.WorkScheduler
+import com.orca.orcaauto.service.FloatingBubbleService
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import com.orca.orcaauto.domain.voice.VoiceBriefingManager
@@ -198,7 +203,81 @@ fun HistoryScreen() {
             color = TextSecondaryDark
         )
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // Quick Command Actions: Trigger Immediate AI Summary & Open Floating Chat Bubble
+        var isTestingAi by remember { mutableStateOf(false) }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Button(
+                onClick = {
+                    val activeKeys = preferences.getKeyPool().filter { it.isEnabled && it.rawKey.isNotBlank() }
+                    if (activeKeys.isEmpty()) {
+                        Toast.makeText(context, if (isEn) "Please add at least 1 API Key in Settings first!" else "Vui lòng thêm ít nhất 1 API Key trong Cài đặt trước!", Toast.LENGTH_LONG).show()
+                        return@Button
+                    }
+                    isTestingAi = true
+                    WorkScheduler.triggerImmediateSummary(context)
+                    Toast.makeText(context, if (isEn) "AI summary requested via WorkManager..." else "Đã gửi lệnh tóm tắt AI. Đang xử lý ngầm qua WorkManager...", Toast.LENGTH_SHORT).show()
+                    scope.launch {
+                        kotlinx.coroutines.delay(2000)
+                        isTestingAi = false
+                    }
+                },
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = PrimaryIndigo,
+                    contentColor = BackgroundDark
+                ),
+                shape = RoundedCornerShape(10.dp),
+                enabled = !isTestingAi
+            ) {
+                if (isTestingAi) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        color = BackgroundDark,
+                        strokeWidth = 2.dp
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(strings.processing, fontSize = 12.sp, color = BackgroundDark, fontWeight = FontWeight.Bold)
+                } else {
+                    Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp), tint = BackgroundDark)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(strings.btnInstantAi, fontSize = 12.sp, color = BackgroundDark, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            OutlinedButton(
+                onClick = {
+                    scope.launch {
+                        val selectedId = preferences.getSelectedSessionId()
+                        val sessionRecord = database.summaryDao().getLatestSummaryForSession(selectedId)
+                        val activeSession = preferences.getSelectedSession()
+                        val content = sessionRecord?.summaryContent?.ifBlank { null }
+                            ?: (if (isEn) "No summaries recorded yet for session ${activeSession.name}. Bubble is ready!" else "Chưa có bản tóm tắt nào cho ca ${activeSession.name}. Bong bóng đã sẵn sàng!")
+                        FloatingBubbleService.show(
+                            context = context,
+                            summaryContent = content,
+                            modelInfo = sessionRecord?.modelInfo ?: "${activeSession.iconEmoji} ${activeSession.name}",
+                            sessionId = selectedId
+                        )
+                        Toast.makeText(context, if (isEn) "Opened chat bubble (${activeSession.name})!" else "Đã mở bong bóng chat (${activeSession.name})!", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimaryDark),
+                border = BorderStroke(1.dp, GlassBorder)
+            ) {
+                Icon(imageVector = Icons.Default.ChatBubbleOutline, contentDescription = null, modifier = Modifier.size(16.dp), tint = AccentCyan)
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(strings.btnOpenBubble, fontSize = 12.sp, color = TextPrimaryDark)
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
 
         // Switch Tabs: Shift Summaries vs Raw Notifications (Only 2 clean tabs!)
         TabRow(
@@ -281,9 +360,9 @@ fun HistoryScreen() {
                             "Chưa có bản tóm tắt ca nào"
                         }
                         val emptyDesc = if (activeSession != null && !activeSession.isMain) {
-                            "Các tin nhắn thuộc Whitelist của phiên này sẽ được hiển thị tại đây khi có tóm tắt mới."
+                            if (isEn) "Messages matching this session's whitelist will appear here." else "Các tin nhắn thuộc Whitelist của phiên này sẽ được hiển thị tại đây khi có tóm tắt mới."
                         } else {
-                            "Báo cáo ca sẽ tự động gửi ra màn hình khóa vào 12:00 & 18:00\nhoặc khi bạn bấm 'Tóm tắt ngay' ở trang chủ."
+                            if (isEn) "Shift summaries will arrive at scheduled times\nor when you tap 'Instant Summary' above." else "Báo cáo ca sẽ tự động gửi ra màn hình khóa theo lịch hẹn\nhoặc khi bạn bấm 'Tóm tắt ngay' ở phía trên."
                         }
                         EmptyStateView(
                             title = emptyTitle,
