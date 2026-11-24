@@ -337,7 +337,7 @@ internal class FakeSmartAlarmDao : SmartAlarmDao {
         val updated = _alarmsFlow.value.toMutableMap()
         for ((id, item) in updated) {
             if (item.status == SmartAlarmStatus.ACTIVE && item.targetTimeMillis < nowMillis - 3600000L) {
-                updated[id] = item.copy(status = SmartAlarmStatus.COMPLETED, updatedAt = nowMillis)
+                updated[id] = item.copy(status = SmartAlarmStatus.EXPIRED, updatedAt = nowMillis)
             }
         }
         _alarmsFlow.value = updated

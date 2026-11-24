@@ -568,10 +568,13 @@ object SystemAlarmHelper {
         skipUi: Boolean = true
     ): Result<List<AlarmScheduleItem>> {
         return try {
+            val nowMillis = System.currentTimeMillis()
+            while (targetCalendar.timeInMillis <= nowMillis) {
+                targetCalendar.add(Calendar.DAY_OF_YEAR, 1)
+            }
             val cleanTitle = cleanTaskTitle(taskTitle)
             val schedules = calculateAlarmSchedules(cleanTitle, targetCalendar, mode, intervalMinutes)
             val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
-            val nowMillis = System.currentTimeMillis()
 
             val alarmId = generateAlarmId(cleanTitle, targetCalendar)
 

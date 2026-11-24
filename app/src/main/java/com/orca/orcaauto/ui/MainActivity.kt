@@ -198,8 +198,8 @@ fun MainAppNavHost(navigationTarget: String? = null) {
     val appLanguage by preferences.appLanguageFlow.collectAsState()
     val strings = remember(appLanguage) { AppStringsProvider.get(appLanguage) }
 
-    // Primary Tab Order: Lịch sử AI first, then Ghi chú, then Trạng thái, then Cấu hình
-    val navItems = remember { listOf(Screen.History, Screen.Notes, Screen.Dashboard, Screen.Settings) }
+    // Primary Tab Order: Lịch sử AI first, then Ghi chú, then Cấu hình (3 tabs)
+    val navItems = remember { listOf(Screen.History, Screen.Notes, Screen.Settings) }
 
     CompositionLocalProvider(LocalAppStrings provides strings) {
         AppWallpaperBackground(

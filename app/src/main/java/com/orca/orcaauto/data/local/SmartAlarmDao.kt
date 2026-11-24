@@ -55,7 +55,7 @@ interface SmartAlarmDao {
     @Query("UPDATE smart_alarms SET status = 'EXPIRED', updatedAt = :nowMillis WHERE status = 'PROPOSED' AND targetTimeMillis < :nowMillis")
     suspend fun markExpiredAlarms(nowMillis: Long)
 
-    @Query("UPDATE smart_alarms SET status = 'COMPLETED', updatedAt = :nowMillis WHERE status = 'ACTIVE' AND targetTimeMillis < :nowMillis - 3600000")
+    @Query("UPDATE smart_alarms SET status = 'EXPIRED', updatedAt = :nowMillis WHERE status = 'ACTIVE' AND targetTimeMillis < :nowMillis - 3600000")
     suspend fun autoMarkPastActiveAlarms(nowMillis: Long)
 
     @Query("DELETE FROM smart_alarms WHERE status IN ('COMPLETED', 'CANCELLED', 'EXPIRED') AND targetTimeMillis < :cutoffMillis")

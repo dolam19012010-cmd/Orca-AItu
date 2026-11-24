@@ -23,6 +23,6 @@ sealed class Screen(val route: String, val title: String, val icon: ImageVector)
 
     companion object {
         val items: List<Screen>
-            get() = listOf(History, Notes, Dashboard, Settings)
+            get() = listOf(History, Notes, Settings)
     }
 }

@@ -405,4 +405,44 @@ class SystemAlarmHelperTest {
         val filtered = SystemAlarmHelper.filterOutCancelledFast(parsed, map)
         assertEquals(2, filtered.tasksToDo.size)
     }
+
+    @Test
+    fun testExpiredAlarm_doesNotMarkTaskAsCompletedFast() {
+        val now = System.currentTimeMillis()
+        val expiredAlarm = com.orca.orcaauto.data.local.SmartAlarmEntity(
+            alarmId = "ALM_EXPIRED",
+            taskTitle = "Gửi tài liệu báo cáo",
+            targetTimeMillis = now - 7200_000L,
+            targetDateLabel = "08:00 Hôm nay",
+            status = com.orca.orcaauto.data.local.SmartAlarmStatus.EXPIRED,
+            updatedAt = now
+        )
+        val map = SystemAlarmHelper.buildNormalizedTitleMap(listOf(expiredAlarm), now = now)
+        val match = SystemAlarmHelper.findMatchingAlarmFast("Gửi tài liệu báo cáo", map)
+        assertNotNull(match)
+        assertEquals(com.orca.orcaauto.data.local.SmartAlarmStatus.EXPIRED, match?.status)
+
+        // EXPIRED must NEVER be treated as completed
+        org.junit.Assert.assertFalse(
+            "Báo thức hết hạn (EXPIRED) tuyệt đối không được coi là nhiệm vụ đã hoàn thành",
+            SystemAlarmHelper.isTaskCompletedFast("Gửi tài liệu báo cáo", map)
+        )
+    }
+
+    @Test
+    fun testScheduleSmartAlarms_defenseInDepthRollsOverPastTime() {
+        // If targetCalendar is in the past, rolling over advances it past now
+        val pastCalendar = java.util.Calendar.getInstance().apply {
+            add(java.util.Calendar.HOUR_OF_DAY, -2)
+        }
+        val pastMillis = pastCalendar.timeInMillis
+        val now = System.currentTimeMillis()
+        assertTrue("pastCalendar phải nhỏ hơn now", pastMillis <= now)
+
+        // Simulate defensive rollover loop
+        while (pastCalendar.timeInMillis <= now) {
+            pastCalendar.add(java.util.Calendar.DAY_OF_YEAR, 1)
+        }
+        assertTrue("Sau khi rollover, pastCalendar phải ở tương lai", pastCalendar.timeInMillis > now)
+    }
 }

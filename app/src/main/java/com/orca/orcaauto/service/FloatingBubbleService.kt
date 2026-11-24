@@ -3813,25 +3813,44 @@ class FloatingBubbleService : Service() {
                         }
                         Toast.makeText(this@FloatingBubbleService, "Đã tắt chuông báo: ${curTitle.take(24)}...", Toast.LENGTH_SHORT).show()
                     } else {
+                        val now = System.currentTimeMillis()
+                        val isRolledOver = targetCal.timeInMillis <= now
+                        val effectiveCal = (targetCal.clone() as Calendar).apply {
+                            while (timeInMillis <= now) {
+                                add(Calendar.DAY_OF_YEAR, 1)
+                            }
+                        }
                         val result = SystemAlarmHelper.scheduleSmartAlarms(
                             context = this@FloatingBubbleService,
                             taskTitle = curTitle,
-                            targetCalendar = targetCal,
+                            targetCalendar = effectiveCal,
                             mode = AlarmCascadeMode.X1
                         )
                         result.onSuccess {
                             val armed = (curExisting ?: SmartAlarmEntity(
                                 alarmId = curAlarmId,
                                 taskTitle = curTitle,
-                                targetTimeMillis = targetCal.timeInMillis,
+                                targetTimeMillis = effectiveCal.timeInMillis,
                                 targetDateLabel = proposedTime,
                                 status = SmartAlarmStatus.ACTIVE
-                            )).copy(status = SmartAlarmStatus.ACTIVE, updatedAt = System.currentTimeMillis())
+                            )).copy(
+                                targetTimeMillis = effectiveCal.timeInMillis,
+                                status = SmartAlarmStatus.ACTIVE,
+                                updatedAt = System.currentTimeMillis()
+                            )
                             alarmDbMap = alarmDbMap + (curAlarmId to armed) + (generatedAlarmId to armed)
                             alarmNormalizedTitleMap = alarmNormalizedTitleMap + (SystemAlarmHelper.normalizeTitle(curTitle) to armed)
                             currentAlarmActive = true
                             updatePillVisuals(true)
-                            Toast.makeText(this@FloatingBubbleService, "🔔 Đã đặt chuông báo $proposedTime: ${curTitle.take(24)}...", Toast.LENGTH_SHORT).show()
+                            if (isRolledOver) {
+                                Toast.makeText(
+                                    this@FloatingBubbleService,
+                                    "🔔 Giờ cũ đã qua, đã hẹn ${String.format(Locale.getDefault(), "%02d:%02d", effectiveCal.get(Calendar.HOUR_OF_DAY), effectiveCal.get(Calendar.MINUTE))} ngày mai: ${curTitle.take(24)}...",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            } else {
+                                Toast.makeText(this@FloatingBubbleService, "🔔 Đã đặt chuông báo $proposedTime: ${curTitle.take(24)}...", Toast.LENGTH_SHORT).show()
+                            }
                         }.onFailure { err ->
                             Toast.makeText(this@FloatingBubbleService, "Không thể đặt báo thức: ${err.message}", Toast.LENGTH_SHORT).show()
                         }
