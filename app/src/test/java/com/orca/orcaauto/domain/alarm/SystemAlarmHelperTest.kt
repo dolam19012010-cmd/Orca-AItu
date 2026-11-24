@@ -445,4 +445,32 @@ class SystemAlarmHelperTest {
         }
         assertTrue("Sau khi rollover, pastCalendar phải ở tương lai", pastCalendar.timeInMillis > now)
     }
+
+    @Test
+    fun testBuildNormalizedTitleMap_completedWithNewerUpdatedAtWinsOverFutureActive() {
+        val now = System.currentTimeMillis()
+        val oldActiveAlarm = com.orca.orcaauto.data.local.SmartAlarmEntity(
+            alarmId = "ALM_ACTIVE_OLD",
+            taskTitle = "Gửi báo cáo doanh thu tuần",
+            targetTimeMillis = now + 3600_000L, // 1 hour in future
+            targetDateLabel = "15:00 Hôm nay",
+            status = com.orca.orcaauto.data.local.SmartAlarmStatus.ACTIVE,
+            updatedAt = now - 10_000L // 10s ago
+        )
+        val newerCompletedAlarm = com.orca.orcaauto.data.local.SmartAlarmEntity(
+            alarmId = "ALM_COMPLETED_NEW",
+            taskTitle = "Gửi báo cáo doanh thu tuần",
+            targetTimeMillis = now,
+            targetDateLabel = "Đã xong",
+            status = com.orca.orcaauto.data.local.SmartAlarmStatus.COMPLETED,
+            updatedAt = now // Just now
+        )
+
+        val map = SystemAlarmHelper.buildNormalizedTitleMap(listOf(oldActiveAlarm, newerCompletedAlarm), now = now)
+        val match = SystemAlarmHelper.findMatchingAlarmFast("Gửi báo cáo doanh thu tuần", map)
+        assertNotNull(match)
+        assertEquals("Bản ghi COMPLETED có updatedAt mới hơn phải thắng bản ghi ACTIVE cũ", com.orca.orcaauto.data.local.SmartAlarmStatus.COMPLETED, match?.status)
+        assertEquals("ALM_COMPLETED_NEW", match?.alarmId)
+        assertTrue("isTaskCompletedFast phải trả về true khi bản ghi mới nhất là COMPLETED", SystemAlarmHelper.isTaskCompletedFast("Gửi báo cáo doanh thu tuần", map))
+    }
 }

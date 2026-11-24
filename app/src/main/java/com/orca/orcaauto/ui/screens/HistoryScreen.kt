@@ -703,6 +703,7 @@ fun TwoPartSummaryCard(
     var taskToConfirmCancel by remember { mutableStateOf<Pair<TaskItem, String>?>(null) }
     var taskToConfirmRestore by remember { mutableStateOf<Pair<TaskItem, String>?>(null) }
     var taskToConfirmUncomplete by remember { mutableStateOf<Pair<TaskItem, String>?>(null) }
+    val localStatusOverrides = remember { mutableStateMapOf<String, SmartAlarmStatus>() }
 
     val voiceManager = remember { VoiceBriefingManager.getInstance(context) }
     val isSpeaking by voiceManager.isSpeakingFlow.collectAsState()
@@ -718,7 +719,20 @@ fun TwoPartSummaryCard(
         val generatedAlarmId = SystemAlarmHelper.generateAlarmId(task.title, taskCal)
         val matchingAlarm = allAlarmMap[generatedAlarmId] ?: SystemAlarmHelper.findMatchingAlarm(task.title, allAlarmMap)
         val finalAlarmId = matchingAlarm?.alarmId ?: generatedAlarmId
-        return Pair(finalAlarmId, matchingAlarm)
+        val overrideStatus = localStatusOverrides[task.title]
+        val effectiveAlarm = if (overrideStatus != null) {
+            matchingAlarm?.copy(status = overrideStatus, updatedAt = System.currentTimeMillis()) ?: SmartAlarmEntity(
+                alarmId = finalAlarmId,
+                taskTitle = task.title,
+                targetTimeMillis = System.currentTimeMillis(),
+                targetDateLabel = if (overrideStatus == SmartAlarmStatus.COMPLETED) "Đã xong" else "Đã hủy",
+                status = overrideStatus,
+                updatedAt = System.currentTimeMillis()
+            )
+        } else {
+            matchingAlarm
+        }
+        return Pair(finalAlarmId, effectiveAlarm)
     }
 
     fun handleQuickAlarmToggle(task: TaskItem, alarmId: String, existingAlarm: SmartAlarmEntity?) {
@@ -962,11 +976,30 @@ fun TwoPartSummaryCard(
                         }
 
                         // Unified Task List: Pinned tasks first, then To-Do, Planned, Done
-                        val sortedToDo = remember(parsed.tasksToDo, pinVersion) {
-                            parsed.tasksToDo.sortedByDescending { prefs.isTaskPinned(it.title) }
+                        val isTaskEffectivelyCompleted: (TaskItem) -> Boolean = { t ->
+                            val (_, alarm) = getAlarmInfoForTask(t)
+                            alarm?.status == SmartAlarmStatus.COMPLETED || t.status == TaskStatus.DONE
                         }
-                        val sortedPlanned = remember(parsed.tasksPlanned, pinVersion) {
-                            parsed.tasksPlanned.sortedByDescending { prefs.isTaskPinned(it.title) }
+                        val isTaskEffectivelyCancelled: (TaskItem) -> Boolean = { t ->
+                            val (_, alarm) = getAlarmInfoForTask(t)
+                            alarm?.status == SmartAlarmStatus.CANCELLED
+                        }
+
+                        val sortedToDo = remember(parsed.tasksToDo, allAlarmMap, pinVersion) {
+                            parsed.tasksToDo
+                                .filterNot { isTaskEffectivelyCompleted(it) || isTaskEffectivelyCancelled(it) }
+                                .sortedByDescending { prefs.isTaskPinned(it.title) }
+                        }
+                        val sortedPlanned = remember(parsed.tasksPlanned, allAlarmMap, pinVersion) {
+                            parsed.tasksPlanned
+                                .filterNot { isTaskEffectivelyCompleted(it) || isTaskEffectivelyCancelled(it) }
+                                .sortedByDescending { prefs.isTaskPinned(it.title) }
+                        }
+                        val allTasksDone = remember(parsed, allAlarmMap, pinVersion) {
+                            val fromDone = parsed.tasksDone.filterNot { isTaskEffectivelyCancelled(it) }
+                            val completedFromToDo = parsed.tasksToDo.filter { isTaskEffectivelyCompleted(it) && !isTaskEffectivelyCancelled(it) }
+                            val completedFromPlanned = parsed.tasksPlanned.filter { isTaskEffectivelyCompleted(it) && !isTaskEffectivelyCancelled(it) }
+                            (fromDone + completedFromToDo + completedFromPlanned).distinctBy { it.title }
                         }
 
                         sortedToDo.forEach { task ->
@@ -980,6 +1013,9 @@ fun TwoPartSummaryCard(
                                 onQuickAlarmToggle = { handleQuickAlarmToggle(task, alarmId, alarmEntity) },
                                 onOpenAlarmDetail = { selectedTaskForAlarm = task },
                                 onComplete = {
+                                    localStatusOverrides[task.title] = SmartAlarmStatus.COMPLETED
+                                    prefs.setTaskPinned(task.title, false)
+                                    pinVersion++
                                     SystemAlarmHelper.markTaskCompleted(context, task.title, alarmId)
                                     Toast.makeText(context, "✓ Đã hoàn thành: ${task.title.take(20)}...", Toast.LENGTH_SHORT).show()
                                 },
@@ -1006,6 +1042,9 @@ fun TwoPartSummaryCard(
                                 onQuickAlarmToggle = { handleQuickAlarmToggle(task, alarmId, alarmEntity) },
                                 onOpenAlarmDetail = { selectedTaskForAlarm = task },
                                 onComplete = {
+                                    localStatusOverrides[task.title] = SmartAlarmStatus.COMPLETED
+                                    prefs.setTaskPinned(task.title, false)
+                                    pinVersion++
                                     SystemAlarmHelper.markTaskCompleted(context, task.title, alarmId)
                                     Toast.makeText(context, "✓ Đã hoàn thành: ${task.title.take(20)}...", Toast.LENGTH_SHORT).show()
                                 },
@@ -1021,15 +1060,19 @@ fun TwoPartSummaryCard(
                             )
                         }
 
-                        parsed.tasksDone.forEach { task ->
+                        allTasksDone.forEach { task ->
                             val (alarmId, alarmEntity) = getAlarmInfoForTask(task)
                             SwipeableTaskItemRow(
                                 task = task,
                                 badgeColor = AccentEmerald,
                                 alarmEntity = alarmEntity,
+                                isPinned = false,
                                 onQuickAlarmToggle = { handleQuickAlarmToggle(task, alarmId, alarmEntity) },
                                 onOpenAlarmDetail = { selectedTaskForAlarm = task },
                                 onComplete = {
+                                    localStatusOverrides[task.title] = SmartAlarmStatus.COMPLETED
+                                    prefs.setTaskPinned(task.title, false)
+                                    pinVersion++
                                     SystemAlarmHelper.markTaskCompleted(context, task.title, alarmId)
                                     Toast.makeText(context, "✓ Đã hoàn thành: ${task.title.take(20)}...", Toast.LENGTH_SHORT).show()
                                 },
@@ -1100,6 +1143,9 @@ fun TwoPartSummaryCard(
             confirmButton = {
                 Button(
                     onClick = {
+                        localStatusOverrides[cancellingTask.title] = SmartAlarmStatus.CANCELLED
+                        prefs.setTaskPinned(cancellingTask.title, false)
+                        pinVersion++
                         SystemAlarmHelper.markTaskCancelled(context, cancellingTask.title, cancellingAlarmId)
                         Toast.makeText(context, "Đã hủy nhiệm vụ. AI sẽ không đề xuất lại.", Toast.LENGTH_SHORT).show()
                         taskToConfirmCancel = null
@@ -1135,6 +1181,8 @@ fun TwoPartSummaryCard(
             confirmButton = {
                 Button(
                     onClick = {
+                        localStatusOverrides.remove(restoringTask.title)
+                        pinVersion++
                         SystemAlarmHelper.restoreCancelledTask(context, restoringTask.title, restoringAlarmId)
                         Toast.makeText(context, "Đã khôi phục nhiệm vụ thành công!", Toast.LENGTH_SHORT).show()
                         taskToConfirmRestore = null
@@ -1170,6 +1218,8 @@ fun TwoPartSummaryCard(
             confirmButton = {
                 Button(
                     onClick = {
+                        localStatusOverrides.remove(uncompletingTask.title)
+                        pinVersion++
                         SystemAlarmHelper.uncompleteTask(context, uncompletingTask.title, uncompletingAlarmId)
                         Toast.makeText(context, "Đã đưa về trạng thái chưa hoàn thành!", Toast.LENGTH_SHORT).show()
                         taskToConfirmUncomplete = null

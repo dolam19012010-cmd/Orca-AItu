@@ -126,7 +126,8 @@ class BubbleTaskBoardController(
             SystemAlarmHelper.isTaskCompletedFast(task.title, alarmNormalizedTitleMap)
         }
         val parsedTasksDone = speakableParsed.tasksDone.filterNot { task ->
-            dismissedTaskTitles.any { SystemAlarmHelper.isTitleMatching(task.title, it) }
+            dismissedTaskTitles.any { SystemAlarmHelper.isTitleMatching(task.title, it) } ||
+            SystemAlarmHelper.isTaskCompletedFast(task.title, alarmNormalizedTitleMap)
         }
 
         val allTasksToDo = parsedTasksToDo
@@ -151,7 +152,7 @@ class BubbleTaskBoardController(
         pinnedPlanned.forEach { taskItems.add(TaskRowItem(it, isPlanned = true, isPinned = true)) }
         unpinnedToDo.forEach { taskItems.add(TaskRowItem(it, isPlanned = false, isPinned = false)) }
         unpinnedPlanned.forEach { taskItems.add(TaskRowItem(it, isPlanned = true, isPinned = false)) }
-        allTasksDone.forEach { taskItems.add(TaskRowItem(it, isPlanned = false, isPinned = isTaskPinned(it))) }
+        allTasksDone.forEach { taskItems.add(TaskRowItem(it, isPlanned = false, isPinned = false)) }
 
         if (taskItems.isEmpty()) {
             if (container.childCount > 0) {
@@ -1028,6 +1029,7 @@ class BubbleTaskBoardController(
                         if (dx > swipeThreshold && !isCompleted && !isCancelled) {
                             isSwipeAnimating = true
                             dismissedTaskTitles.add(cleanTitle)
+                            UserPreferences.getInstance(context).setTaskPinned(cleanTitle, false)
                             v.animate().translationX(v.width.toFloat()).setDuration(160).withEndAction {
                                 SystemAlarmHelper.markTaskCompleted(context, cleanTitle, curAlarmId)
                                 val completedAlarm = (curExisting ?: SmartAlarmEntity(
@@ -1051,6 +1053,7 @@ class BubbleTaskBoardController(
                         } else if (dx < -swipeThreshold && !isCancelled) {
                             isSwipeAnimating = true
                             dismissedTaskTitles.add(cleanTitle)
+                            UserPreferences.getInstance(context).setTaskPinned(cleanTitle, false)
                             v.animate().translationX(-v.width.toFloat()).setDuration(160).withEndAction {
                                 SystemAlarmHelper.markTaskCancelled(context, cleanTitle, curAlarmId)
                                 val cancelledAlarm = (curExisting ?: SmartAlarmEntity(

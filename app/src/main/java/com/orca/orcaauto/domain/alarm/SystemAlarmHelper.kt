@@ -166,12 +166,14 @@ object SystemAlarmHelper {
         val result = HashMap<String, SmartAlarmEntity>(grouped.size)
         for ((normTitle, list) in grouped) {
             if (normTitle.isEmpty()) continue
-            val active = list.filter { it.status == SmartAlarmStatus.ACTIVE && it.targetTimeMillis >= now - 3600_000L }
-                .maxByOrNull { it.updatedAt }
-            val winner = active ?: list.filter {
+            val valid = list.filter {
                 if (it.status == SmartAlarmStatus.CANCELLED) it.updatedAt >= cutoff
                 else it.targetTimeMillis >= cutoff || it.updatedAt >= cutoff
-            }.maxByOrNull { it.updatedAt }
+            }
+            val winner = valid.maxWithOrNull(
+                compareBy<SmartAlarmEntity> { it.updatedAt }
+                    .thenBy { it.status == SmartAlarmStatus.ACTIVE }
+            )
             if (winner != null) {
                 result[normTitle] = winner
             }
@@ -875,6 +877,11 @@ object SystemAlarmHelper {
     fun markTaskCompleted(context: Context, taskTitle: String, alarmId: String? = null) {
         val cleanTitle = cleanTaskTitle(taskTitle)
         disarmAlarmHardwareOnly(context, cleanTitle, alarmId)
+        try {
+            com.orca.orcaauto.data.preferences.UserPreferences.getInstance(context).setTaskPinned(cleanTitle, false)
+        } catch (e: Throwable) {
+            Log.e(TAG, "Lỗi unpin task completed: ${e.message}")
+        }
         scope.launch {
             try {
                 val dao = AppDatabase.getDatabase(context).smartAlarmDao()
@@ -927,6 +934,11 @@ object SystemAlarmHelper {
     fun markTaskCancelled(context: Context, taskTitle: String, alarmId: String? = null) {
         val cleanTitle = cleanTaskTitle(taskTitle)
         disarmAlarmHardwareOnly(context, cleanTitle, alarmId)
+        try {
+            com.orca.orcaauto.data.preferences.UserPreferences.getInstance(context).setTaskPinned(cleanTitle, false)
+        } catch (e: Throwable) {
+            Log.e(TAG, "Lỗi unpin task cancelled: ${e.message}")
+        }
         scope.launch {
             try {
                 val dao = AppDatabase.getDatabase(context).smartAlarmDao()
