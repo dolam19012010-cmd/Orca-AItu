@@ -641,13 +641,29 @@ object SystemAlarmHelper {
                     )
 
                     try {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                            alarmManager.setAlarmClock(
-                                AlarmManager.AlarmClockInfo(triggerTime, showPendingIntent),
-                                firePendingIntent
-                            )
+                        val canExact = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            alarmManager.canScheduleExactAlarms()
                         } else {
-                            alarmManager.setExact(
+                            true
+                        }
+
+                        if (canExact) {
+                            try {
+                                alarmManager.setAlarmClock(
+                                    AlarmManager.AlarmClockInfo(triggerTime, showPendingIntent),
+                                    firePendingIntent
+                                )
+                            } catch (e: SecurityException) {
+                                Log.w(TAG, "SecurityException while scheduling exact alarm; falling back to setAndAllowWhileIdle: ${e.message}")
+                                alarmManager.setAndAllowWhileIdle(
+                                    AlarmManager.RTC_WAKEUP,
+                                    triggerTime,
+                                    firePendingIntent
+                                )
+                            }
+                        } else {
+                            Log.w(TAG, "Exact alarm permission not granted; falling back to setAndAllowWhileIdle")
+                            alarmManager.setAndAllowWhileIdle(
                                 AlarmManager.RTC_WAKEUP,
                                 triggerTime,
                                 firePendingIntent
