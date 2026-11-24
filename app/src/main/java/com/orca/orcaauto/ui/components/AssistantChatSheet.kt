@@ -85,6 +85,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -331,7 +332,7 @@ fun AssistantChatSheet(
             }
 
             // Auto-trigger initial query if launched from in-app input bar
-            var hasSentInitial by remember(initialQuery) { mutableStateOf(false) }
+            var hasSentInitial by rememberSaveable(initialQuery) { mutableStateOf(false) }
             LaunchedEffect(initialQuery) {
                 if (!initialQuery.isNullOrBlank() && !hasSentInitial) {
                     hasSentInitial = true

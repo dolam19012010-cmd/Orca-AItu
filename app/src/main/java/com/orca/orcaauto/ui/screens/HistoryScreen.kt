@@ -106,6 +106,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -188,9 +189,9 @@ fun HistoryScreen() {
     }
 
     var showClearConfirmDialog by remember { mutableStateOf(false) }
-    var promptInput by remember { mutableStateOf("") }
-    var activeChatQuery by remember { mutableStateOf<String?>(null) }
-    var showAssistantSheet by remember { mutableStateOf(false) }
+    var promptInput by rememberSaveable { mutableStateOf("") }
+    var activeChatQuery by rememberSaveable { mutableStateOf<String?>(null) }
+    var showAssistantSheet by rememberSaveable { mutableStateOf(false) }
     val thinkingLevel by preferences.assistantThinkingLevelFlow.collectAsState()
     val strings = LocalAppStrings.current
     val isEn = strings.language == AppLanguage.ENGLISH
@@ -242,27 +243,21 @@ fun HistoryScreen() {
                             label = if (isEn) "⚡ Fast" else "⚡ Nhanh",
                             selected = thinkingLevel == AssistantThinkingLevel.FAST,
                             onClick = {
-                                scope.launch {
-                                    preferences.setAssistantThinkingLevel(AssistantThinkingLevel.FAST)
-                                }
+                                preferences.setAssistantThinkingLevel(AssistantThinkingLevel.FAST)
                             }
                         )
                         HistoryThinkingChip(
                             label = if (isEn) "⚖ Balanced" else "⚖ Cân bằng",
                             selected = thinkingLevel == AssistantThinkingLevel.BALANCED,
                             onClick = {
-                                scope.launch {
-                                    preferences.setAssistantThinkingLevel(AssistantThinkingLevel.BALANCED)
-                                }
+                                preferences.setAssistantThinkingLevel(AssistantThinkingLevel.BALANCED)
                             }
                         )
                         HistoryThinkingChip(
                             label = if (isEn) "🧠 Deep" else "🧠 Sâu sắc",
                             selected = thinkingLevel == AssistantThinkingLevel.DEEP,
                             onClick = {
-                                scope.launch {
-                                    preferences.setAssistantThinkingLevel(AssistantThinkingLevel.DEEP)
-                                }
+                                preferences.setAssistantThinkingLevel(AssistantThinkingLevel.DEEP)
                             }
                         )
                     }
