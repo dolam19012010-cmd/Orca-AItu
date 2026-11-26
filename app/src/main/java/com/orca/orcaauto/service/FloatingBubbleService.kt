@@ -85,6 +85,8 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import com.orca.orcaauto.R
 import com.orca.orcaauto.ui.components.SoundWaveVisualizerView
 import com.orca.orcaauto.data.local.AppDatabase
@@ -192,6 +194,10 @@ class FloatingBubbleService : Service() {
     private var unreadDotView: View? = null
     private var lastKnownSummaryId: Long? = null
     private var prewarmedCardShell: CardShellHolder? = null
+    private var lastWindowInsets: WindowInsetsCompat? = null
+    private var rootGlobalLayoutListener: ViewTreeObserver.OnGlobalLayoutListener? = null
+    private val visibleFrameRect = Rect()
+    private val rootLocationOnScreen = IntArray(2)
     private var activeSpeechRecognizer: SpeechRecognizer? = null
     private var isRecordingVoice: Boolean = false
     private var activeHoldRunnable: Runnable? = null
@@ -614,10 +620,23 @@ class FloatingBubbleService : Service() {
                             windowManager.updateViewLayout(v, p)
                         } catch (_: Exception) {}
                     }
+                    ViewCompat.requestApplyInsets(v)
                 }
                 override fun onViewDetachedFromWindow(v: View) {}
             })
         }
+        ViewCompat.setOnApplyWindowInsetsListener(rootLayout) { _, insets ->
+            lastWindowInsets = insets
+            applyExpandedCardImeBounds()
+            insets
+        }
+        val layoutListener = ViewTreeObserver.OnGlobalLayoutListener {
+            if (isExpanded && !isCollapsing) {
+                applyExpandedCardImeBounds()
+            }
+        }
+        rootGlobalLayoutListener = layoutListener
+        rootLayout.viewTreeObserver.addOnGlobalLayoutListener(layoutListener)
         bubbleRootView = rootLayout
 
         createDismissTargetView()
@@ -843,13 +862,16 @@ class FloatingBubbleService : Service() {
             pColl.x = currentX
             pColl.y = lastCollapsedY
             var flags = (pColl.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE) or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
-            flags = flags and WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN.inv()
+            @Suppress("DEPRECATION")
+            flags = flags and WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN.inv() and
+                WindowManager.LayoutParams.FLAG_LAYOUT_INSET_DECOR.inv()
             if (currentBubbleState == BubbleState.STATE_3_HIDDEN) {
                 flags = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
             } else {
                 flags = flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
             }
             pColl.flags = flags
+            pColl.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_STATE_UNSPECIFIED
             try {
                 if (bubbleRootView?.isAttachedToWindow == true) {
                     windowManager.updateViewLayout(bubbleRootView, pColl)
@@ -1378,7 +1400,10 @@ class FloatingBubbleService : Service() {
             isCollapsing = false
             currentBubbleState = targetState
             cleanupEditorHandlesAndToolbar(prewarmedCardShell)
-            prewarmedCardShell?.cardLayout?.let { cl -> (cl.parent as? ViewGroup)?.removeView(cl) }
+            prewarmedCardShell?.let { shell ->
+                (shell.cardLayout.parent as? ViewGroup)?.removeView(shell.cardLayout)
+                resetCardLayoutToBaseBounds(shell)
+            }
             renderCollapsedBubble(root)
             transitionToBubbleState(targetState, animate = false)
             if (prewarmedCardShell == null) preWarmCardShell()
@@ -1393,14 +1418,14 @@ class FloatingBubbleService : Service() {
         val screenWidth = dm.widthPixels
         val screenHeight = dm.heightPixels
         val bubbleSize = dpToPx(44)
-        val card = root.getChildAt(0)
+        val card = prewarmedCardShell?.cardLayout ?: root.getChildAt(0)
         val cardWidth = card?.width?.takeIf { it > 0 } ?: (screenWidth * 0.94f).toInt().coerceAtMost(dpToPx(500))
         val cardHeight = card?.height?.takeIf { it > 0 } ?: (screenHeight * 0.74f).toInt().coerceAtMost(dpToPx(620))
 
         val bubbleCenterX = lastCollapsedX + bubbleSize / 2f
         val bubbleCenterY = lastCollapsedY + bubbleSize / 2f
-        val cardCenterX = screenWidth / 2f
-        val cardCenterY = screenHeight / 2f
+        val cardCenterX = if (card != null && card.width > 0) card.left + card.width / 2f else screenWidth / 2f
+        val cardCenterY = if (card != null && card.height > 0) card.top + card.height / 2f else screenHeight / 2f
         val deltaX = bubbleCenterX - cardCenterX
         val deltaY = bubbleCenterY - cardCenterY
         val targetScaleX = (bubbleSize.toFloat() / cardWidth).coerceIn(0.08f, 0.35f)
@@ -2137,9 +2162,7 @@ class FloatingBubbleService : Service() {
             setOnFocusChangeListener { _, hasFocus ->
                 updateThinkingChipsVisibility?.invoke(true)
                 if (hasFocus) {
-                    scrollView.postDelayed({
-                        scrollView.fullScroll(View.FOCUS_DOWN)
-                    }, 200L)
+                    bubbleRootView?.let { ViewCompat.requestApplyInsets(it) }
                 } else {
                     hideQuickActionBar(animated = false)
                 }
@@ -2989,6 +3012,7 @@ class FloatingBubbleService : Service() {
         animate: Boolean = true,
         tapTimestampNs: Long = SystemClock.elapsedRealtimeNanos()
     ) {
+        val wasExpanded = isExpanded
         UserPreferences.getInstance(this).setHasUnreadSummary(false)
         bubbleLifecycleHandler.removeCallbacks(toState2Runnable)
         bubbleLifecycleHandler.removeCallbacks(toState3Runnable)
@@ -3028,10 +3052,10 @@ class FloatingBubbleService : Service() {
                 .start()
         }
 
-        // Expand root window to MATCH_PARENT
+        // Expand root window to MATCH_PARENT and configure inset-driven IME resizing
         val p = windowParams
         if (p != null) {
-            if (!isExpanded) {
+            if (!wasExpanded) {
                 lastCollapsedX = p.x
                 lastCollapsedY = p.y
             }
@@ -3040,17 +3064,21 @@ class FloatingBubbleService : Service() {
             p.height = WindowManager.LayoutParams.MATCH_PARENT
             p.x = 0
             p.y = 0
+            @Suppress("DEPRECATION")
             p.flags = (p.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()) and
                       WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS.inv() and
                       WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv() or
-                      WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-            @Suppress("DEPRECATION")
-            p.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN or WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN
-            try {
-                if (bubbleRootView?.isAttachedToWindow == true) {
-                    windowManager.updateViewLayout(bubbleRootView, p)
-                }
-            } catch (_: Exception) {}
+                      WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                      WindowManager.LayoutParams.FLAG_LAYOUT_INSET_DECOR
+            if (!wasExpanded) {
+                @Suppress("DEPRECATION")
+                p.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN
+                try {
+                    if (bubbleRootView?.isAttachedToWindow == true) {
+                        windowManager.updateViewLayout(bubbleRootView, p)
+                    }
+                } catch (_: Exception) {}
+            }
         }
         isExpanded = true
         updateShakeDetectorState()
@@ -3064,18 +3092,20 @@ class FloatingBubbleService : Service() {
         // Obtain Pre-Warmed Skeleton Shell or build immediately
         val shell = prewarmedCardShell ?: buildCardShell(cardWidth, cardHeight).also { prewarmedCardShell = it }
         val cardLayout = shell.cardLayout
-        shell.quickActionBar.visibility = View.GONE
-        shell.quickActionBar.alpha = 0f
+        if (!wasExpanded) {
+            shell.quickActionBar.visibility = View.GONE
+            shell.quickActionBar.alpha = 0f
 
-        val shouldShowChips = FloatingBubbleVoiceHelper.shouldShowThinkingChips(
-            hasFocus = shell.queryEt.hasFocus(),
-            text = shell.queryEt.text
-        )
-        shell.thinkingChipRow?.visibility = if (shouldShowChips) View.VISIBLE else View.GONE
-        shell.thinkingChipRow?.alpha = if (shouldShowChips) 1f else 0f
-        shell.voiceVisualizerBubble?.visibility = View.GONE
-        shell.voiceVisualizerBubble?.alpha = 0f
-        shell.soundVisualizerView?.stopVisualizer()
+            val shouldShowChips = FloatingBubbleVoiceHelper.shouldShowThinkingChips(
+                hasFocus = shell.queryEt.hasFocus(),
+                text = shell.queryEt.text
+            )
+            shell.thinkingChipRow?.visibility = if (shouldShowChips) View.VISIBLE else View.GONE
+            shell.thinkingChipRow?.alpha = if (shouldShowChips) 1f else 0f
+            shell.voiceVisualizerBubble?.visibility = View.GONE
+            shell.voiceVisualizerBubble?.alpha = 0f
+            shell.soundVisualizerView?.stopVisualizer()
+        }
 
         currentCardLayoutRef = cardLayout
         taskBoardController.attachBoard(shell.tasksBoardLayout, cardLayout)
@@ -3165,10 +3195,16 @@ class FloatingBubbleService : Service() {
             }
         }
 
-        // Detach cardLayout if already attached to any parent
-        (cardLayout.parent as? ViewGroup)?.removeView(cardLayout)
-        root.addView(cardLayout)
-        cardLayout.bringToFront()
+        val needsAttach = cardLayout.parent !== root
+        if (needsAttach) {
+            (cardLayout.parent as? ViewGroup)?.removeView(cardLayout)
+            resetCardLayoutToBaseBounds(shell, cardWidth, cardHeight)
+            root.addView(cardLayout)
+            cardLayout.bringToFront()
+        }
+
+        applyExpandedCardImeBounds()
+        ViewCompat.requestApplyInsets(root)
 
         // Update session chips and model header in skeleton
         renderSessionChips(shell.sessionsLayout, shell.addSessionBtn, root)
@@ -3257,6 +3293,104 @@ class FloatingBubbleService : Service() {
 
 
 
+    private fun getStatusBarFallbackPx(): Int {
+        val resId = resources.getIdentifier("status_bar_height", "dimen", "android")
+        return if (resId > 0) resources.getDimensionPixelSize(resId) else dpToPx(24)
+    }
+
+    private fun resetCardLayoutToBaseBounds(
+        shell: CardShellHolder,
+        baseWidth: Int? = null,
+        baseHeight: Int? = null
+    ) {
+        val dm = resources.displayMetrics
+        val w = baseWidth ?: (dm.widthPixels * 0.94f).toInt().coerceAtMost(dpToPx(500))
+        val h = baseHeight ?: (dm.heightPixels * 0.74f).toInt().coerceAtMost(dpToPx(620))
+        shell.sessionsScroll.visibility = View.VISIBLE
+        val lp = (shell.cardLayout.layoutParams as? FrameLayout.LayoutParams) ?: FrameLayout.LayoutParams(w, h)
+        if (lp.width != w || lp.height != h || lp.gravity != Gravity.CENTER || lp.topMargin != 0 || lp.bottomMargin != 0) {
+            lp.width = w
+            lp.height = h
+            lp.gravity = Gravity.CENTER
+            lp.topMargin = 0
+            lp.bottomMargin = 0
+            shell.cardLayout.layoutParams = lp
+        }
+    }
+
+    private fun applyExpandedCardImeBounds() {
+        if (!isExpanded || isCollapsing) return
+        val root = bubbleRootView ?: return
+        val shell = prewarmedCardShell ?: return
+        val card = shell.cardLayout
+        if (card.parent !== root || !root.isAttachedToWindow) return
+
+        val dm = resources.displayMetrics
+        val rootWidth = root.width.takeIf { it > 0 } ?: dm.widthPixels
+        val rootHeight = root.height.takeIf { it > 0 } ?: dm.heightPixels
+        val baseCardWidth = (dm.widthPixels * 0.94f).toInt().coerceAtMost(dpToPx(500))
+        val baseCardHeight = (dm.heightPixels * 0.74f).toInt().coerceAtMost(dpToPx(620))
+
+        val insets = lastWindowInsets ?: ViewCompat.getRootWindowInsets(root)
+        val sysTop = insets?.getInsets(WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.displayCutout())?.top ?: 0
+        val sysNavBottom = insets?.getInsets(WindowInsetsCompat.Type.navigationBars())?.bottom ?: 0
+        val imeBottom = insets?.getInsets(WindowInsetsCompat.Type.ime())?.bottom ?: 0
+        val imeVisible = insets?.isVisible(WindowInsetsCompat.Type.ime()) == true
+
+        root.getLocationOnScreen(rootLocationOnScreen)
+        val rootTopOnScreen = rootLocationOnScreen[1]
+        root.getWindowVisibleDisplayFrame(visibleFrameRect)
+        val hasValidVisFrame = root.height > 0 && visibleFrameRect.bottom > visibleFrameRect.top
+        val visTopInRoot = if (hasValidVisFrame) (visibleFrameRect.top - rootTopOnScreen).coerceAtLeast(0) else 0
+        val visBottomInsetInRoot = if (hasValidVisFrame) {
+            ((rootTopOnScreen + rootHeight) - visibleFrameRect.bottom).coerceAtLeast(0)
+        } else 0
+
+        val spec = FloatingBubbleImeLayoutHelper.calculateCardLayout(
+            rootWidth = rootWidth,
+            rootHeight = rootHeight,
+            rootTopOnScreen = rootTopOnScreen,
+            baseCardWidth = baseCardWidth,
+            baseCardHeight = baseCardHeight,
+            sysTopInset = sysTop,
+            sysNavBottomInset = sysNavBottom,
+            insetsImeBottom = imeBottom,
+            insetsImeVisible = imeVisible,
+            visibleFrameTopInRoot = visTopInRoot,
+            visibleFrameBottomInsetInRoot = visBottomInsetInRoot,
+            hasVisibleFrame = hasValidVisFrame,
+            statusBarFallbackPx = getStatusBarFallbackPx(),
+            edgeMarginPx = dpToPx(8),
+            minImeFallbackJumpPx = dpToPx(64),
+            compactHideSessionsThresholdPx = dpToPx(240),
+            minCardHeightPx = dpToPx(120)
+        )
+
+        val targetSessionsVis = if (spec.hideSessionStripForCompactIme) View.GONE else View.VISIBLE
+        if (shell.sessionsScroll.visibility != targetSessionsVis) {
+            shell.sessionsScroll.visibility = targetSessionsVis
+        }
+
+        val targetGravity = when (spec.placement) {
+            FloatingBubbleImeLayoutHelper.VerticalPlacement.CENTER -> Gravity.CENTER
+            FloatingBubbleImeLayoutHelper.VerticalPlacement.ABOVE_IME -> Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+        }
+        val lp = (card.layoutParams as? FrameLayout.LayoutParams) ?: FrameLayout.LayoutParams(spec.width, spec.height)
+        if (lp.width != spec.width ||
+            lp.height != spec.height ||
+            lp.gravity != targetGravity ||
+            lp.topMargin != spec.topMargin ||
+            lp.bottomMargin != spec.bottomMargin
+        ) {
+            lp.width = spec.width
+            lp.height = spec.height
+            lp.gravity = targetGravity
+            lp.topMargin = spec.topMargin
+            lp.bottomMargin = spec.bottomMargin
+            card.layoutParams = lp
+        }
+    }
+
     private fun updateBubbleContent() {
         val root = bubbleRootView as? FrameLayout ?: return
         if (isExpanded) {
@@ -3269,7 +3403,7 @@ class FloatingBubbleService : Service() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        prewarmedCardShell = null
+        (prewarmedCardShell?.cardLayout?.parent as? ViewGroup)?.removeView(prewarmedCardShell?.cardLayout)
         prewarmedCardShell = null
         val dm = resources.displayMetrics
         val screenWidth = dm.widthPixels
@@ -3343,10 +3477,18 @@ class FloatingBubbleService : Service() {
         cleanupEditorHandlesAndToolbar(prewarmedCardShell)
         prewarmedCardShell = null
 
-        bubbleRootView?.let {
+        bubbleRootView?.let { root ->
+            ViewCompat.setOnApplyWindowInsetsListener(root, null)
+            rootGlobalLayoutListener?.let { listener ->
+                if (root.viewTreeObserver.isAlive) {
+                    root.viewTreeObserver.removeOnGlobalLayoutListener(listener)
+                }
+            }
+            rootGlobalLayoutListener = null
+            lastWindowInsets = null
             try {
-                if (it.isAttachedToWindow) {
-                    windowManager.removeView(it)
+                if (root.isAttachedToWindow) {
+                    windowManager.removeView(root)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Lỗi khi gỡ bỏ bong bóng: ${e.message}")
