@@ -34,18 +34,25 @@ class ContextPacker(
     fun getRealTimeAnchorLine(timestamp: Long = System.currentTimeMillis()): String =
         Companion.getRealTimeAnchorLine(timestamp)
 
-    suspend fun pack(userPrompt: String): PackagedContext {
+    suspend fun pack(
+        userPrompt: String,
+        preloadedNotifications: List<NotificationEntity>? = null
+    ): PackagedContext {
         val catalogItems = try {
             noteRepository.getCatalogForAi()
         } catch (e: Exception) {
             emptyList()
         }
 
-        val notifications = try {
+        val rawNotifications = preloadedNotifications ?: try {
             notificationDao.getNotificationsWithin24Hours(limit = 100)
         } catch (e: Exception) {
             emptyList()
-        }.filterNot { NotificationFilter.containsSystemCommandInjection(it.content) || NotificationFilter.containsSystemCommandInjection(it.sender) }
+        }
+        val notifications = rawNotifications.filterNot {
+            NotificationFilter.containsSystemCommandInjection(it.content) ||
+                NotificationFilter.containsSystemCommandInjection(it.sender)
+        }
 
         val catalogText = buildCatalogSnippet(catalogItems)
         val notificationSummaryText = buildNotificationSummarySnippet(notifications)

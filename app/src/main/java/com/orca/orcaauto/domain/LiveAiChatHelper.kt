@@ -16,6 +16,7 @@ import com.orca.orcaauto.domain.assistant.CommandStripper
 import com.orca.orcaauto.domain.assistant.ContextPacker
 import com.orca.orcaauto.domain.assistant.LocalRetriever
 import com.orca.orcaauto.domain.assistant.Round1Router
+import com.orca.orcaauto.domain.assistant.SessionSummaryIntentDetector
 import com.orca.orcaauto.domain.filter.SessionMessageFilter
 import com.orca.orcaauto.domain.notes.CommandResult
 import com.orca.orcaauto.domain.notes.NoteCommand
@@ -89,6 +90,12 @@ object LiveAiChatHelper {
         val notifDao = db.notificationDao()
         val universalClient = UniversalAiClient()
         val keyPool = prefs.getKeyPool().filter { it.isEnabled && it.rawKey.isNotBlank() }
+        val resolvedKeys = SequentialAiQueue.resolveKeysForSession(session, keyPool)
+        if (resolvedKeys.isEmpty()) {
+            return@withContext Result.failure(
+                IllegalArgumentException("Chưa cấu hình API Key nào! Vui lòng vào Cài đặt để thêm API Key.")
+            )
+        }
 
         // 1. Purge old notifications (>24h) and fetch recent messages within 24h
         val cutoff24h = System.currentTimeMillis() - (24 * 60 * 60 * 1000L)
@@ -98,13 +105,17 @@ object LiveAiChatHelper {
         // 2. Filter notifications according to the session rules
         val sessionNotifications = SessionMessageFilter.filter(allNotifications, session)
 
-        val isExplicitUserQuery = !userQueryOrInstruction.isNullOrBlank() &&
-                userQueryOrInstruction.trim() != "Tóm tắt các tin nhắn quan trọng gần đây"
+        val isPureSummaryRequest = userQueryOrInstruction.isNullOrBlank() ||
+                userQueryOrInstruction.trim() == "Tóm tắt các tin nhắn quan trọng gần đây" ||
+                SessionSummaryIntentDetector.detect(userQueryOrInstruction, listOf(session), session).isSummaryRequest
 
-        if (sessionNotifications.isEmpty() && !isExplicitUserQuery) {
-            return@withContext Result.failure(
-                IllegalStateException("Không có tin nhắn nào thuộc phiên '${session.name}' trong 24 giờ qua.")
-            )
+        if (sessionNotifications.isEmpty() && isPureSummaryRequest) {
+            val detail = if (allNotifications.isEmpty()) {
+                "Chưa có tin nhắn nào được ghi nhận trong 24 giờ qua. Vui lòng kiểm tra quyền Đọc Thông Báo trong Cài đặt."
+            } else {
+                "Có ${allNotifications.size} tin nhắn trong 24h nhưng chưa có tin nào khớp bộ lọc/Whitelist của phiên '${session.name}'. Hãy kiểm tra lại Whitelist phiên trong Cài đặt."
+            }
+            return@withContext Result.failure(IllegalStateException(detail))
         }
 
         // Prepare effective instruction
@@ -124,14 +135,15 @@ object LiveAiChatHelper {
         // =========================================================================
         // Stage 1: ContextPacker
         // =========================================================================
+        onStatusUpdate?.invoke("🔍 Đang phân tích bối cảnh phiên '${session.name}'...")
         val packer = ContextPacker(noteRepo, notifDao)
-        val packagedContext = packer.pack(effectiveInstruction)
+        val packagedContext = packer.pack(effectiveInstruction, preloadedNotifications = sessionNotifications)
 
         // =========================================================================
         // Round 1: Round1Router
         // =========================================================================
         val router = Round1Router(universalClient)
-        val routerDecision = router.route(effectiveInstruction, packagedContext, keyPool)
+        val routerDecision = router.route(effectiveInstruction, packagedContext, resolvedKeys)
 
         // =========================================================================
         // Delete Spam Tickets detected in Round 1
@@ -222,6 +234,7 @@ object LiveAiChatHelper {
         // =========================================================================
         // Execution: SequentialAiQueue (FIFO with session key priorities)
         // =========================================================================
+        onStatusUpdate?.invoke("⚡ Đang tổng hợp phiên '${session.name}' (${filteredSessionNotifications.size} tin)...")
         val result = SequentialAiQueue.execute(context, session, prompt, onTokenDelta, onStatusUpdate)
 
         if (result.isSuccess) {

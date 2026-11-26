@@ -11,6 +11,7 @@ import com.orca.orcaauto.data.local.SummaryHistoryEntity
 import com.orca.orcaauto.data.preferences.AssistantThinkingLevel
 import com.orca.orcaauto.data.preferences.SummarySessionConfig
 import com.orca.orcaauto.data.preferences.UserPreferences
+import com.orca.orcaauto.domain.ai.SequentialAiQueue
 import com.orca.orcaauto.domain.prompt.PromptPersona
 import com.orca.orcaauto.data.remote.ApiKeyConfig
 import com.orca.orcaauto.data.remote.StreamUiEvent
@@ -167,6 +168,26 @@ class AssistantPipeline(
         }
 
         try {
+            val userPrefs = context?.let {
+                try {
+                    UserPreferences.getInstance(it)
+                } catch (e: Throwable) {
+                    null
+                }
+            }
+            val targetSessionId = sessionId
+                ?: sessionProvider?.invoke()
+                ?: userPrefs?.getSelectedSessionId()
+                ?: SummarySessionConfig.MAIN_SESSION_ID
+
+            val sessions = userPrefs?.loadSessions() ?: userPrefs?.sessionsFlow?.value ?: emptyList()
+            val currentSession = sessions.find { it.id == targetSessionId }
+            val activeKeyPool = if (currentSession != null) {
+                SequentialAiQueue.resolveKeysForSession(currentSession, keyPool).ifEmpty { keyPool }
+            } else {
+                keyPool
+            }
+
             // =========================================================================
             // GIAI ĐOẠN 1: Đóng gói mục lục nhẹ (ContextPacker)
             // =========================================================================
@@ -187,7 +208,7 @@ class AssistantPipeline(
                     stepDescription = "Đang lọc ghi chú và tin nhắn..."
                 )
             )
-            val routerDecision = round1Router.route(userPrompt, packagedContext, keyPool)
+            val routerDecision = round1Router.route(userPrompt, packagedContext, activeKeyPool)
 
             // =========================================================================
             // Xử lý xóa tin nhắn rác (Spam Deletion) phát hiện từ Vòng 1
@@ -218,20 +239,6 @@ class AssistantPipeline(
                 )
             )
 
-            val userPrefs = context?.let {
-                try {
-                    UserPreferences.getInstance(it)
-                } catch (e: Throwable) {
-                    null
-                }
-            }
-            val targetSessionId = sessionId
-                ?: sessionProvider?.invoke()
-                ?: userPrefs?.getSelectedSessionId()
-                ?: SummarySessionConfig.MAIN_SESSION_ID
-
-            val sessions = userPrefs?.sessionsFlow?.value ?: emptyList()
-            val currentSession = sessions.find { it.id == targetSessionId }
             val sessionName = currentSession?.name
                 ?: if (targetSessionId == SummarySessionConfig.MAIN_SESSION_ID) "Phiên chính" else targetSessionId
             val sessionInfoStr = currentSession?.let {
@@ -265,7 +272,8 @@ class AssistantPipeline(
                 persona = currentPersona,
                 activeAlarms = activeAlarms,
                 previousSummary = previousSummary,
-                sessionInfo = sessionInfoStr
+                sessionInfo = sessionInfoStr,
+                session = currentSession
             )
 
             // =========================================================================
@@ -293,7 +301,7 @@ class AssistantPipeline(
                 ?: AssistantThinkingLevel.BALANCED
 
             val streamFlow = streamingAiClient.streamWithSpikeRacing(
-                keyPool = keyPool,
+                keyPool = activeKeyPool,
                 prompt = retrievedContext.assembledRound2Prompt,
                 systemInstruction = retrievedContext.systemInstruction,
                 thinkingLevel = thinkingLevel

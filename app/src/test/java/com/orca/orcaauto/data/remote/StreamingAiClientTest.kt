@@ -734,4 +734,139 @@ class StreamingAiClientTest {
         assertTrue(RateLimitDetector.isRateLimit(nestedEx))
         assertFalse(RateLimitDetector.isRateLimit(IOException("Socket closed")))
     }
+
+    @Test
+    fun streamWithSpikeRacing_whenGeminiReturns400MentioningThinking_retriesOnceWithoutThinkingConfig() = runBlocking {
+        val key = ApiKeyConfig(
+            id = "key_gemini_thinking_400",
+            provider = AiProviderType.GEMINI,
+            rawKey = "AIzaSyTestThinkingFallback",
+            modelName = "gemini-2.0-flash",
+            endpointUrl = "",
+            isEnabled = true
+        )
+
+        val requestBodies = mutableListOf<String>()
+        val geminiSse = """
+            data: {"candidates":[{"content":{"parts":[{"text":"Đã trả lời sau khi bỏ thinkingConfig"}]}}]}
+            data: [DONE]
+        """.trimIndent()
+
+        val okHttpClient = OkHttpClient.Builder()
+            .addInterceptor(Interceptor { chain ->
+                val req = chain.request()
+                val bodyBuffer = Buffer()
+                req.body?.writeTo(bodyBuffer)
+                requestBodies.add(bodyBuffer.readUtf8())
+
+                if (requestBodies.size == 1) {
+                    val errJson = """{"error":{"code":400,"message":"Unknown name \"thinkingBudget\" at generation_config.thinking_config"}}"""
+                    Response.Builder()
+                        .request(req)
+                        .protocol(Protocol.HTTP_1_1)
+                        .code(400)
+                        .message("Bad Request")
+                        .body(errJson.toResponseBody("application/json".toMediaType()))
+                        .build()
+                } else {
+                    Response.Builder()
+                        .request(req)
+                        .protocol(Protocol.HTTP_1_1)
+                        .code(200)
+                        .message("OK")
+                        .body(geminiSse.toResponseBody("text/event-stream".toMediaType()))
+                        .build()
+                }
+            })
+            .build()
+
+        val client = StreamingAiClient(httpClient = okHttpClient)
+        val events = client.streamWithSpikeRacing(
+            keyPool = listOf(key),
+            prompt = "Test Gemini 400 thinking fallback",
+            thinkingLevel = AssistantThinkingLevel.DEEP
+        ).toList()
+
+        assertEquals("Phải thử đúng 2 lần trên cùng 1 key (1 lần có thinkingConfig, 1 lần bỏ thinkingConfig)", 2, requestBodies.size)
+        assertTrue("Lần gọi đầu phải có thinkingConfig", requestBodies[0].contains("thinkingConfig"))
+        assertFalse("Lần retry phải bỏ thinkingConfig", requestBodies[1].contains("thinkingConfig"))
+
+        val completeEvent = events.filterIsInstance<StreamUiEvent.Complete>().firstOrNull()
+        assertNotNull("Phải hoàn thành sau retry 400 thinkingConfig", completeEvent)
+        assertEquals("Đã trả lời sau khi bỏ thinkingConfig", completeEvent?.fullContent)
+    }
+
+    @Test
+    fun streamWithSpikeRacing_whenPrimaryEmitsOnlyThoughtsThenEnds_failsOverToBackupKey() = runBlocking {
+        val key1 = ApiKeyConfig(
+            id = "key_thought_only",
+            provider = AiProviderType.GEMINI,
+            rawKey = "AIzaSyPrimaryThoughtOnly",
+            modelName = "gemini-2.5-flash",
+            endpointUrl = "",
+            isEnabled = true
+        )
+        val key2 = ApiKeyConfig(
+            id = "key_backup_visible",
+            provider = AiProviderType.OPENROUTER,
+            rawKey = "sk-or-backup-visible",
+            modelName = "openrouter/free",
+            endpointUrl = "https://openrouter.ai/api/v1/chat/completions",
+            isEnabled = true
+        )
+
+        val thoughtOnlySse = """
+            data: {"candidates":[{"content":{"parts":[{"thought":true,"text":"Đang suy luận nội bộ..."}]}}]}
+            data: [DONE]
+        """.trimIndent()
+        val backupSse = """
+            data: {"choices":[{"delta":{"content":"Câu trả lời chính thức từ key dự phòng"}}]}
+            data: [DONE]
+        """.trimIndent()
+
+        val countKey1 = AtomicInteger(0)
+        val countKey2 = AtomicInteger(0)
+
+        val okHttpClient = OkHttpClient.Builder()
+            .addInterceptor(Interceptor { chain ->
+                val url = chain.request().url.toString()
+                if (url.contains("AIzaSyPrimaryThoughtOnly")) {
+                    countKey1.incrementAndGet()
+                    Response.Builder()
+                        .request(chain.request())
+                        .protocol(Protocol.HTTP_1_1)
+                        .code(200)
+                        .message("OK")
+                        .body(thoughtOnlySse.toResponseBody("text/event-stream".toMediaType()))
+                        .build()
+                } else {
+                    countKey2.incrementAndGet()
+                    Response.Builder()
+                        .request(chain.request())
+                        .protocol(Protocol.HTTP_1_1)
+                        .code(200)
+                        .message("OK")
+                        .body(backupSse.toResponseBody("text/event-stream".toMediaType()))
+                        .build()
+                }
+            })
+            .build()
+
+        val client = StreamingAiClient(httpClient = okHttpClient)
+        val events = client.streamWithSpikeRacing(
+            keyPool = listOf(key1, key2),
+            prompt = "Test thought-only stream failover"
+        ).toList()
+
+        assertEquals(1, countKey1.get())
+        assertEquals(1, countKey2.get())
+
+        val spikeEvent = events.filterIsInstance<StreamUiEvent.SpikeDetected>().firstOrNull()
+        assertNotNull("Phải emit SpikeDetected khi key chính chỉ trả về thought rồi ngắt", spikeEvent)
+
+        val completeEvent = events.filterIsInstance<StreamUiEvent.Complete>().firstOrNull()
+        assertNotNull("Key dự phòng phải hoàn thành stream với nội dung hiển thị", completeEvent)
+        assertEquals("key_backup_visible", completeEvent?.usedKey?.id)
+        assertEquals("Câu trả lời chính thức từ key dự phòng", completeEvent?.fullContent)
+    }
 }

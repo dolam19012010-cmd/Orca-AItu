@@ -149,4 +149,40 @@ class SequentialAiQueueAndSessionFilterTest {
         assertEquals(1, resolved.size)
         assertEquals("k2", resolved[0].id)
     }
+
+    @Test
+    fun testSessionMessageFilter_StrictWhitelist_MatchesGroupAndCounterFormatsWithoutWildcardRegression() {
+        val alphaSession = SummarySessionConfig(
+            id = "session_alpha",
+            name = "Dự Án Alpha",
+            filterMode = ChatFilterMode.STRICT_WHITELIST,
+            whitelist = setOf("Dự Án Alpha")
+        )
+        val groupNotifs = listOf(
+            NotificationEntity(id = 1, appPackage = "com.zing.zalo", appName = "Zalo", sender = "Nguyễn A (Dự Án Alpha)", content = "Cập nhật tiến độ"),
+            NotificationEntity(id = 2, appPackage = "com.zing.zalo", appName = "Zalo", sender = "Dự Án Alpha: Nguyễn A", content = "Gửi file báo cáo"),
+            NotificationEntity(id = 3, appPackage = "com.facebook.orca", appName = "Messenger", sender = "Dự Án Alpha (3 tin nhắn mới)", content = "Họp 14h"),
+            NotificationEntity(id = 4, appPackage = "com.zing.zalo", appName = "Zalo", sender = "Nhóm Khác", content = "Nhắn nhầm nhóm")
+        )
+
+        val alphaFiltered = SessionMessageFilter.filter(groupNotifs, alphaSession)
+        assertEquals(3, alphaFiltered.size)
+        assertEquals(listOf(1L, 2L, 3L), alphaFiltered.map { it.id })
+
+        val chiSession = SummarySessionConfig(
+            id = "session_chi",
+            name = "Chi",
+            filterMode = ChatFilterMode.STRICT_WHITELIST,
+            whitelist = setOf("Chi")
+        )
+        val boundaryNotifs = listOf(
+            NotificationEntity(id = 10, appPackage = "com.zing.zalo", appName = "Zalo", sender = "Chi", content = "Ok"),
+            NotificationEntity(id = 11, appPackage = "com.zing.zalo", appName = "Zalo", sender = "Chi phí công ty", content = "Duyệt chi"),
+            NotificationEntity(id = 12, appPackage = "com.zing.zalo", appName = "Zalo", sender = "Nguyễn Kim Chi", content = "Chào bạn")
+        )
+
+        val chiFiltered = SessionMessageFilter.filter(boundaryNotifs, chiSession)
+        assertEquals(1, chiFiltered.size)
+        assertEquals(10L, chiFiltered.first().id)
+    }
 }

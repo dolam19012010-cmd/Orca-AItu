@@ -63,6 +63,7 @@ object SequentialAiQueue {
                     val thinkingLevel = userPrefs.getAssistantThinkingLevel()
                     val rawContentAcc = StringBuilder()
                     var usedKeyConfig: ApiKeyConfig? = null
+                    var completedFullContent = ""
 
                     try {
                         val streamFlow = streamingClient.streamWithSpikeRacing(
@@ -78,8 +79,12 @@ object SequentialAiQueue {
                                 }
                                 is StreamUiEvent.Complete -> {
                                     usedKeyConfig = event.usedKey
+                                    completedFullContent = event.fullContent
                                 }
                                 is StreamUiEvent.SpikeDetected -> {
+                                    if (event.isInFlightReset) {
+                                        rawContentAcc.setLength(0)
+                                    }
                                     val statusMsg = "Key ${event.failedKeyIndex} ${event.failureReason} ➜ Đang kết nối Key ${event.backupKeyIndex}"
                                     onStatusUpdate?.invoke(statusMsg)
                                 }
@@ -90,7 +95,11 @@ object SequentialAiQueue {
                             }
                         }
                         val finalUsedKey = usedKeyConfig ?: resolvedKeys.first()
-                        val finalResult = Result.success(Pair(rawContentAcc.toString(), finalUsedKey))
+                        val finalOutput = completedFullContent.ifBlank { rawContentAcc.toString() }
+                        if (finalOutput.isBlank()) {
+                            throw java.io.IOException("AI trả về nội dung rỗng")
+                        }
+                        val finalResult = Result.success(Pair(finalOutput, finalUsedKey))
                         Log.i(TAG, "[AI Queue Streaming Completed] Session: '${session.name}' succeeded with key: ${finalUsedKey.provider.displayName} (${finalUsedKey.modelName})")
                         finalResult
                     } catch (e: CancellationException) {

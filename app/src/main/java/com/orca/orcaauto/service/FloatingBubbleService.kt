@@ -1648,7 +1648,7 @@ class FloatingBubbleService : Service() {
                                     newSummaryText = sessionSummary.summaryContent
                                     newModelInfo = sessionSummary.modelInfo
                                 } else {
-                                    newSummaryText = "Chưa có báo cáo cho '${session.name}'.\n\nNhấn nút 'Gửi' bên dưới để tóm tắt các tin nhắn thuộc phiên này."
+                                    newSummaryText = "Chưa có báo cáo cho '${session.name}'.\n\nGõ 'tóm tắt' rồi nhấn 'Gửi' bên dưới để tóm tắt các tin nhắn thuộc phiên này."
                                     newModelInfo = "${session.iconEmoji} ${session.name}"
                                 }
 
@@ -2493,7 +2493,19 @@ class FloatingBubbleService : Service() {
                 activeStreamingJob = serviceScope.launch(Dispatchers.Main) {
                     var streamThrottleJob: Job? = null
                     try {
-                        val currentSession = prefs.getSelectedSession()
+                        val allSessions = prefs.loadSessions()
+                        val selectedSession = prefs.getSelectedSession()
+                        val currentSession = com.orca.orcaauto.domain.assistant.SessionSummaryIntentDetector.resolveTargetSession(
+                            promptToSend,
+                            allSessions,
+                            selectedSession
+                        )
+                        if (currentSession.id != selectedSession.id) {
+                            prefs.setSelectedSessionId(currentSession.id)
+                            bubbleRootView?.let { root ->
+                                renderSessionChips(sessionsLayout, addSessionBtn, root)
+                            }
+                        }
                         val accumulatedLive = StringBuilder()
                         var lastStreamUpdateMs = 0L
                         val latestLiveText = AtomicReference("")

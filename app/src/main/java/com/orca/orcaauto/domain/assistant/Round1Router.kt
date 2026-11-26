@@ -5,6 +5,7 @@ import com.orca.orcaauto.data.remote.AiProviderType
 import com.orca.orcaauto.data.remote.ApiKeyConfig
 import com.orca.orcaauto.data.remote.UniversalAiClient
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -63,9 +64,14 @@ open class Round1Router(
             val result = if (aiCaller != null) {
                 aiCaller.invoke(prioritizedKeyPool, promptForRouter)
             } else {
-                aiClient.executeWithFailover(prioritizedKeyPool, promptForRouter)
+                withTimeoutOrNull(15_000L) {
+                    aiClient.executeWithFailover(prioritizedKeyPool, promptForRouter)
+                }
             }
-            if (result.isSuccess) {
+            if (result == null) {
+                Log.w(TAG, "Round 1 AI call timed out after 15s. Falling back to local heuristic...")
+                return buildLocalFallbackDecision(userPrompt, packagedContext, "Vòng 1 vượt quá 15s, dùng bộ lọc từ khóa cục bộ")
+            } else if (result.isSuccess) {
                 result.getOrNull()?.first.orEmpty()
             } else {
                 val err = result.exceptionOrNull()?.message ?: "Unknown router failure"
@@ -303,6 +309,19 @@ open class Round1Router(
             packagedContext = packagedContext,
             validCatalogIds = validCatalogIds,
             reason = "Phân giải phản hồi Vòng 1 thất bại, áp dụng tìm kiếm từ khóa cục bộ"
+        )
+    }
+
+    internal fun buildLocalFallbackDecision(
+        userPrompt: String,
+        packagedContext: PackagedContext,
+        reason: String
+    ): Round1Decision {
+        return fallbackHeuristicDecision(
+            userPrompt = userPrompt,
+            packagedContext = packagedContext,
+            validCatalogIds = packagedContext.catalogItems.map { it.id }.toSet(),
+            reason = reason
         )
     }
 

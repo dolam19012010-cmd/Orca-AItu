@@ -3,6 +3,7 @@ package com.orca.orcaauto.service
 import android.app.Notification
 import android.content.ComponentName
 import android.os.Build
+import android.os.Bundle
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
@@ -46,7 +47,7 @@ class NotificationMonitorService : NotificationListenerService() {
         val packageName = sbn.packageName ?: return
         val extras = sbn.notification?.extras ?: return
 
-        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim() ?: "Người gửi ẩn danh"
+        val title = resolveNotificationSender(extras)
         val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim().orEmpty()
         val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim().orEmpty()
         val content = if (bigText.isNotBlank()) bigText else text
@@ -148,11 +149,8 @@ class NotificationMonitorService : NotificationListenerService() {
                 val isGroupSummary = (notif.flags and Notification.FLAG_GROUP_SUMMARY) != 0
                 val contentIntent = notif.contentIntent
                 if (!isGroupSummary && contentIntent != null) {
-                    val extras = notif.extras
-                    val rawTitle = extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString()
-                        ?: extras?.getString("android.title")
-                        ?: ""
-                    if (rawTitle.isNotBlank()) {
+                    val rawTitle = resolveNotificationSender(notif.extras)
+                    if (rawTitle.isNotBlank() && rawTitle != "Người gửi ẩn danh") {
                         ChatIntentManager.cacheChatTarget(
                             packageName = sbn.packageName,
                             rawTitle = rawTitle,
@@ -164,6 +162,21 @@ class NotificationMonitorService : NotificationListenerService() {
             Log.i(TAG, "Đã khôi phục cache chat target từ active notifications: ${ChatIntentManager.getCacheSize()} items")
         } catch (e: Exception) {
             Log.w(TAG, "Lỗi khi khôi phục active notifications cache: ${e.message}")
+        }
+    }
+
+    private fun resolveNotificationSender(extras: Bundle?): String {
+        if (extras == null) return "Người gửi ẩn danh"
+        val rawTitle = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim().orEmpty()
+            .ifBlank { extras.getString("android.title")?.trim().orEmpty() }
+        val conversationTitle = extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.toString()?.trim().orEmpty()
+        val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim().orEmpty()
+        val sanitizedSubText = subText.takeIf { it.isNotBlank() && !it.contains("@") && !it.first().isDigit() }.orEmpty()
+        val groupTitle = conversationTitle.ifBlank { sanitizedSubText }
+        return if (rawTitle.isNotBlank() && groupTitle.isNotBlank() && !rawTitle.contains(groupTitle, ignoreCase = true)) {
+            "$rawTitle ($groupTitle)"
+        } else {
+            rawTitle.ifBlank { groupTitle }.ifBlank { "Người gửi ẩn danh" }
         }
     }
 

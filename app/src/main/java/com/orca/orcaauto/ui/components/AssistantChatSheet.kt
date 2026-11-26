@@ -104,10 +104,13 @@ import com.orca.orcaauto.ui.locale.LocalAppStrings
 import com.orca.orcaauto.data.preferences.UserPreferences
 import com.orca.orcaauto.domain.filter.SummaryParser
 import com.orca.orcaauto.domain.filter.TaskItem
+import com.orca.orcaauto.domain.LiveAiChatHelper
 import com.orca.orcaauto.domain.assistant.AssistantPipeline
 import com.orca.orcaauto.domain.assistant.AssistantStep
 import com.orca.orcaauto.domain.assistant.AssistantUiState
+import com.orca.orcaauto.domain.assistant.CommandStripper
 import com.orca.orcaauto.domain.assistant.NoteCommandResult
+import com.orca.orcaauto.domain.assistant.SessionSummaryIntentDetector
 import com.orca.orcaauto.ui.theme.AccentAmber
 import com.orca.orcaauto.ui.theme.AccentCyan
 import com.orca.orcaauto.ui.theme.AccentEmerald
@@ -126,12 +129,19 @@ import com.orca.orcaauto.ui.theme.SurfaceVariantDark
 import com.orca.orcaauto.ui.theme.TextMutedDark
 import com.orca.orcaauto.ui.theme.TextPrimaryDark
 import com.orca.orcaauto.ui.theme.TextSecondaryDark
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * In-memory representation of an Assistant chat bubble during the session.
@@ -222,26 +232,158 @@ fun AssistantChatSheet(
             messages.add(initialAssistantMsg)
 
             activeJob = scope.launch {
+                fun updateAssistantMessage(transform: (AssistantChatMessage) -> AssistantChatMessage) {
+                    val index = messages.indexOfFirst { it.id == assistantMsgId }
+                    if (index != -1) {
+                        messages[index] = transform(messages[index])
+                    }
+                }
+
                 try {
-                    val pipeline = AssistantPipeline.create(context)
-                    pipeline.askStreaming(trimmed).collect { uiState ->
-                        val index = messages.indexOfFirst { it.id == assistantMsgId }
-                        if (index != -1) {
+                    val sessions = userPrefs.loadSessions()
+                    val currentSession = userPrefs.getSelectedSession()
+                    val summaryIntent = SessionSummaryIntentDetector.detect(trimmed, sessions, currentSession)
+
+                    if (summaryIntent.isSummaryRequest) {
+                        val targetSession = summaryIntent.targetSession ?: currentSession
+                        if (summaryIntent.explicitlyNamedSession && targetSession.id != userPrefs.getSelectedSessionId()) {
+                            userPrefs.setSelectedSessionId(targetSession.id)
+                        }
+
+                        val isStreamActive = AtomicBoolean(true)
+                        val bufferLock = Any()
+                        val liveBuffer = StringBuilder()
+                        val lastEmitMs = AtomicLong(0L)
+                        val throttleJobRef = AtomicReference<Job?>(null)
+
+                        val summaryResult = try {
+                            withContext(Dispatchers.IO) {
+                                LiveAiChatHelper.summarizeSession(
+                                    context = context,
+                                    session = targetSession,
+                                    userQueryOrInstruction = trimmed,
+                                    onTokenDelta = { delta ->
+                                        if (!isStreamActive.get()) return@summarizeSession
+                                        val cleanLive = synchronized(bufferLock) {
+                                            liveBuffer.append(delta)
+                                            CommandStripper.cleanLive(liveBuffer.toString())
+                                        }
+                                        val now = System.currentTimeMillis()
+                                        val prev = lastEmitMs.get()
+                                        if (now - prev >= 60L && lastEmitMs.compareAndSet(prev, now)) {
+                                            throttleJobRef.getAndSet(null)?.cancel()
+                                            scope.launch(Dispatchers.Main.immediate) {
+                                                if (!isStreamActive.get()) return@launch
+                                                updateAssistantMessage { msg ->
+                                                    msg.copy(
+                                                        text = cleanLive,
+                                                        isStreaming = true,
+                                                        state = AssistantUiState(
+                                                            step = AssistantStep.STAGE_4_STREAMING_ANSWER,
+                                                            stepDescription = "Đang tóm tắt phiên '${targetSession.name}'...",
+                                                            streamedContentClean = cleanLive
+                                                        )
+                                                    )
+                                                }
+                                            }
+                                        } else if (isStreamActive.get() && throttleJobRef.get()?.isActive != true) {
+                                            val scheduled = scope.launch(Dispatchers.Main) {
+                                                delay(60L)
+                                                if (!isStreamActive.get()) return@launch
+                                                lastEmitMs.set(System.currentTimeMillis())
+                                                val latestClean = synchronized(bufferLock) {
+                                                    CommandStripper.cleanLive(liveBuffer.toString())
+                                                }
+                                                updateAssistantMessage { msg ->
+                                                    msg.copy(
+                                                        text = latestClean,
+                                                        isStreaming = true,
+                                                        state = AssistantUiState(
+                                                            step = AssistantStep.STAGE_4_STREAMING_ANSWER,
+                                                            stepDescription = "Đang tóm tắt phiên '${targetSession.name}'...",
+                                                            streamedContentClean = latestClean
+                                                        )
+                                                    )
+                                                }
+                                            }
+                                            throttleJobRef.getAndSet(scheduled)?.cancel()
+                                            if (!isStreamActive.get()) {
+                                                throttleJobRef.getAndSet(null)?.cancel()
+                                            }
+                                        }
+                                    },
+                                    onStatusUpdate = { statusMsg ->
+                                        synchronized(bufferLock) {
+                                            liveBuffer.setLength(0)
+                                        }
+                                        scope.launch(Dispatchers.Main.immediate) {
+                                            if (!isStreamActive.get()) return@launch
+                                            updateAssistantMessage { msg ->
+                                                msg.copy(
+                                                    state = AssistantUiState(
+                                                        step = AssistantStep.STAGE_2_ROUND_1_ROUTING,
+                                                        stepDescription = statusMsg
+                                                    )
+                                                )
+                                            }
+                                        }
+                                    }
+                                )
+                            }
+                        } finally {
+                            isStreamActive.set(false)
+                            throttleJobRef.getAndSet(null)?.cancel()
+                        }
+
+                        if (summaryResult.isSuccess) {
+                            val data = summaryResult.getOrThrow()
+                            updateAssistantMessage { msg ->
+                                msg.copy(
+                                    text = data.summaryContent,
+                                    isStreaming = false,
+                                    state = AssistantUiState(
+                                        step = AssistantStep.COMPLETED,
+                                        stepDescription = "Đã tóm tắt phiên '${targetSession.name}'",
+                                        streamedContentClean = data.summaryContent,
+                                        activeUsedKey = data.usedKey,
+                                        shownNoteCards = data.shownCards
+                                    )
+                                )
+                            }
+                        } else {
+                            val errMsg = summaryResult.exceptionOrNull()?.message
+                                ?: "Không thể tóm tắt phiên '${targetSession.name}'"
+                            updateAssistantMessage { msg ->
+                                msg.copy(
+                                    isStreaming = false,
+                                    state = AssistantUiState(
+                                        step = AssistantStep.ERROR,
+                                        errorMessage = errMsg
+                                    )
+                                )
+                            }
+                        }
+                    } else {
+                        val pipeline = AssistantPipeline.create(context)
+                        pipeline.askStreaming(trimmed).collect { uiState ->
                             val isStillStreaming = uiState.step != AssistantStep.COMPLETED &&
                                 uiState.step != AssistantStep.ERROR
 
-                            messages[index] = messages[index].copy(
-                                text = uiState.streamedContentClean,
-                                thought = uiState.streamedThought,
-                                state = uiState,
-                                isStreaming = isStillStreaming
-                            )
+                            updateAssistantMessage { msg ->
+                                msg.copy(
+                                    text = uiState.streamedContentClean,
+                                    thought = uiState.streamedThought,
+                                    state = uiState,
+                                    isStreaming = isStillStreaming
+                                )
+                            }
                         }
                     }
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (t: Throwable) {
-                    val index = messages.indexOfFirst { it.id == assistantMsgId }
-                    if (index != -1) {
-                        messages[index] = messages[index].copy(
+                    updateAssistantMessage { msg ->
+                        msg.copy(
                             isStreaming = false,
                             state = AssistantUiState(
                                 step = AssistantStep.ERROR,

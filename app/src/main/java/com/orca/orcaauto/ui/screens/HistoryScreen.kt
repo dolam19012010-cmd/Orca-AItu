@@ -7,19 +7,19 @@ import android.widget.Toast
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -109,11 +109,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -200,244 +202,56 @@ fun HistoryScreen() {
     var promptInput by rememberSaveable { mutableStateOf("") }
     var activeChatQuery by rememberSaveable { mutableStateOf<String?>(null) }
     var showAssistantSheet by rememberSaveable { mutableStateOf(false) }
-    var isHeaderExpanded by rememberSaveable { mutableStateOf(true) }
     val thinkingLevel by preferences.assistantThinkingLevelFlow.collectAsState()
     val strings = LocalAppStrings.current
     val isEn = strings.language == AppLanguage.ENGLISH
 
     val summaryListState = rememberLazyListState()
     val notificationListState = rememberLazyListState()
+    val density = LocalDensity.current
+    var headerHeightPx by remember { mutableIntStateOf(0) }
+    var headerOffsetPx by remember { mutableFloatStateOf(0f) }
+    val headerTopPaddingDp = with(density) { headerHeightPx.toDp() }
+    val activeListState by rememberUpdatedState(if (selectedTab == 0) summaryListState else notificationListState)
 
     val nestedScrollConnection = remember {
         object : NestedScrollConnection {
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                val delta = available.y
-                if (delta < -12f && isHeaderExpanded) {
-                    isHeaderExpanded = false
-                } else if (delta > 12f && !isHeaderExpanded) {
-                    isHeaderExpanded = true
+                val canScroll = activeListState.canScrollForward || activeListState.canScrollBackward
+                if (!canScroll) {
+                    if (headerOffsetPx != 0f) headerOffsetPx = 0f
+                    return Offset.Zero
+                }
+                if (headerHeightPx > 0) {
+                    headerOffsetPx = (headerOffsetPx + available.y).coerceIn(-headerHeightPx.toFloat(), 0f)
                 }
                 return Offset.Zero
             }
         }
     }
 
-    val currentListState = if (selectedTab == 0) summaryListState else notificationListState
-    LaunchedEffect(currentListState) {
-        snapshotFlow { currentListState.firstVisibleItemIndex to currentListState.firstVisibleItemScrollOffset }
-            .collect { (index, offset) ->
-                if (index == 0 && offset < 20 && !isHeaderExpanded) {
-                    isHeaderExpanded = true
-                }
-            }
+    LaunchedEffect(selectedTab, selectedSessionId, displayedSummaries.isEmpty(), recentNotifications.isEmpty()) {
+        headerOffsetPx = 0f
     }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Transparent)
-            .nestedScroll(nestedScrollConnection)
             .padding(16.dp)
     ) {
-        // Collapsible Top Section (Tiêu đề + Thẻ lệnh AI + Bong bóng)
-        AnimatedVisibility(
-            visible = isHeaderExpanded,
-            enter = expandVertically(
-                animationSpec = tween(durationMillis = 240, easing = FastOutSlowInEasing)
-            ) + fadeIn(animationSpec = tween(200)),
-            exit = shrinkVertically(
-                animationSpec = tween(durationMillis = 240, easing = FastOutSlowInEasing)
-            ) + fadeOut(animationSpec = tween(180))
-        ) {
-            Column {
-                // Title Header: Clean & Modern
-                Text(
-                    text = if (isEn) "AI Memory & Tasks" else "Trí nhớ AI",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = TextPrimaryDark,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = if (isEn) "Shift summaries & automated task dispatch" else "Báo cáo ca & Nhiệm vụ tự động",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = TextSecondaryDark
-                )
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                // In-App AI Prompt Card (Hỏi AItu / Ra lệnh như trong bóng chat)
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = GlassSurfaceCard),
-                    border = BorderStroke(1.dp, CardBorder)
-                ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(12.dp)
-            ) {
-                // Top row: Thinking Level Chips + Open Bubble Button
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        HistoryThinkingChip(
-                            label = if (isEn) "⚡ Fast" else "⚡ Nhanh",
-                            selected = thinkingLevel == AssistantThinkingLevel.FAST,
-                            onClick = {
-                                preferences.setAssistantThinkingLevel(AssistantThinkingLevel.FAST)
-                            }
-                        )
-                        HistoryThinkingChip(
-                            label = if (isEn) "⚖ Balanced" else "⚖ Cân bằng",
-                            selected = thinkingLevel == AssistantThinkingLevel.BALANCED,
-                            onClick = {
-                                preferences.setAssistantThinkingLevel(AssistantThinkingLevel.BALANCED)
-                            }
-                        )
-                        HistoryThinkingChip(
-                            label = if (isEn) "🧠 Deep" else "🧠 Sâu sắc",
-                            selected = thinkingLevel == AssistantThinkingLevel.DEEP,
-                            onClick = {
-                                preferences.setAssistantThinkingLevel(AssistantThinkingLevel.DEEP)
-                            }
-                        )
-                    }
-
-                    // Compact Bubble Action Pill
-                    Surface(
-                        onClick = {
-                            scope.launch {
-                                val selectedId = preferences.getSelectedSessionId()
-                                val sessionRecord = database.summaryDao().getLatestSummaryForSession(selectedId)
-                                val activeSession = preferences.getSelectedSession()
-                                val content = sessionRecord?.summaryContent?.ifBlank { null }
-                                    ?: (if (isEn) "No summaries recorded yet for session ${activeSession.name}. Bubble is ready!" else "Chưa có bản tóm tắt nào cho ca ${activeSession.name}. Bong bóng đã sẵn sàng!")
-                                FloatingBubbleService.show(
-                                    context = context,
-                                    summaryContent = content,
-                                    modelInfo = sessionRecord?.modelInfo ?: "${activeSession.iconEmoji} ${activeSession.name}",
-                                    sessionId = selectedId
-                                )
-                                Toast.makeText(context, if (isEn) "Opened chat bubble (${activeSession.name})!" else "Đã mở bong bóng chat (${activeSession.name})!", Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        color = GlassSurfaceInner,
-                        border = BorderStroke(1.dp, GlassBorderSubtle),
-                        modifier = Modifier.height(26.dp)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.ChatBubbleOutline,
-                                contentDescription = null,
-                                modifier = Modifier.size(12.dp),
-                                tint = AccentCyan
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = if (isEn) "Bubble" else "Bong bóng",
-                                fontSize = 11.sp,
-                                color = TextPrimaryDark,
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // Input Bar with Send Button
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    OutlinedTextField(
-                        value = promptInput,
-                        onValueChange = { promptInput = it },
-                        modifier = Modifier.weight(1f),
-                        placeholder = {
-                            Text(
-                                text = if (isEn) "Ask AItu or give a command..." else "Hỏi AItu hoặc ra lệnh...",
-                                fontSize = 13.sp,
-                                color = TextMutedDark
-                            )
-                        },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = GlassSurfaceInner,
-                            unfocusedContainerColor = GlassSurfaceInner,
-                            focusedBorderColor = AccentCyan,
-                            unfocusedBorderColor = GlassBorderSubtle,
-                            focusedTextColor = TextPrimaryDark,
-                            unfocusedTextColor = TextPrimaryDark,
-                            cursorColor = AccentCyan
-                        ),
-                        shape = RoundedCornerShape(20.dp),
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                        keyboardActions = KeyboardActions(
-                            onSend = {
-                                val trimmed = promptInput.trim()
-                                if (trimmed.isNotBlank()) {
-                                    activeChatQuery = trimmed
-                                    promptInput = ""
-                                    showAssistantSheet = true
-                                }
-                            }
-                        )
-                    )
-
-                    Spacer(modifier = Modifier.width(8.dp))
-
-                    IconButton(
-                        onClick = {
-                            val trimmed = promptInput.trim()
-                            activeChatQuery = trimmed.ifBlank { null }
-                            promptInput = ""
-                            showAssistantSheet = true
-                        },
-                        modifier = Modifier
-                            .size(42.dp)
-                            .clip(CircleShape)
-                            .background(
-                                if (promptInput.isNotBlank()) PrimaryIndigo else GlassSurfaceInner
-                            )
-                            .border(
-                                1.dp,
-                                if (promptInput.isNotBlank()) AccentCyan else GlassBorderSubtle,
-                                CircleShape
-                            )
-                    ) {
-                        if (promptInput.isNotBlank()) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.Send,
-                                contentDescription = "Send",
-                                tint = BackgroundDark,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        } else {
-                            Icon(
-                                imageVector = Icons.Default.AutoAwesome,
-                                contentDescription = "AI Assistant",
-                                tint = AccentCyan,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                    }
-                }
-            }
-        }
-            }
-        }
+        // Fixed Top Bar: Title Header & TabRow
+        Text(
+            text = if (isEn) "AI Memory & Tasks" else "Trí nhớ AI",
+            style = MaterialTheme.typography.titleLarge,
+            color = TextPrimaryDark,
+            fontWeight = FontWeight.Bold
+        )
+        Text(
+            text = if (isEn) "Shift summaries & automated task dispatch" else "Báo cáo ca & Nhiệm vụ tự động",
+            style = MaterialTheme.typography.bodySmall,
+            color = TextSecondaryDark
+        )
 
         Spacer(modifier = Modifier.height(10.dp))
 
@@ -466,159 +280,365 @@ fun HistoryScreen() {
             )
         }
 
-        // Horizontal Session Tabs Bar (Tự động thu gọn mượt mà khi cuộn xem danh sách)
-        AnimatedVisibility(
-            visible = isHeaderExpanded && selectedTab == 0 && sessions.isNotEmpty(),
-            enter = expandVertically(
-                animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing)
-            ) + fadeIn(animationSpec = tween(160)),
-            exit = shrinkVertically(
-                animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing)
-            ) + fadeOut(animationSpec = tween(160))
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // GPU 1:1 Translation Container: Overlay Header sits above LazyColumn inside the same clipped Box
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .clipToBounds()
+                .nestedScroll(nestedScrollConnection)
         ) {
-            Column {
-                Spacer(modifier = Modifier.height(8.dp))
-                LazyRow(
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    items(sessions, key = { it.id }) { session ->
-                        val isSelected = session.id == selectedSessionId
-                        Surface(
-                            onClick = { preferences.setSelectedSessionId(session.id) },
-                            shape = RoundedCornerShape(16.dp),
-                            color = if (isSelected) Color(0xFF2563EB) else GlassSurfaceDark,
-                            border = BorderStroke(1.dp, if (isSelected) Color(0xFF60A5FA) else GlassBorderSubtle),
-                            modifier = Modifier.height(32.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            // Layer 1: Scrollable Content (Fixed layout bounds, zero re-measure on scroll)
+            AnimatedContent(
+                targetState = selectedTab,
+                transitionSpec = {
+                    fadeIn(animationSpec = tween(220)) togetherWith fadeOut(animationSpec = tween(180))
+                },
+                label = "HistoryTabTransition",
+                modifier = Modifier.fillMaxSize()
+            ) { currentTab ->
+                when (currentTab) {
+                    0 -> {
+                        // Tab 1: Shift Summaries with 2-Part Section View
+                        if (displayedSummaries.isEmpty()) {
+                            val activeSession = sessions.find { it.id == selectedSessionId }
+                            val emptyTitle = if (activeSession != null && !activeSession.isMain) {
+                                "Chưa có tóm tắt cho phiên '${activeSession.name}'"
+                            } else {
+                                strings.emptySummariesTitle
+                            }
+                            val emptyDesc = if (activeSession != null && !activeSession.isMain) {
+                                if (isEn) "Messages matching this session's whitelist will appear here." else "Các tin nhắn thuộc Whitelist của phiên này sẽ được hiển thị tại đây khi có tóm tắt mới."
+                            } else {
+                                strings.emptySummariesDesc
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(top = headerTopPaddingDp)
                             ) {
-                                Text(text = session.iconEmoji, fontSize = 12.sp)
-                                Text(
-                                    text = session.name,
-                                    fontSize = 12.sp,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (isSelected) Color.White else Color(0xFFCBD5E1)
+                                EmptyStateView(
+                                    title = emptyTitle,
+                                    desc = emptyDesc
                                 )
+                            }
+                        } else {
+                            LazyColumn(
+                                state = summaryListState,
+                                modifier = Modifier.fillMaxSize(),
+                                verticalArrangement = Arrangement.spacedBy(16.dp),
+                                contentPadding = PaddingValues(top = headerTopPaddingDp, bottom = 80.dp)
+                            ) {
+                                items(displayedSummaries, key = { it.id }) { item ->
+                                    TwoPartSummaryCard(
+                                        item = item,
+                                        allAlarmMap = allAlarmMap,
+                                        onCopy = { copyToClipboard(context, item.summaryContent) }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    else -> {
+                        // Tab 2: Raw Logged Notifications (Last 24h, bounded capacity 200, 100 unprocessed)
+                        if (recentNotifications.isEmpty()) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(top = headerTopPaddingDp)
+                            ) {
+                                EmptyStateView(
+                                    title = strings.emptyMessagesTitle,
+                                    desc = strings.emptyMessagesDesc
+                                )
+                            }
+                        } else {
+                            LazyColumn(
+                                state = notificationListState,
+                                modifier = Modifier.fillMaxSize(),
+                                verticalArrangement = Arrangement.spacedBy(10.dp),
+                                contentPadding = PaddingValues(top = headerTopPaddingDp, bottom = 80.dp)
+                            ) {
+                                item(key = "notif_sub_header") {
+                                    // Sub-header bar with count and clear button
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .background(SurfaceDark, RoundedCornerShape(10.dp))
+                                            .border(1.dp, CardBorder, RoundedCornerShape(10.dp))
+                                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column {
+                                            Text(
+                                                text = "Đang lưu trữ ${recentNotifications.size} tin gần nhất",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = TextPrimaryDark
+                                            )
+                                            Text(
+                                                text = "Lưu trữ tối đa 200 tin trong 24h • Tối đa 100 tin chưa đọc",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = TextMutedDark,
+                                                fontSize = 11.sp
+                                            )
+                                        }
+
+                                        OutlinedButton(
+                                            onClick = { showClearConfirmDialog = true },
+                                            shape = RoundedCornerShape(8.dp),
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                            colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentRose),
+                                            border = BorderStroke(1.dp, AccentRose.copy(alpha = 0.5f))
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Delete,
+                                                contentDescription = "X\u00F3a",
+                                                tint = AccentRose,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("X\u00F3a s\u1EA1ch", color = AccentRose, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+
+                                items(recentNotifications, key = { it.id }) { notification ->
+                                    RawNotificationCard(
+                                        notification = notification,
+                                        onCopy = { copyToClipboard(context, notification.content) }
+                                    )
+                                }
                             }
                         }
                     }
                 }
             }
-        }
 
-        Spacer(modifier = Modifier.height(8.dp))
-
-        AnimatedContent(
-            targetState = selectedTab,
-            transitionSpec = {
-                fadeIn(animationSpec = tween(220)) togetherWith fadeOut(animationSpec = tween(180))
-            },
-            label = "HistoryTabTransition"
-        ) { currentTab ->
-            when (currentTab) {
-                0 -> {
-                    // Tab 1: Shift Summaries with 2-Part Section View
-                    if (displayedSummaries.isEmpty()) {
-                        val activeSession = sessions.find { it.id == selectedSessionId }
-                        val emptyTitle = if (activeSession != null && !activeSession.isMain) {
-                            "Chưa có tóm tắt cho phiên '${activeSession.name}'"
-                        } else {
-                            "Chưa có bản tóm tắt ca nào"
+            // Layer 2: Collapsible Header Overlay driven purely on GPU graphicsLayer (0 re-layout frames)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.TopCenter)
+                    .onSizeChanged { size ->
+                        headerHeightPx = size.height
+                        if (size.height > 0) {
+                            headerOffsetPx = headerOffsetPx.coerceIn(-size.height.toFloat(), 0f)
                         }
-                        val emptyDesc = if (activeSession != null && !activeSession.isMain) {
-                            if (isEn) "Messages matching this session's whitelist will appear here." else "Các tin nhắn thuộc Whitelist của phiên này sẽ được hiển thị tại đây khi có tóm tắt mới."
-                        } else {
-                            if (isEn) "Shift summaries will arrive at scheduled times\nor when you tap 'Instant Summary' above." else "Báo cáo ca sẽ tự động gửi ra màn hình khóa theo lịch hẹn\nhoặc khi bạn bấm 'Tóm tắt ngay' ở phía trên."
-                        }
-                        EmptyStateView(
-                            title = emptyTitle,
-                            desc = emptyDesc
-                        )
-                    } else {
-                        LazyColumn(
-                            state = summaryListState,
-                            verticalArrangement = Arrangement.spacedBy(16.dp),
-                            contentPadding = PaddingValues(bottom = 80.dp)
+                    }
+                    .graphicsLayer {
+                        translationY = headerOffsetPx
+                        alpha = if (headerHeightPx > 0) (1f + headerOffsetPx / headerHeightPx).coerceIn(0f, 1f) else 1f
+                    }
+                    .background(
+                        if (wallpaperPath != null) Color(0xE009090B) else BackgroundDark.copy(alpha = 0.96f),
+                        RoundedCornerShape(bottomStart = 16.dp, bottomEnd = 16.dp)
+                    )
+                    .padding(bottom = 10.dp)
+            ) {
+                // In-App AI Prompt Card (Hỏi AItu / Ra lệnh như trong bóng chat)
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = GlassSurfaceCard),
+                    border = BorderStroke(1.dp, CardBorder)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp)
+                    ) {
+                        // Top row: Thinking Level Chips + Open Bubble Button
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            items(displayedSummaries, key = { it.id }) { item ->
-                                TwoPartSummaryCard(
-                                    item = item,
-                                    allAlarmMap = allAlarmMap,
-                                    onCopy = { copyToClipboard(context, item.summaryContent) }
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                HistoryThinkingChip(
+                                    label = if (isEn) "⚡ Fast" else "⚡ Nhanh",
+                                    selected = thinkingLevel == AssistantThinkingLevel.FAST,
+                                    onClick = {
+                                        preferences.setAssistantThinkingLevel(AssistantThinkingLevel.FAST)
+                                    }
                                 )
+                                HistoryThinkingChip(
+                                    label = if (isEn) "⚖ Balanced" else "⚖ Cân bằng",
+                                    selected = thinkingLevel == AssistantThinkingLevel.BALANCED,
+                                    onClick = {
+                                        preferences.setAssistantThinkingLevel(AssistantThinkingLevel.BALANCED)
+                                    }
+                                )
+                                HistoryThinkingChip(
+                                    label = if (isEn) "🧠 Deep" else "🧠 Sâu sắc",
+                                    selected = thinkingLevel == AssistantThinkingLevel.DEEP,
+                                    onClick = {
+                                        preferences.setAssistantThinkingLevel(AssistantThinkingLevel.DEEP)
+                                    }
+                                )
+                            }
+
+                            // Compact Bubble Action Pill
+                            Surface(
+                                onClick = {
+                                    scope.launch {
+                                        val selectedId = preferences.getSelectedSessionId()
+                                        val sessionRecord = database.summaryDao().getLatestSummaryForSession(selectedId)
+                                        val activeSession = preferences.getSelectedSession()
+                                        val content = sessionRecord?.summaryContent?.ifBlank { null }
+                                            ?: (if (isEn) "No summaries recorded yet for session ${activeSession.name}. Bubble is ready!" else "Chưa có bản tóm tắt nào cho ca ${activeSession.name}. Bong bóng đã sẵn sàng!")
+                                        FloatingBubbleService.show(
+                                            context = context,
+                                            summaryContent = content,
+                                            modelInfo = sessionRecord?.modelInfo ?: "${activeSession.iconEmoji} ${activeSession.name}",
+                                            sessionId = selectedId
+                                        )
+                                        Toast.makeText(context, if (isEn) "Opened chat bubble (${activeSession.name})!" else "Đã mở bong bóng chat (${activeSession.name})!", Toast.LENGTH_SHORT).show()
+                                    }
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                color = GlassSurfaceInner,
+                                border = BorderStroke(1.dp, GlassBorderSubtle),
+                                modifier = Modifier.height(26.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ChatBubbleOutline,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(12.dp),
+                                        tint = AccentCyan
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = if (isEn) "Bubble" else "Bong bóng",
+                                        fontSize = 11.sp,
+                                        color = TextPrimaryDark,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Input Bar with Send Button
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedTextField(
+                                value = promptInput,
+                                onValueChange = { promptInput = it },
+                                modifier = Modifier.weight(1f),
+                                placeholder = {
+                                    Text(
+                                        text = if (isEn) "Ask AItu or give a command..." else "Hỏi AItu hoặc ra lệnh...",
+                                        fontSize = 13.sp,
+                                        color = TextMutedDark
+                                    )
+                                },
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedContainerColor = GlassSurfaceInner,
+                                    unfocusedContainerColor = GlassSurfaceInner,
+                                    focusedBorderColor = AccentCyan,
+                                    unfocusedBorderColor = GlassBorderSubtle,
+                                    focusedTextColor = TextPrimaryDark,
+                                    unfocusedTextColor = TextPrimaryDark,
+                                    cursorColor = AccentCyan
+                                ),
+                                shape = RoundedCornerShape(20.dp),
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                                keyboardActions = KeyboardActions(
+                                    onSend = {
+                                        val trimmed = promptInput.trim()
+                                        if (trimmed.isNotBlank()) {
+                                            activeChatQuery = trimmed
+                                            promptInput = ""
+                                            showAssistantSheet = true
+                                        }
+                                    }
+                                )
+                            )
+
+                            Spacer(modifier = Modifier.width(8.dp))
+
+                            IconButton(
+                                onClick = {
+                                    val trimmed = promptInput.trim()
+                                    activeChatQuery = trimmed.ifBlank { null }
+                                    promptInput = ""
+                                    showAssistantSheet = true
+                                },
+                                modifier = Modifier
+                                    .size(42.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (promptInput.isNotBlank()) PrimaryIndigo else GlassSurfaceInner
+                                    )
+                                    .border(
+                                        1.dp,
+                                        if (promptInput.isNotBlank()) AccentCyan else GlassBorderSubtle,
+                                        CircleShape
+                                    )
+                            ) {
+                                if (promptInput.isNotBlank()) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.Send,
+                                        contentDescription = "Send",
+                                        tint = BackgroundDark,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Default.AutoAwesome,
+                                        contentDescription = "AI Assistant",
+                                        tint = AccentCyan,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
                             }
                         }
                     }
                 }
-                else -> {
-                    // Tab 2: Raw Logged Notifications (Last 24h, bounded capacity 200, 100 unprocessed)
-                    if (recentNotifications.isEmpty()) {
-                        EmptyStateView(
-                            title = "Chưa có thông báo nào được ghi lại",
-                            desc = "Hệ thống sẽ tự động lưu lại các tin nhắn từ Zalo, Telegram, Messenger tại đây khi có thông báo mới."
-                        )
-                    } else {
-                        Column(
-                            modifier = Modifier.fillMaxSize(),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            // Sub-header bar with count and clear button
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .background(SurfaceDark, RoundedCornerShape(10.dp))
-                                    .border(1.dp, CardBorder, RoundedCornerShape(10.dp))
-                                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column {
-                                    Text(
-                                        text = "Đang lưu trữ ${recentNotifications.size} tin gần nhất",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = TextPrimaryDark
-                                    )
-                                    Text(
-                                        text = "Lưu trữ tối đa 200 tin trong 24h • Tối đa 100 tin chưa đọc",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = TextMutedDark,
-                                        fontSize = 11.sp
-                                    )
-                                }
 
-                                OutlinedButton(
-                                    onClick = { showClearConfirmDialog = true },
-                                    shape = RoundedCornerShape(8.dp),
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentRose),
-                                    border = BorderStroke(1.dp, AccentRose.copy(alpha = 0.5f))
+                // Horizontal Session Tabs Bar (Slides smoothly with GPU Header)
+                if (selectedTab == 0 && sessions.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    LazyRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        items(sessions, key = { it.id }) { session ->
+                            val isSelected = session.id == selectedSessionId
+                            Surface(
+                                onClick = { preferences.setSelectedSessionId(session.id) },
+                                shape = RoundedCornerShape(16.dp),
+                                color = if (isSelected) Color(0xFF2563EB) else GlassSurfaceDark,
+                                border = BorderStroke(1.dp, if (isSelected) Color(0xFF60A5FA) else GlassBorderSubtle),
+                                modifier = Modifier.height(32.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Delete,
-                                        contentDescription = "X\u00F3a",
-                                        tint = AccentRose,
-                                        modifier = Modifier.size(14.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("X\u00F3a s\u1EA1ch", color = AccentRose, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
-
-                            LazyColumn(
-                                state = notificationListState,
-                                verticalArrangement = Arrangement.spacedBy(10.dp),
-                                contentPadding = PaddingValues(bottom = 80.dp)
-                            ) {
-                                items(recentNotifications, key = { it.id }) { notification ->
-                                    RawNotificationCard(
-                                        notification = notification,
-                                        onCopy = { copyToClipboard(context, notification.content) }
+                                    Text(text = session.iconEmoji, fontSize = 12.sp)
+                                    Text(
+                                        text = session.name,
+                                        fontSize = 12.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (isSelected) Color.White else Color(0xFFCBD5E1)
                                     )
                                 }
                             }

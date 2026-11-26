@@ -5,7 +5,9 @@ import com.orca.orcaauto.data.local.NotificationEntity
 import com.orca.orcaauto.data.local.SharedNoteEntity
 import com.orca.orcaauto.data.local.SmartAlarmDao
 import com.orca.orcaauto.data.local.SmartAlarmEntity
+import com.orca.orcaauto.data.preferences.SummarySessionConfig
 import com.orca.orcaauto.domain.filter.NotificationFilter
+import com.orca.orcaauto.domain.filter.SessionMessageFilter
 import com.orca.orcaauto.domain.notes.RetrievedNote
 import com.orca.orcaauto.domain.notes.SharedNoteRepository
 import com.orca.orcaauto.domain.prompt.PromptPersona
@@ -48,7 +50,8 @@ class LocalRetriever(
         activeAlarms: List<SmartAlarmEntity> = emptyList(),
         previousSummary: String? = null,
         sessionInfo: String? = null,
-        notesCatalog: List<SharedNoteEntity> = emptyList()
+        notesCatalog: List<SharedNoteEntity> = emptyList(),
+        session: SummarySessionConfig? = null
     ): RetrievedContext {
         // 1. Retrieve notes from Room DB
         val retrievedNotes = try {
@@ -58,7 +61,7 @@ class LocalRetriever(
         }
 
         // 2. Retrieve relevant notifications if sender filters were determined
-        val relevantNotifications = retrieveRelevantNotifications(decision.senderFilter, excludedNotificationIds)
+        val relevantNotifications = retrieveRelevantNotifications(decision.senderFilter, excludedNotificationIds, session)
 
         // 3. Resolve active smart alarms
         val resolvedAlarms = if (activeAlarms.isNotEmpty()) {
@@ -162,7 +165,8 @@ class LocalRetriever(
 
     private suspend fun retrieveRelevantNotifications(
         senderFilters: List<String>,
-        excludedNotificationIds: Set<Long> = emptySet()
+        excludedNotificationIds: Set<Long> = emptySet(),
+        session: SummarySessionConfig? = null
     ): List<NotificationEntity> {
         val all24h = try {
             notificationDao.getNotificationsWithin24Hours(limit = 100)
@@ -171,21 +175,40 @@ class LocalRetriever(
         }.filter { it.id !in excludedNotificationIds }
          .filterNot { NotificationFilter.containsSystemCommandInjection(it.content) || NotificationFilter.containsSystemCommandInjection(it.sender) }
 
+        val sessionScoped = if (session != null) {
+            SessionMessageFilter.filter(all24h, session)
+        } else {
+            all24h
+        }
+
         if (senderFilters.isEmpty()) {
-            return all24h.takeLast(20) // Default to latest 20 messages if no specific sender filter
+            return sessionScoped.takeLast(40)
         }
 
-        val lowerFilters = senderFilters.map { it.lowercase().trim() }
-        val filtered = all24h.filter { notif ->
-            val senderLower = notif.sender.lowercase()
-            val appLower = notif.appName.lowercase()
-            val contentLower = notif.content.lowercase()
-            lowerFilters.any { filter ->
-                senderLower.contains(filter) || appLower.contains(filter) || contentLower.contains(filter)
+        val lowerFilters = senderFilters.map { it.lowercase().trim() }.filter { it.isNotEmpty() }
+        if (lowerFilters.isEmpty()) {
+            return sessionScoped.takeLast(40)
+        }
+
+        fun filterBySender(source: List<NotificationEntity>): List<NotificationEntity> =
+            source.filter { notif ->
+                val senderLower = notif.sender.lowercase()
+                val appLower = notif.appName.lowercase()
+                val contentLower = notif.content.lowercase()
+                lowerFilters.any { filter ->
+                    senderLower.contains(filter) || appLower.contains(filter) || contentLower.contains(filter)
+                }
             }
+
+        val filteredInSession = filterBySender(sessionScoped)
+        if (filteredInSession.isNotEmpty()) return filteredInSession
+
+        if (session != null) {
+            val filteredGlobal = filterBySender(all24h)
+            if (filteredGlobal.isNotEmpty()) return filteredGlobal
         }
 
-        return if (filtered.isNotEmpty()) filtered else all24h.takeLast(10)
+        return sessionScoped.ifEmpty { all24h }.takeLast(10)
     }
 
     private fun buildNotificationsSnippet(notifications: List<NotificationEntity>): String {

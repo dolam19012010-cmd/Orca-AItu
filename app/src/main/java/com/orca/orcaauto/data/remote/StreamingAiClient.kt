@@ -364,45 +364,77 @@ class StreamingAiClient(
             return
         }
 
-        val call = httpClient.newCall(request)
-        handle.callRef.set(call)
+        var activeCall = httpClient.newCall(request)
+        handle.callRef.set(activeCall)
 
-        val response = try {
-            call.execute()
+        var effectiveResponse = try {
+            activeCall.execute()
         } catch (e: Exception) {
-            if (call.isCanceled() || e is CancellationException) {
+            if (activeCall.isCanceled() || e is CancellationException) {
                 return
             }
             throw e
         }
 
         try {
-            val code = response.code
             val maskedUrl = if (key.provider == AiProviderType.GEMINI) {
                 "https://generativelanguage.googleapis.com/v1beta/models/${key.modelName}:streamGenerateContent?alt=sse&key=${key.maskedKey}"
             } else key.endpointUrl
 
-            if (!response.isSuccessful) {
-                val errBody = try { response.body?.string().orEmpty() } catch (_: Exception) { "" }
-                ApiDebugLogManager.log(
-                    ApiDebugLogEntry(
-                        provider = key.provider.displayName,
-                        model = key.modelName,
-                        endpoint = maskedUrl,
-                        httpCode = code,
-                        isSuccess = false,
-                        durationMs = System.currentTimeMillis() - totalStartTime,
-                        promptPreview = prompt.take(160),
-                        errorMessage = "HTTP $code: $errBody"
+            var code = effectiveResponse.code
+            if (!effectiveResponse.isSuccessful) {
+                var errBody = try { effectiveResponse.body?.string().orEmpty() } catch (_: Exception) { "" }
+                if (key.provider == AiProviderType.GEMINI && code == 400 && errBody.contains("thinking", ignoreCase = true)) {
+                    effectiveResponse.close()
+                    val retryRequest = buildGeminiRequestWithOptions(
+                        config = key,
+                        prompt = prompt,
+                        systemInstruction = systemInstruction,
+                        thinkingLevel = thinkingLevel,
+                        includeThinkingConfig = false
                     )
-                )
-                if (RateLimitDetector.isRateLimit(code, errBody)) {
-                    throw RateLimitException("HTTP $code (${key.provider.displayName} - ${key.modelName}): $errBody")
+                    if (!coroutineContext.isActive || isCompleted.get()) return
+                    val retryLeader = leaderId.get()
+                    if (retryLeader != null && retryLeader != handle.workerId) return
+
+                    val retryCall = httpClient.newCall(retryRequest)
+                    activeCall = retryCall
+                    handle.callRef.set(activeCall)
+                    effectiveResponse = try {
+                        activeCall.execute()
+                    } catch (e: Exception) {
+                        if (activeCall.isCanceled() || e is CancellationException) {
+                            return
+                        }
+                        throw e
+                    }
+                    code = effectiveResponse.code
+                    if (!effectiveResponse.isSuccessful) {
+                        errBody = try { effectiveResponse.body?.string().orEmpty() } catch (_: Exception) { "" }
+                    }
                 }
-                throw IOException("HTTP $code (${key.provider.displayName} - ${key.modelName}): $errBody")
+
+                if (!effectiveResponse.isSuccessful) {
+                    ApiDebugLogManager.log(
+                        ApiDebugLogEntry(
+                            provider = key.provider.displayName,
+                            model = key.modelName,
+                            endpoint = maskedUrl,
+                            httpCode = code,
+                            isSuccess = false,
+                            durationMs = System.currentTimeMillis() - totalStartTime,
+                            promptPreview = prompt.take(160),
+                            errorMessage = "HTTP $code: $errBody"
+                        )
+                    )
+                    if (RateLimitDetector.isRateLimit(code, errBody)) {
+                        throw RateLimitException("HTTP $code (${key.provider.displayName} - ${key.modelName}): $errBody")
+                    }
+                    throw IOException("HTTP $code (${key.provider.displayName} - ${key.modelName}): $errBody")
+                }
             }
 
-            val body = response.body ?: throw IOException("Empty response body from ${key.provider.displayName}")
+            val body = effectiveResponse.body ?: throw IOException("Empty response body from ${key.provider.displayName}")
             val source = body.source()
             var startedEmitted = false
 
@@ -410,7 +442,7 @@ class StreamingAiClient(
                 val line = try {
                     source.readUtf8Line() ?: break
                 } catch (e: Exception) {
-                    if (call.isCanceled() || e is CancellationException) {
+                    if (activeCall.isCanceled() || e is CancellationException) {
                         return
                     }
                     throw e
@@ -467,13 +499,14 @@ class StreamingAiClient(
                 }
             }
 
-            // If this worker finished without emitting content and without claiming leader
-            if (leaderId.get() == null) {
-                throw IOException("Stream ended prematurely without emitting content from ${key.provider.displayName}")
+            val currentLeader = leaderId.get()
+            // If no worker claimed leadership or this leader finished without emitting visible content
+            if (currentLeader == null || (currentLeader == handle.workerId && fullContentAcc.isEmpty())) {
+                throw IOException("Stream ended prematurely without emitting visible content from ${key.provider.displayName}")
             }
 
             // Stream completed successfully by the Leader
-            if (leaderId.get() == handle.workerId && !isCompleted.getAndSet(true)) {
+            if (currentLeader == handle.workerId && !isCompleted.getAndSet(true)) {
                 val totalDuration = System.currentTimeMillis() - totalStartTime
                 val finalContent = fullContentAcc.toString()
                 val finalThought = fullThoughtAcc.toString()
@@ -502,7 +535,7 @@ class StreamingAiClient(
                 completionSignal.complete(Unit)
             }
         } finally {
-            response.close()
+            effectiveResponse.close()
         }
     }
 
@@ -511,6 +544,20 @@ class StreamingAiClient(
         prompt: String,
         systemInstruction: String,
         thinkingLevel: AssistantThinkingLevel
+    ): Request = buildGeminiRequestWithOptions(
+        config = config,
+        prompt = prompt,
+        systemInstruction = systemInstruction,
+        thinkingLevel = thinkingLevel,
+        includeThinkingConfig = true
+    )
+
+    private fun buildGeminiRequestWithOptions(
+        config: ApiKeyConfig,
+        prompt: String,
+        systemInstruction: String,
+        thinkingLevel: AssistantThinkingLevel,
+        includeThinkingConfig: Boolean
     ): Request {
         val model = config.modelName.ifBlank { "gemini-3.8-flash" }
         val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:streamGenerateContent?alt=sse&key=${config.rawKey}"
@@ -544,8 +591,8 @@ class StreamingAiClient(
                 add("systemInstruction", sysInstructionObj)
             }
 
-            // Include thinking config for Gemini 2.0+ and 3.x models
-            if (!model.contains("1.5")) {
+            // Include thinking config for Gemini 2.0+ and 3.x models unless retried without it
+            if (!model.contains("1.5") && includeThinkingConfig) {
                 val budget = thinkingLevel.geminiBudget
                 val genConfig = JsonObject().apply {
                     val thinkingConfig = JsonObject().apply {
