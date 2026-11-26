@@ -111,6 +111,65 @@ object SummaryParser {
     private val TASK_LINE_PREFIX_REGEX = Regex("^[\\-•*\\d.]+\\s*")
     private val TASK_LINE_CHECKBOX_REGEX = Regex("^\\[[ xX]?\\]\\s*")
 
+    private val STANDALONE_ADVICE_HEADERS = setOf(
+        "lời khuyên:", "lời nhắn:", "lưu ý:", "chú ý:",
+        "lưu ý tinh tế:", "điểm cần chú ý:", "lời nhắn nhẹ nhàng:",
+        "góc nhìn phản biện & lời khuyên:", "lời nhắn & điểm lưu ý:",
+        "gentle message:", "core summary:", "strategic advice:",
+        "quick note:", "subtle notes:", "points of attention:",
+        "critical questions:", "urgent notice:", "advice:", "note:", "notes:"
+    )
+
+    private fun isBulletLine(trimmed: String): Boolean =
+        trimmed.startsWith("-") || trimmed.startsWith("•") || trimmed.startsWith("*") ||
+            trimmed.startsWith("?") || trimmed.matches(NUMBERED_LIST_ITEM_REGEX)
+
+    private fun isPart1Header(lower: String, isBullet: Boolean): Boolean = !isBullet && (
+        lower.contains("phần 1") ||
+            lower.contains("part 1") ||
+            lower.contains("section 1") ||
+            lower.contains("[phan_1]") ||
+            lower.contains("[part_1]") ||
+            (lower.contains("góc nhìn") && lower.contains("phản biện")) ||
+            (lower.contains("advice") && lower.contains("note")) ||
+            lower.startsWith("=== phần 1") ||
+            lower.startsWith("### phần 1") ||
+            lower.startsWith("=== part 1") ||
+            lower.startsWith("### part 1") ||
+            ((lower.startsWith("#") || lower.startsWith("=")) && (
+                lower.contains("lời khuyên") || lower.contains("lời nhắn") || lower.contains("lưu ý") ||
+                    lower.contains("advice") || lower.contains("note") || lower.contains("notes")
+                ))
+        )
+
+    private fun isToDoHeader(lower: String, isBullet: Boolean): Boolean =
+        lower.contains("nhiệm vụ phải làm") || lower.contains("việc cần làm") ||
+            (lower.contains("to-do") && !isBullet) || (lower.contains("todo") && !isBullet)
+
+    private fun isDoneHeader(lower: String, isBullet: Boolean): Boolean =
+        lower.contains("nhiệm vụ đã làm") || lower.contains("việc đã làm") ||
+            (lower.contains("done") && !isBullet) || (lower.contains("completed") && !isBullet)
+
+    private fun isPlannedHeader(lower: String, isBullet: Boolean): Boolean =
+        lower.contains("kế hoạch dự kiến") || lower.contains("việc dự kiến") ||
+            (lower.contains("planned") && !isBullet) || (lower.contains("upcoming") && !isBullet)
+
+    private fun isPart2BoardHeader(lower: String, isBullet: Boolean): Boolean = !isBullet && (
+        lower.contains("phần 2") ||
+            lower.contains("part 2") ||
+            lower.contains("[phan_2]") ||
+            lower.contains("[part_2]") ||
+            lower.contains("bảng điều phối") ||
+            lower.contains("task dispatch board") ||
+            lower.contains("nhiệm vụ điều phối")
+        )
+
+    private fun isPart2OrTaskHeader(lower: String, isBullet: Boolean): Boolean =
+        isToDoHeader(lower, isBullet) ||
+            isDoneHeader(lower, isBullet) ||
+            isPlannedHeader(lower, isBullet) ||
+            isPart2BoardHeader(lower, isBullet)
+
     fun cleanMarkdown(text: String): String {
         return text
             .replace(CHAT_REF_ID_REGEX, "")
@@ -180,6 +239,87 @@ object SummaryParser {
         return cleanedLines.joinToString("\n").trim()
     }
 
+    fun hasStructuredHeaders(rawText: String): Boolean {
+        if (rawText.isBlank()) return false
+        return ScratchpadExtractor.stripReasoning(rawText).lines().any { line ->
+            val trimmed = line.trim()
+            if (trimmed.isBlank()) return@any false
+            val lower = trimmed.lowercase()
+            val isBullet = isBulletLine(trimmed)
+            isPart1Header(lower, isBullet) || isPart2OrTaskHeader(lower, isBullet)
+        }
+    }
+
+    /**
+     * Produces a clean live preview during SSE streaming by stripping scratchpad/reasoning blocks,
+     * Part 1 headers, and hiding raw Part 2 markdown task markup once task extraction begins.
+     */
+    fun extractLiveAdvicePreview(rawText: String, isEnglish: Boolean = false): String {
+        val cleaned = ScratchpadExtractor.stripReasoning(rawText)
+        if (cleaned.isBlank()) return ""
+
+        val adviceLines = mutableListOf<String>()
+        var part2Started = false
+
+        for (line in cleaned.lines()) {
+            val trimmed = line.trim()
+            if (trimmed.isBlank()) continue
+            val lower = trimmed.lowercase()
+            val isBullet = isBulletLine(trimmed)
+
+            if (isPart1Header(lower, isBullet) || (!isBullet && lower in STANDALONE_ADVICE_HEADERS)) {
+                continue
+            }
+            if (isPart2OrTaskHeader(lower, isBullet)) {
+                part2Started = true
+                break
+            }
+
+            val cleanedLine = cleanAdviceLine(trimmed)
+            if (cleanedLine.isNotBlank()) {
+                adviceLines.add(cleanedLine)
+            }
+        }
+
+        val advice = adviceLines.joinToString("\n").trim()
+        if (!part2Started) return advice
+
+        val status = if (isEnglish) "⏳ Extracting tasks..." else "⏳ Đang trích xuất danh sách nhiệm vụ..."
+        return if (advice.isNotBlank()) "$advice\n\n$status" else status
+    }
+
+    /**
+     * Formats a [ParsedSummary] into human-readable plain text for clipboard sharing without raw XML/markdown tags.
+     */
+    fun formatForClipboard(parsed: ParsedSummary, isEnglish: Boolean = false): String {
+        val sb = StringBuilder()
+        val advice = cleanAdviceText(parsed.conciseAdvice).ifBlank { parsed.conciseAdvice }.trim()
+        if (advice.isNotBlank()) {
+            sb.append(advice)
+        }
+
+        fun appendTaskGroup(header: String, tasks: List<TaskItem>) {
+            if (tasks.isEmpty()) return
+            if (sb.isNotEmpty()) sb.append("\n\n")
+            sb.append(header)
+            for (task in tasks) {
+                sb.append("\n- ").append(task.title)
+                if (task.deadline.isNotBlank()) {
+                    sb.append(" (⏰ ").append(task.deadline).append(")")
+                }
+                if (task.source.isNotBlank()) {
+                    sb.append(" — ").append(task.source)
+                }
+            }
+        }
+
+        appendTaskGroup(if (isEnglish) "📌 To-Do" else "📌 Việc cần làm", parsed.tasksToDo)
+        appendTaskGroup(if (isEnglish) "🗓 Planned" else "🗓 Kế hoạch", parsed.tasksPlanned)
+        appendTaskGroup(if (isEnglish) "✅ Done" else "✅ Đã xong", parsed.tasksDone)
+
+        return sb.toString().trim().ifBlank { parsed.rawCleanText.trim() }
+    }
+
     /**
      * Parses the AI response into 2 distinct executive sections:
      * Section 1: Critical Thinking, Doubts, Contradictions, and Concise Advice.
@@ -202,47 +342,27 @@ object SummaryParser {
             val lower = trimmed.lowercase()
             if (trimmed.isBlank()) continue
 
-            val isBullet = trimmed.startsWith("-") || trimmed.startsWith("•") || trimmed.startsWith("*") || trimmed.startsWith("?") || trimmed.matches(NUMBERED_LIST_ITEM_REGEX)
+            val isBullet = isBulletLine(trimmed)
 
             // Section Heading checks (Must not be a bullet item)
             when {
-                !isBullet && (
-                    lower.contains("phần 1") ||
-                    lower.contains("part 1") ||
-                    lower.contains("section 1") ||
-                    (lower.contains("góc nhìn") && lower.contains("phản biện")) ||
-                    (lower.contains("advice") && lower.contains("note")) ||
-                    lower.startsWith("=== phần 1") ||
-                    lower.startsWith("### phần 1") ||
-                    lower.startsWith("=== part 1") ||
-                    lower.startsWith("### part 1") ||
-                    ((lower.startsWith("#") || lower.startsWith("=")) && (
-                        lower.contains("lời khuyên") || lower.contains("lời nhắn") || lower.contains("lưu ý") ||
-                        lower.contains("advice") || lower.contains("note") || lower.contains("notes")
-                    ))
-                ) -> {
+                isPart1Header(lower, isBullet) -> {
                     currentSection = 1
                     continue
                 }
-                lower.contains("nhiệm vụ phải làm") || lower.contains("việc cần làm") || (lower.contains("to-do") && !isBullet) || (lower.contains("todo") && !isBullet) -> {
+                isToDoHeader(lower, isBullet) -> {
                     currentSection = 2
                     continue
                 }
-                lower.contains("nhiệm vụ đã làm") || lower.contains("việc đã làm") || (lower.contains("done") && !isBullet) || (lower.contains("completed") && !isBullet) -> {
+                isDoneHeader(lower, isBullet) -> {
                     currentSection = 3
                     continue
                 }
-                lower.contains("kế hoạch dự kiến") || lower.contains("việc dự kiến") || (lower.contains("planned") && !isBullet) || (lower.contains("upcoming") && !isBullet) -> {
+                isPlannedHeader(lower, isBullet) -> {
                     currentSection = 4
                     continue
                 }
-                !isBullet && (
-                    lower.contains("phần 2") ||
-                    lower.contains("part 2") ||
-                    lower.contains("bảng điều phối") ||
-                    lower.contains("task dispatch board") ||
-                    lower.contains("nhiệm vụ điều phối")
-                ) -> {
+                isPart2BoardHeader(lower, isBullet) -> {
                     currentSection = 2
                     continue
                 }
@@ -251,16 +371,7 @@ object SummaryParser {
             // Section 1 parsing: Advice / Gentle message / Bullet points / Numbered lists / Paragraphs
             if (currentSection in 0..1) {
                 // Skip standalone label lines that are solely a header without content
-                val isStandaloneHeader = !isBullet && (
-                    lower in listOf(
-                        "lời khuyên:", "lời nhắn:", "lưu ý:", "chú ý:",
-                        "lưu ý tinh tế:", "điểm cần chú ý:", "lời nhắn nhẹ nhàng:",
-                        "góc nhìn phản biện & lời khuyên:", "lời nhắn & điểm lưu ý:",
-                        "gentle message:", "core summary:", "strategic advice:",
-                        "quick note:", "subtle notes:", "points of attention:",
-                        "critical questions:", "urgent notice:", "advice:", "note:", "notes:"
-                    )
-                )
+                val isStandaloneHeader = !isBullet && lower in STANDALONE_ADVICE_HEADERS
                 if (isStandaloneHeader) {
                     currentSection = 1
                     continue

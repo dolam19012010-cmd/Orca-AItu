@@ -122,6 +122,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -132,6 +134,7 @@ import com.orca.orcaauto.data.local.NotificationEntity
 import com.orca.orcaauto.data.local.SmartAlarmEntity
 import com.orca.orcaauto.data.local.SmartAlarmStatus
 import com.orca.orcaauto.data.local.SummaryHistoryEntity
+import com.orca.orcaauto.data.local.getBestSummaryForSession
 import com.orca.orcaauto.data.preferences.UserPreferences
 import com.orca.orcaauto.domain.alarm.AlarmCascadeMode
 import com.orca.orcaauto.domain.alarm.SystemAlarmHelper
@@ -170,7 +173,7 @@ fun HistoryScreen() {
     val preferences = remember { com.orca.orcaauto.data.preferences.UserPreferences.getInstance(context) }
     val wallpaperPath by preferences.wallpaperPathFlow.collectAsState()
     val voiceManager = remember { VoiceBriefingManager.getInstance(context) }
-    var selectedTab by remember { mutableIntStateOf(0) }
+    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
 
     androidx.compose.runtime.DisposableEffect(Unit) {
         onDispose {
@@ -180,7 +183,6 @@ fun HistoryScreen() {
 
     val shiftSummaries by database.summaryDao().getAllSummariesFlow().collectAsState(initial = emptyList())
     val recentNotifications by database.notificationDao().getRecentNotificationsFlow().collectAsState(initial = emptyList())
-    val dailyMemories by database.dailyMemoryDao().getAllDailyMemoriesFlow().collectAsState(initial = emptyList())
     val smartAlarms by database.smartAlarmDao().getAllAlarmsFlow().collectAsState(initial = emptyList())
     val allAlarmMap = remember(smartAlarms) {
         smartAlarms.associateBy { it.alarmId }
@@ -205,6 +207,8 @@ fun HistoryScreen() {
     val thinkingLevel by preferences.assistantThinkingLevelFlow.collectAsState()
     val strings = LocalAppStrings.current
     val isEn = strings.language == AppLanguage.ENGLISH
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
 
     val summaryListState = rememberLazyListState()
     val notificationListState = rememberLazyListState()
@@ -271,7 +275,7 @@ fun HistoryScreen() {
             Tab(
                 selected = selectedTab == 0,
                 onClick = { selectedTab = 0 },
-                text = { Text("${strings.tabSummaries} (${shiftSummaries.size})", fontWeight = FontWeight.Medium, fontSize = 13.sp) }
+                text = { Text("${strings.tabSummaries} (${displayedSummaries.size})", fontWeight = FontWeight.Medium, fontSize = 13.sp) }
             )
             Tab(
                 selected = selectedTab == 1,
@@ -335,7 +339,15 @@ fun HistoryScreen() {
                                     TwoPartSummaryCard(
                                         item = item,
                                         allAlarmMap = allAlarmMap,
-                                        onCopy = { copyToClipboard(context, item.summaryContent) }
+                                        onCopy = {
+                                            copyToClipboard(
+                                                context,
+                                                SummaryParser.formatForClipboard(
+                                                    SummaryParser.parse(item.summaryContent),
+                                                    isEn
+                                                )
+                                            )
+                                        }
                                     )
                                 }
                             }
@@ -487,9 +499,20 @@ fun HistoryScreen() {
                             // Compact Bubble Action Pill
                             Surface(
                                 onClick = {
+                                    if (!FloatingBubbleService.isOverlayPermissionGranted(context)) {
+                                        Toast.makeText(
+                                            context,
+                                            if (isEn) "Please grant 'Display over other apps' permission to open the chat bubble." else "Vui lòng cấp quyền 'Hiển thị trên ứng dụng khác' để mở bong bóng chat.",
+                                            Toast.LENGTH_LONG
+                                        ).show()
+                                        try {
+                                            context.startActivity(FloatingBubbleService.getOverlayPermissionIntent(context))
+                                        } catch (_: Throwable) {}
+                                        return@Surface
+                                    }
                                     scope.launch {
                                         val selectedId = preferences.getSelectedSessionId()
-                                        val sessionRecord = database.summaryDao().getLatestSummaryForSession(selectedId)
+                                        val sessionRecord = database.summaryDao().getBestSummaryForSession(selectedId)
                                         val activeSession = preferences.getSelectedSession()
                                         val content = sessionRecord?.summaryContent?.ifBlank { null }
                                             ?: (if (isEn) "No summaries recorded yet for session ${activeSession.name}. Bubble is ready!" else "Chưa có bản tóm tắt nào cho ca ${activeSession.name}. Bong bóng đã sẵn sàng!")
@@ -564,6 +587,8 @@ fun HistoryScreen() {
                                         if (trimmed.isNotBlank()) {
                                             activeChatQuery = trimmed
                                             promptInput = ""
+                                            focusManager.clearFocus()
+                                            keyboardController?.hide()
                                             showAssistantSheet = true
                                         }
                                     }
@@ -577,6 +602,8 @@ fun HistoryScreen() {
                                     val trimmed = promptInput.trim()
                                     activeChatQuery = trimmed.ifBlank { null }
                                     promptInput = ""
+                                    focusManager.clearFocus()
+                                    keyboardController?.hide()
                                     showAssistantSheet = true
                                 },
                                 modifier = Modifier
@@ -785,6 +812,13 @@ fun TwoPartSummaryCard(
     var taskToConfirmRestore by remember { mutableStateOf<Pair<TaskItem, String>?>(null) }
     var taskToConfirmUncomplete by remember { mutableStateOf<Pair<TaskItem, String>?>(null) }
     val localStatusOverrides = remember { mutableStateMapOf<String, SmartAlarmStatus>() }
+
+    LaunchedEffect(allAlarmMap) {
+        val settled = localStatusOverrides.entries.filter { (title, overrideStatus) ->
+            SystemAlarmHelper.findMatchingAlarm(title, allAlarmMap)?.status == overrideStatus
+        }.map { it.key }
+        settled.forEach { localStatusOverrides.remove(it) }
+    }
 
     val voiceManager = remember { VoiceBriefingManager.getInstance(context) }
     val isSpeaking by voiceManager.isSpeakingFlow.collectAsState()
@@ -1031,59 +1065,64 @@ fun TwoPartSummaryCard(
                 }
 
                 // ================= PHẦN 2: BẢNG NHIỆM VỤ =================
-                if (parsed.totalTaskCount > 0) {
+                val isTaskEffectivelyCompleted: (TaskItem) -> Boolean = { t ->
+                    val (_, alarm) = getAlarmInfoForTask(t)
+                    alarm?.status == SmartAlarmStatus.COMPLETED || t.status == TaskStatus.DONE
+                }
+                val isTaskEffectivelyCancelled: (TaskItem) -> Boolean = { t ->
+                    val (_, alarm) = getAlarmInfoForTask(t)
+                    alarm?.status == SmartAlarmStatus.CANCELLED
+                }
+
+                val sortedToDo = remember(parsed.tasksToDo, allAlarmMap, pinVersion) {
+                    parsed.tasksToDo
+                        .filterNot { isTaskEffectivelyCompleted(it) || isTaskEffectivelyCancelled(it) }
+                        .sortedByDescending { prefs.isTaskPinned(it.title) }
+                }
+                val sortedPlanned = remember(parsed.tasksPlanned, allAlarmMap, pinVersion) {
+                    parsed.tasksPlanned
+                        .filterNot { isTaskEffectivelyCompleted(it) || isTaskEffectivelyCancelled(it) }
+                        .sortedByDescending { prefs.isTaskPinned(it.title) }
+                }
+                val allTasksDone = remember(parsed, allAlarmMap, pinVersion) {
+                    val fromDone = parsed.tasksDone.filterNot { isTaskEffectivelyCancelled(it) }
+                    val completedFromToDo = parsed.tasksToDo.filter { isTaskEffectivelyCompleted(it) && !isTaskEffectivelyCancelled(it) }
+                    val completedFromPlanned = parsed.tasksPlanned.filter { isTaskEffectivelyCompleted(it) && !isTaskEffectivelyCancelled(it) }
+                    (fromDone + completedFromToDo + completedFromPlanned).distinctBy { it.title }
+                }
+                val cancelledTasks = remember(parsed, allAlarmMap, pinVersion) {
+                    (parsed.tasksToDo + parsed.tasksPlanned + parsed.tasksDone)
+                        .filter { isTaskEffectivelyCancelled(it) }
+                        .distinctBy { it.title }
+                }
+                var showCancelledTasks by remember(item.id) { mutableStateOf(false) }
+
+                if (sortedToDo.isNotEmpty() || sortedPlanned.isNotEmpty() || allTasksDone.isNotEmpty() || cancelledTasks.isNotEmpty()) {
                     Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .border(1.dp, GlassBorderSubtle, RoundedCornerShape(12.dp)),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = GlassSurfaceCard)
-                ) {
-                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Default.PendingActions,
-                                contentDescription = null,
-                                tint = AccentEmerald,
-                                modifier = Modifier.size(15.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = if (isEn) "📋 Tasks & Plans" else "📋 Nhiệm vụ & Kế hoạch",
-                                color = AccentEmerald,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, GlassBorderSubtle, RoundedCornerShape(12.dp)),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = GlassSurfaceCard)
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.PendingActions,
+                                    contentDescription = null,
+                                    tint = AccentEmerald,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = if (isEn) "📋 Tasks & Plans" else "📋 Nhiệm vụ & Kế hoạch",
+                                    color = AccentEmerald,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
 
-                        // Unified Task List: Pinned tasks first, then To-Do, Planned, Done
-                        val isTaskEffectivelyCompleted: (TaskItem) -> Boolean = { t ->
-                            val (_, alarm) = getAlarmInfoForTask(t)
-                            alarm?.status == SmartAlarmStatus.COMPLETED || t.status == TaskStatus.DONE
-                        }
-                        val isTaskEffectivelyCancelled: (TaskItem) -> Boolean = { t ->
-                            val (_, alarm) = getAlarmInfoForTask(t)
-                            alarm?.status == SmartAlarmStatus.CANCELLED
-                        }
-
-                        val sortedToDo = remember(parsed.tasksToDo, allAlarmMap, pinVersion) {
-                            parsed.tasksToDo
-                                .filterNot { isTaskEffectivelyCompleted(it) || isTaskEffectivelyCancelled(it) }
-                                .sortedByDescending { prefs.isTaskPinned(it.title) }
-                        }
-                        val sortedPlanned = remember(parsed.tasksPlanned, allAlarmMap, pinVersion) {
-                            parsed.tasksPlanned
-                                .filterNot { isTaskEffectivelyCompleted(it) || isTaskEffectivelyCancelled(it) }
-                                .sortedByDescending { prefs.isTaskPinned(it.title) }
-                        }
-                        val allTasksDone = remember(parsed, allAlarmMap, pinVersion) {
-                            val fromDone = parsed.tasksDone.filterNot { isTaskEffectivelyCancelled(it) }
-                            val completedFromToDo = parsed.tasksToDo.filter { isTaskEffectivelyCompleted(it) && !isTaskEffectivelyCancelled(it) }
-                            val completedFromPlanned = parsed.tasksPlanned.filter { isTaskEffectivelyCompleted(it) && !isTaskEffectivelyCancelled(it) }
-                            (fromDone + completedFromToDo + completedFromPlanned).distinctBy { it.title }
-                        }
-
-                        sortedToDo.forEach { task ->
+                            sortedToDo.forEach { task ->
                             val (alarmId, alarmEntity) = getAlarmInfoForTask(task)
                             val isTaskPinned = remember(task.title, pinVersion) { prefs.isTaskPinned(task.title) }
                             SwipeableTaskItemRow(
@@ -1167,6 +1206,41 @@ fun TwoPartSummaryCard(
                                     taskToConfirmUncomplete = Pair(task, alarmId)
                                 }
                             )
+                        }
+
+                        if (cancelledTasks.isNotEmpty()) {
+                            Text(
+                                text = if (showCancelledTasks) {
+                                    if (isEn) "Cancelled (${cancelledTasks.size}) ▴" else "Đã hủy (${cancelledTasks.size}) ▴"
+                                } else {
+                                    if (isEn) "Cancelled (${cancelledTasks.size}) ▾" else "Đã hủy (${cancelledTasks.size}) ▾"
+                                },
+                                color = TextMutedDark,
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier
+                                    .clickable { showCancelledTasks = !showCancelledTasks }
+                                    .padding(top = 4.dp, bottom = 2.dp)
+                            )
+                            if (showCancelledTasks) {
+                                cancelledTasks.forEach { task ->
+                                    val (alarmId, alarmEntity) = getAlarmInfoForTask(task)
+                                    SwipeableTaskItemRow(
+                                        task = task,
+                                        badgeColor = AccentRose,
+                                        alarmEntity = alarmEntity,
+                                        isPinned = false,
+                                        onQuickAlarmToggle = {},
+                                        onOpenAlarmDetail = {},
+                                        onComplete = {},
+                                        onRequestCancel = {},
+                                        onRequestRestore = {
+                                            taskToConfirmRestore = Pair(task, alarmId)
+                                        },
+                                        onRequestUncomplete = {}
+                                    )
+                                }
+                            }
                         }
                     }
                 }

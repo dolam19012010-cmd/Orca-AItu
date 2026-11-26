@@ -35,6 +35,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -64,9 +65,14 @@ import com.orca.orcaauto.ui.theme.TextMutedDark
 import com.orca.orcaauto.ui.theme.TextPrimaryDark
 import com.orca.orcaauto.ui.theme.TextSecondaryDark
 
+data class PendingNavEvent(
+    val target: String,
+    val nonce: Long = System.nanoTime()
+)
+
 class MainActivity : ComponentActivity() {
 
-    private val navTargetState = mutableStateOf<String?>(null)
+    private val navEventState = mutableStateOf<PendingNavEvent?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -79,7 +85,10 @@ class MainActivity : ComponentActivity() {
                         modifier = Modifier.fillMaxSize(),
                         color = MaterialTheme.colorScheme.background
                     ) {
-                        MainAppNavHost(navigationTarget = navTargetState.value)
+                        MainAppNavHost(
+                            navEvent = navEventState.value,
+                            onNavEventConsumed = { navEventState.value = null }
+                        )
                     }
                 }
             }
@@ -98,7 +107,7 @@ class MainActivity : ComponentActivity() {
     private fun handleNavigationIntent(intent: android.content.Intent?) {
         val target = intent?.getStringExtra("navigate_to")
         if (!target.isNullOrBlank()) {
-            navTargetState.value = target
+            navEventState.value = PendingNavEvent(target)
         }
         val targetSessionId = intent?.getStringExtra("target_session_id")
         if (!targetSessionId.isNullOrBlank()) {
@@ -121,21 +130,42 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun MainAppNavHost(navigationTarget: String? = null) {
+fun MainAppNavHost(
+    navEvent: PendingNavEvent? = null,
+    onNavEventConsumed: () -> Unit = {}
+) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val preferences = remember { UserPreferences.getInstance(context) }
 
     // Screen.History is the default landing / home screen
-    var currentScreen by remember { mutableStateOf<Screen>(Screen.History) }
-
-    androidx.compose.runtime.LaunchedEffect(navigationTarget) {
-        when (navigationTarget) {
-            "advanced_sessions", "settings" -> currentScreen = Screen.Settings
-            "history" -> currentScreen = Screen.History
-            "dashboard" -> currentScreen = Screen.Dashboard
-            "notes", "assistant" -> currentScreen = Screen.Notes
+    var currentScreenRoute by rememberSaveable { mutableStateOf(Screen.History.route) }
+    val currentScreen = remember(currentScreenRoute) {
+        when (currentScreenRoute) {
+            Screen.Notes.route -> Screen.Notes
+            Screen.Settings.route -> Screen.Settings
+            else -> Screen.History
         }
+    }
+    var pendingSettingsCategory by remember { mutableStateOf<Int?>(null) }
+    var pendingOpenNotesAssistant by remember { mutableStateOf(false) }
+
+    androidx.compose.runtime.LaunchedEffect(navEvent) {
+        val event = navEvent ?: return@LaunchedEffect
+        when (event.target) {
+            "advanced_sessions" -> {
+                currentScreenRoute = Screen.Settings.route
+                pendingSettingsCategory = 99
+            }
+            "settings" -> currentScreenRoute = Screen.Settings.route
+            "history", "dashboard" -> currentScreenRoute = Screen.History.route
+            "assistant" -> {
+                currentScreenRoute = Screen.Notes.route
+                pendingOpenNotesAssistant = true
+            }
+            "notes" -> currentScreenRoute = Screen.Notes.route
+        }
+        onNavEventConsumed()
     }
 
     // System Permissions missing check for the Settings badge indicator
@@ -220,7 +250,7 @@ fun MainAppNavHost(navigationTarget: String? = null) {
                             val selected = currentScreen == screen
                             NavigationBarItem(
                                 selected = selected,
-                                onClick = { currentScreen = screen },
+                                onClick = { currentScreenRoute = screen.route },
                                 icon = {
                                     if (screen == Screen.Settings && isMissingPermissions) {
                                         BadgedBox(
@@ -275,10 +305,12 @@ fun MainAppNavHost(navigationTarget: String? = null) {
                         when (targetScreen) {
                             is Screen.History -> HistoryScreen()
                             is Screen.Notes -> NotesScreen(
-                                initialOpenAssistant = navigationTarget == "assistant"
+                                initialOpenAssistant = pendingOpenNotesAssistant,
+                                onInitialAssistantConsumed = { pendingOpenNotesAssistant = false }
                             )
                             is Screen.Settings -> SettingsScreen(
-                                initialExpandedCategory = if (navigationTarget == "advanced_sessions") 99 else null
+                                initialExpandedCategory = pendingSettingsCategory,
+                                onInitialCategoryConsumed = { pendingSettingsCategory = null }
                             )
                             is Screen.Dashboard -> HistoryScreen()
                         }

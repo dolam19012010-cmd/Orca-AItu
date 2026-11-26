@@ -19,6 +19,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -39,11 +41,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.ui.platform.LocalTextToolbar
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -185,6 +191,8 @@ fun AssistantChatSheet(
 
     val userPrefs = remember { UserPreferences.getInstance(context) }
     val thinkingLevel by userPrefs.assistantThinkingLevelFlow.collectAsState()
+    val strings = LocalAppStrings.current
+    val isEn = strings.language == AppLanguage.ENGLISH
 
     val listState = rememberLazyListState()
 
@@ -226,7 +234,7 @@ fun AssistantChatSheet(
                 isStreaming = true,
                 state = AssistantUiState(
                     step = AssistantStep.STAGE_1_PACKING_INDEX,
-                    stepDescription = "Đang phân tích bối cảnh..."
+                    stepDescription = if (isEn) "Analyzing context..." else "Đang phân tích bối cảnh..."
                 )
             )
             messages.add(initialAssistantMsg)
@@ -266,7 +274,10 @@ fun AssistantChatSheet(
                                         if (!isStreamActive.get()) return@summarizeSession
                                         val cleanLive = synchronized(bufferLock) {
                                             liveBuffer.append(delta)
-                                            CommandStripper.cleanLive(liveBuffer.toString())
+                                            SummaryParser.extractLiveAdvicePreview(
+                                                CommandStripper.cleanLive(liveBuffer.toString()),
+                                                isEnglish = isEn
+                                            )
                                         }
                                         val now = System.currentTimeMillis()
                                         val prev = lastEmitMs.get()
@@ -280,7 +291,7 @@ fun AssistantChatSheet(
                                                         isStreaming = true,
                                                         state = AssistantUiState(
                                                             step = AssistantStep.STAGE_4_STREAMING_ANSWER,
-                                                            stepDescription = "Đang tóm tắt phiên '${targetSession.name}'...",
+                                                            stepDescription = if (isEn) "Summarizing '${targetSession.name}'..." else "Đang tóm tắt phiên '${targetSession.name}'...",
                                                             streamedContentClean = cleanLive
                                                         )
                                                     )
@@ -292,7 +303,10 @@ fun AssistantChatSheet(
                                                 if (!isStreamActive.get()) return@launch
                                                 lastEmitMs.set(System.currentTimeMillis())
                                                 val latestClean = synchronized(bufferLock) {
-                                                    CommandStripper.cleanLive(liveBuffer.toString())
+                                                    SummaryParser.extractLiveAdvicePreview(
+                                                        CommandStripper.cleanLive(liveBuffer.toString()),
+                                                        isEnglish = isEn
+                                                    )
                                                 }
                                                 updateAssistantMessage { msg ->
                                                     msg.copy(
@@ -300,7 +314,7 @@ fun AssistantChatSheet(
                                                         isStreaming = true,
                                                         state = AssistantUiState(
                                                             step = AssistantStep.STAGE_4_STREAMING_ANSWER,
-                                                            stepDescription = "Đang tóm tắt phiên '${targetSession.name}'...",
+                                                            stepDescription = if (isEn) "Summarizing '${targetSession.name}'..." else "Đang tóm tắt phiên '${targetSession.name}'...",
                                                             streamedContentClean = latestClean
                                                         )
                                                     )
@@ -451,19 +465,20 @@ fun AssistantChatSheet(
                         verticalArrangement = Arrangement.spacedBy(14.dp),
                         contentPadding = PaddingValues(top = 8.dp, bottom = 16.dp)
                     ) {
-                        items(
+                        itemsIndexed(
                             items = messages,
-                            key = { it.id }
-                        ) { message ->
+                            key = { _, message -> message.id }
+                        ) { index, message ->
                             if (message.isUser) {
                                 UserChatBubble(message = message)
                             } else {
                                 AssistantChatBubble(
                                     message = message,
                                     onRetry = {
-                                        val lastUserMsg = messages.lastOrNull { it.isUser }?.text
-                                        if (!lastUserMsg.isNullOrBlank()) {
-                                            sendMessage(lastUserMsg)
+                                        val promptToRetry = messages.take(index).lastOrNull { it.isUser }?.text
+                                            ?: messages.lastOrNull { it.isUser }?.text
+                                        if (!promptToRetry.isNullOrBlank()) {
+                                            sendMessage(promptToRetry)
                                         }
                                     }
                                 )
@@ -495,6 +510,28 @@ fun AssistantChatSheet(
                 onCancel = {
                     activeJob?.cancel()
                     isProcessing = false
+                    val idx = messages.indexOfLast { !it.isUser && it.isStreaming }
+                    if (idx != -1) {
+                        val msg = messages[idx]
+                        messages[idx] = if (msg.text.isBlank()) {
+                            msg.copy(
+                                isStreaming = false,
+                                state = AssistantUiState(
+                                    step = AssistantStep.ERROR,
+                                    errorMessage = if (isEn) "Response cancelled." else "Đã dừng phản hồi."
+                                )
+                            )
+                        } else {
+                            msg.copy(
+                                isStreaming = false,
+                                state = AssistantUiState(
+                                    step = AssistantStep.COMPLETED,
+                                    stepDescription = if (isEn) "Stopped" else "Đã dừng",
+                                    streamedContentClean = msg.text
+                                )
+                            )
+                        }
+                    }
                 }
             )
         }
@@ -608,9 +645,31 @@ private fun AssistantChatBubble(
     message: AssistantChatMessage,
     onRetry: () -> Unit
 ) {
+    val context = LocalContext.current
+    val strings = LocalAppStrings.current
+    val isEn = strings.language == AppLanguage.ENGLISH
     val state = message.state
     val step = state?.step ?: AssistantStep.IDLE
     val isStillStreaming = message.isStreaming
+
+    val parsedTasks = remember(message.text, isStillStreaming) {
+        if (!message.isUser && !isStillStreaming && message.text.isNotBlank()) {
+            SummaryParser.parse(message.text)
+        } else null
+    }
+    val hasStructuredOutput = remember(message.text, parsedTasks, isStillStreaming) {
+        !isStillStreaming && parsedTasks != null && (
+            parsedTasks.totalTaskCount > 0 || SummaryParser.hasStructuredHeaders(message.text)
+        )
+    }
+    val displayText = remember(message.text, parsedTasks, hasStructuredOutput) {
+        if (hasStructuredOutput && parsedTasks != null) {
+            SummaryParser.cleanAdviceText(parsedTasks.conciseAdvice)
+                .ifBlank { parsedTasks.conciseAdvice.ifBlank { message.text } }
+        } else {
+            message.text
+        }
+    }
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -640,7 +699,7 @@ private fun AssistantChatBubble(
                 )
                 .padding(14.dp)
         ) {
-            // Header row with Icon and status
+            // Header row with Icon, Model tag & Copy action
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -655,21 +714,51 @@ private fun AssistantChatBubble(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "Trợ lý AI",
+                        text = if (isEn) "AI Assistant" else "Trợ lý AI",
                         color = AccentCyan,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold
                     )
                 }
 
-                // Model name tag if completed
-                val modelName = state?.activeUsedKey?.modelName
-                if (!modelName.isNullOrBlank()) {
-                    Text(
-                        text = modelName,
-                        color = TextMutedDark,
-                        fontSize = 11.sp
-                    )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    val modelName = state?.activeUsedKey?.modelName
+                    if (!modelName.isNullOrBlank()) {
+                        Text(
+                            text = modelName,
+                            color = TextMutedDark,
+                            fontSize = 11.sp
+                        )
+                    }
+                    if (!isStillStreaming && displayText.isNotBlank()) {
+                        IconButton(
+                            onClick = {
+                                val copyText = if (parsedTasks != null && parsedTasks.totalTaskCount > 0) {
+                                    SummaryParser.formatForClipboard(parsedTasks, isEn)
+                                } else {
+                                    displayText
+                                }
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                clipboard.setPrimaryClip(ClipData.newPlainText("Orca Assistant", copyText))
+                                Toast.makeText(
+                                    context,
+                                    if (isEn) "Copied response" else "Đã sao chép phản hồi",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            },
+                            modifier = Modifier.size(26.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ContentCopy,
+                                contentDescription = if (isEn) "Copy" else "Sao chép",
+                                tint = TextSecondaryDark,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                    }
                 }
             }
 
@@ -689,20 +778,15 @@ private fun AssistantChatBubble(
                 Spacer(modifier = Modifier.height(8.dp))
             }
 
-            // Streamed Answer Content
-            if (message.text.isNotBlank()) {
+            // Streamed / Final Answer Content
+            if (displayText.isNotBlank()) {
                 SelectionContainer {
-                    Row {
-                        Text(
-                            text = message.text,
-                            color = TextPrimaryDark,
-                            fontSize = 14.5.sp,
-                            lineHeight = 21.sp
-                        )
-                        if (isStillStreaming) {
-                            StreamingCursor()
-                        }
-                    }
+                    Text(
+                        text = if (isStillStreaming) "$displayText ▌" else displayText,
+                        color = TextPrimaryDark,
+                        fontSize = 14.5.sp,
+                        lineHeight = 21.sp
+                    )
                 }
             } else if (isStillStreaming &&
                 (step == AssistantStep.STAGE_4_STREAMING_ANSWER || step == AssistantStep.STAGE_5_EXECUTING_ACTIONS)
@@ -715,7 +799,7 @@ private fun AssistantChatBubble(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Đang nhả chữ câu trả lời...",
+                        text = if (isEn) "Streaming response..." else "Đang nhả chữ câu trả lời...",
                         color = TextSecondaryDark,
                         fontSize = 13.sp
                     )
@@ -734,17 +818,10 @@ private fun AssistantChatBubble(
                 ExecutedActionsSummary(actions = state.executedActions)
             }
 
-            // Render parsed tasks if present in AI message
-            val parsedTasks = remember(message.text, isStillStreaming) {
-                if (!message.isUser && !isStillStreaming && message.text.isNotBlank()) {
-                    SummaryParser.parse(message.text)
-                } else null
-            }
-
             if (parsedTasks != null && (parsedTasks.tasksToDo.isNotEmpty() || parsedTasks.tasksPlanned.isNotEmpty() || parsedTasks.tasksDone.isNotEmpty())) {
                 Spacer(modifier = Modifier.height(10.dp))
                 Text(
-                    text = "Nhiệm vụ & Kế hoạch trích xuất",
+                    text = if (isEn) "Extracted Tasks & Plans" else "Nhiệm vụ & Kế hoạch trích xuất",
                     color = AccentCyan,
                     fontSize = 11.5.sp,
                     fontWeight = FontWeight.Bold
@@ -767,7 +844,7 @@ private fun AssistantChatBubble(
             if (state != null && state.shownNoteCards.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(
-                    text = "Ghi chú liên quan",
+                    text = if (isEn) "Related Notes" else "Ghi chú liên quan",
                     color = AccentCyan,
                     fontSize = 11.5.sp,
                     fontWeight = FontWeight.Bold
@@ -784,7 +861,7 @@ private fun AssistantChatBubble(
             if (step == AssistantStep.ERROR || !state?.errorMessage.isNullOrBlank()) {
                 Spacer(modifier = Modifier.height(8.dp))
                 ErrorMessageCard(
-                    errorMessage = state?.errorMessage ?: "Đã xảy ra lỗi không xác định",
+                    errorMessage = state?.errorMessage ?: (if (isEn) "Unknown error occurred" else "Đã xảy ra lỗi không xác định"),
                     onRetry = onRetry
                 )
             }
@@ -840,6 +917,7 @@ private fun ChatTaskCard(task: TaskItem, badgeColor: Color) {
 
 @Composable
 private fun Round1ThinkingIndicator(step: AssistantStep, description: String) {
+    val isEn = LocalAppStrings.current.language == AppLanguage.ENGLISH
     val infiniteTransition = rememberInfiniteTransition(label = "Pulsing")
     val alphaAnim by infiniteTransition.animateFloat(
         initialValue = 0.4f,
@@ -871,7 +949,7 @@ private fun Round1ThinkingIndicator(step: AssistantStep, description: String) {
             )
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = if (description.isNotBlank()) description else "Đang tìm thông tin liên quan...",
+                text = if (description.isNotBlank()) description else if (isEn) "Searching related information..." else "Đang tìm thông tin liên quan...",
                 color = AccentCyan,
                 fontSize = 12.5.sp,
                 fontWeight = FontWeight.Medium
@@ -882,6 +960,7 @@ private fun Round1ThinkingIndicator(step: AssistantStep, description: String) {
 
 @Composable
 private fun ActionPendingIndicator(description: String) {
+    val isEn = LocalAppStrings.current.language == AppLanguage.ENGLISH
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -897,7 +976,7 @@ private fun ActionPendingIndicator(description: String) {
         )
         Spacer(modifier = Modifier.width(8.dp))
         Text(
-            text = description.ifBlank { "Đang cập nhật ghi chú..." },
+            text = description.ifBlank { if (isEn) "Updating notes..." else "Đang cập nhật ghi chú..." },
             color = AccentAmber,
             fontSize = 12.sp,
             fontWeight = FontWeight.Medium
@@ -907,6 +986,7 @@ private fun ActionPendingIndicator(description: String) {
 
 @Composable
 private fun ReasoningAccordion(thoughtText: String) {
+    val isEn = LocalAppStrings.current.language == AppLanguage.ENGLISH
     var isExpanded by remember { mutableStateOf(false) }
     val textToolbar = LocalTextToolbar.current
 
@@ -942,7 +1022,7 @@ private fun ReasoningAccordion(thoughtText: String) {
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "Quá trình suy luận",
+                        text = if (isEn) "Reasoning Process" else "Quá trình suy luận",
                         color = AccentAmber,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold
@@ -983,27 +1063,6 @@ private fun ReasoningAccordion(thoughtText: String) {
             }
         }
     }
-}
-
-@Composable
-private fun StreamingCursor() {
-    val infiniteTransition = rememberInfiniteTransition(label = "Cursor")
-    val alpha by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(400),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "CursorAlpha"
-    )
-    Text(
-        text = " ▌",
-        color = AccentCyan,
-        fontSize = 14.sp,
-        fontWeight = FontWeight.Bold,
-        modifier = Modifier.alpha(alpha)
-    )
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -1054,6 +1113,7 @@ private fun ExecutedActionsSummary(actions: List<NoteCommandResult>) {
 @Composable
 private fun LocalNoteCard(note: SharedNoteEntity) {
     val context = LocalContext.current
+    val isEn = LocalAppStrings.current.language == AppLanguage.ENGLISH
     val dateFormat = remember { SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()) }
     val formattedDate = remember(note.updatedAt) {
         try {
@@ -1111,7 +1171,7 @@ private fun LocalNoteCard(note: SharedNoteEntity) {
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = "Riêng tư",
+                                    text = if (isEn) "Private" else "Riêng tư",
                                     color = AccentCyan,
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold
@@ -1120,7 +1180,7 @@ private fun LocalNoteCard(note: SharedNoteEntity) {
                         }
                     } else {
                         Text(
-                            text = "GHI CHÚ #${note.id}",
+                            text = if (isEn) "NOTE #${note.id}" else "GHI CHÚ #${note.id}",
                             color = TextSecondaryDark,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold
@@ -1133,13 +1193,13 @@ private fun LocalNoteCard(note: SharedNoteEntity) {
                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                         val clip = ClipData.newPlainText("Note Content", "${note.title}\n\n${note.content}")
                         clipboard.setPrimaryClip(clip)
-                        Toast.makeText(context, "Đã sao chép nội dung ghi chú", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, if (isEn) "Copied note content" else "Đã sao chép nội dung ghi chú", Toast.LENGTH_SHORT).show()
                     },
                     modifier = Modifier.size(28.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.ContentCopy,
-                        contentDescription = "Sao chép",
+                        contentDescription = if (isEn) "Copy" else "Sao chép",
                         tint = TextSecondaryDark,
                         modifier = Modifier.size(15.dp)
                     )
@@ -1161,7 +1221,7 @@ private fun LocalNoteCard(note: SharedNoteEntity) {
             // Full content
             SelectionContainer {
                 Text(
-                    text = note.content.ifBlank { "(Ghi chú chưa có nội dung)" },
+                    text = note.content.ifBlank { if (isEn) "(Empty note)" else "(Ghi chú chưa có nội dung)" },
                     color = if (note.content.isBlank()) TextMutedDark else TextSecondaryDark,
                     fontSize = 13.sp,
                     lineHeight = 18.sp
@@ -1171,7 +1231,7 @@ private fun LocalNoteCard(note: SharedNoteEntity) {
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "Cập nhật lúc: $formattedDate",
+                text = if (isEn) "Updated: $formattedDate" else "Cập nhật lúc: $formattedDate",
                 color = TextMutedDark,
                 fontSize = 11.sp
             )
@@ -1181,6 +1241,7 @@ private fun LocalNoteCard(note: SharedNoteEntity) {
 
 @Composable
 private fun ErrorMessageCard(errorMessage: String, onRetry: () -> Unit) {
+    val strings = LocalAppStrings.current
     Card(
         shape = RoundedCornerShape(10.dp),
         colors = CardDefaults.cardColors(containerColor = AccentRose.copy(alpha = 0.12f)),
@@ -1223,7 +1284,7 @@ private fun ErrorMessageCard(errorMessage: String, onRetry: () -> Unit) {
                         modifier = Modifier.size(14.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Thử lại", color = AccentCyan, fontSize = 12.sp)
+                    Text(strings.retry, color = AccentCyan, fontSize = 12.sp)
                 }
             }
         }
@@ -1232,9 +1293,11 @@ private fun ErrorMessageCard(errorMessage: String, onRetry: () -> Unit) {
 
 @Composable
 private fun EmptyConversationView(onSelectSuggestion: (String) -> Unit) {
+    val isEn = LocalAppStrings.current.language == AppLanguage.ENGLISH
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
@@ -1258,7 +1321,7 @@ private fun EmptyConversationView(onSelectSuggestion: (String) -> Unit) {
         Spacer(modifier = Modifier.height(14.dp))
 
         Text(
-            text = "Trợ lý Ghi chú & Tin nhắn",
+            text = if (isEn) "Messages & Notes Assistant" else "Trợ lý Ghi chú & Tin nhắn",
             color = TextPrimaryDark,
             fontSize = 18.sp,
             fontWeight = FontWeight.Bold
@@ -1267,7 +1330,11 @@ private fun EmptyConversationView(onSelectSuggestion: (String) -> Unit) {
         Spacer(modifier = Modifier.height(6.dp))
 
         Text(
-            text = "Hỏi nhanh về tin nhắn gần đây, tìm lại hoặc cập nhật ghi chú cá nhân — nội dung riêng tư luôn được giữ an toàn trên máy.",
+            text = if (isEn) {
+                "Summarize messages quickly, review or update your personal notes — private content always stays safely on-device."
+            } else {
+                "Hỏi nhanh về tin nhắn gần đây, tìm lại hoặc cập nhật ghi chú cá nhân — nội dung riêng tư luôn được giữ an toàn trên máy."
+            },
             color = TextSecondaryDark,
             fontSize = 13.sp,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
@@ -1282,18 +1349,27 @@ private fun EmptyConversationView(onSelectSuggestion: (String) -> Unit) {
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
-                text = "Gợi ý câu hỏi:",
+                text = if (isEn) "Suggested prompts:" else "Gợi ý câu hỏi:",
                 color = TextMutedDark,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold
             )
 
-            val suggestions = listOf(
-                "Tóm tắt các tin nhắn quan trọng trong 24 giờ qua",
-                "Xem lại ghi chú riêng tư của tôi",
-                "Tạo ghi chú mới: Lịch công tác tuần này",
-                "Tổng quan danh mục kho ghi chú hiện có"
-            )
+            val suggestions = if (isEn) {
+                listOf(
+                    "Summarize important messages from the last 24 hours",
+                    "Review my private notes",
+                    "Create a new note: Weekly work schedule",
+                    "Overview of my notes catalog"
+                )
+            } else {
+                listOf(
+                    "Tóm tắt các tin nhắn quan trọng trong 24 giờ qua",
+                    "Xem lại ghi chú riêng tư của tôi",
+                    "Tạo ghi chú mới: Lịch công tác tuần này",
+                    "Tổng quan danh mục kho ghi chú hiện có"
+                )
+            }
 
             suggestions.forEach { prompt ->
                 Surface(
@@ -1336,6 +1412,8 @@ private fun AssistantInputBar(
     onSend: () -> Unit,
     onCancel: () -> Unit
 ) {
+    val strings = LocalAppStrings.current
+    val isEn = strings.language == AppLanguage.ENGLISH
     Surface(
         color = GlassSurfaceDark,
         modifier = Modifier
@@ -1347,7 +1425,7 @@ private fun AssistantInputBar(
                 .fillMaxWidth()
                 .padding(horizontal = 14.dp, vertical = 6.dp)
         ) {
-            // Thinking level chip selector row (⚡ Nhanh, ⚖ Cân bằng, 🧠 Sâu sắc)
+            // Thinking level chip selector row
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1356,19 +1434,19 @@ private fun AssistantInputBar(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 ThinkingLevelChip(
-                    label = "⚡ Nhanh",
+                    label = if (isEn) "⚡ Fast" else "⚡ Nhanh",
                     selected = thinkingLevel == AssistantThinkingLevel.FAST,
                     onClick = { onThinkingLevelChanged(AssistantThinkingLevel.FAST) },
                     modifier = Modifier.weight(1f)
                 )
                 ThinkingLevelChip(
-                    label = "⚖ Cân bằng",
+                    label = if (isEn) "⚖ Balanced" else "⚖ Cân bằng",
                     selected = thinkingLevel == AssistantThinkingLevel.BALANCED,
                     onClick = { onThinkingLevelChanged(AssistantThinkingLevel.BALANCED) },
                     modifier = Modifier.weight(1f)
                 )
                 ThinkingLevelChip(
-                    label = "🧠 Sâu sắc",
+                    label = if (isEn) "🧠 Deep" else "🧠 Sâu sắc",
                     selected = thinkingLevel == AssistantThinkingLevel.DEEP,
                     onClick = { onThinkingLevelChanged(AssistantThinkingLevel.DEEP) },
                     modifier = Modifier.weight(1f)
@@ -1383,8 +1461,6 @@ private fun AssistantInputBar(
                     value = inputText,
                     onValueChange = onInputChanged,
                     placeholder = {
-                        val strings = LocalAppStrings.current
-                        val isEn = strings.language == AppLanguage.ENGLISH
                         Text(
                             text = if (isEn) "Ask assistant about messages, notes..." else "Hỏi trợ lý về tin nhắn, ghi chú...",
                             color = TextMutedDark,
@@ -1401,6 +1477,14 @@ private fun AssistantInputBar(
                     ),
                     shape = RoundedCornerShape(22.dp),
                     maxLines = 4,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                    keyboardActions = KeyboardActions(
+                        onSend = {
+                            if (!isProcessing && inputText.isNotBlank()) {
+                                onSend()
+                            }
+                        }
+                    ),
                     modifier = Modifier
                         .weight(1f)
                         .padding(end = 8.dp)
@@ -1416,7 +1500,7 @@ private fun AssistantInputBar(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Stop,
-                            contentDescription = "Hủy phản hồi",
+                            contentDescription = if (isEn) "Cancel" else "Hủy phản hồi",
                             tint = PrimaryWhite,
                             modifier = Modifier.size(20.dp)
                         )
@@ -1432,7 +1516,7 @@ private fun AssistantInputBar(
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.Send,
-                            contentDescription = "Gửi",
+                            contentDescription = if (isEn) "Send" else "Gửi",
                             tint = if (inputText.isNotBlank()) BackgroundDark else TextMutedDark,
                             modifier = Modifier.size(18.dp)
                         )

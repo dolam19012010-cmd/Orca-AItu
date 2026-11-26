@@ -360,4 +360,98 @@ class SummaryParserTest {
         assertEquals("14:00", task.deadline)
         assertEquals("m1p7x", task.chatRefId)
     }
+
+    @Test
+    fun testExtractLiveAdvicePreview_stripsScratchpadAndStopsBeforePart2() {
+        val unclosedThinking = "<scratchpad>Đang suy luận nội bộ..."
+        assertEquals("", SummaryParser.extractLiveAdvicePreview(unclosedThinking))
+
+        val part1Only = """
+            <scratchpad>Đã lọc 5 tin nhắn</scratchpad>
+            === PHẦN 1: LỜI KHUYÊN & LƯU Ý ===
+            - [Lời khuyên]: Nên phản hồi khách hàng trước 15:00.
+        """.trimIndent()
+        val livePart1 = SummaryParser.extractLiveAdvicePreview(part1Only)
+        assertFalse(livePart1.contains("<scratchpad>"))
+        assertFalse(livePart1.contains("PHẦN 1"))
+        assertTrue(livePart1.contains("Nên phản hồi khách hàng trước 15:00."))
+
+        val midPart2Stream = """
+            <scratchpad>OK</scratchpad>
+            === PHẦN 1: GÓC NHÌN PHẢN BIỆN & LỜI KHUYÊN ===
+            Chú ý lịch họp chiều nay lúc 14:00.
+
+            === PHẦN 2: BẢNG ĐIỀU PHỐI NHIỆM VỤ ===
+            ### 🔴 NHIỆM VỤ PHẢI LÀM
+            - [ ] Gửi báo cáo | Nguồn: Sếp Hùng [#z1a2b] | Hạn: 15:00
+        """.trimIndent()
+        val livePart2Vi = SummaryParser.extractLiveAdvicePreview(midPart2Stream, isEnglish = false)
+        assertTrue(livePart2Vi.contains("Chú ý lịch họp chiều nay lúc 14:00."))
+        assertTrue(livePart2Vi.contains("⏳ Đang trích xuất danh sách nhiệm vụ..."))
+        assertFalse(livePart2Vi.contains("PHẦN 2"))
+        assertFalse(livePart2Vi.contains("[#z1a2b]"))
+        assertFalse(livePart2Vi.contains("- [ ]"))
+
+        val livePart2En = SummaryParser.extractLiveAdvicePreview(midPart2Stream, isEnglish = true)
+        assertTrue(livePart2En.contains("⏳ Extracting tasks..."))
+        assertFalse(livePart2En.contains("[#z1a2b]"))
+    }
+
+    @Test
+    fun testFormatForClipboard_producesCleanReadableOutputWithoutRawTags() {
+        val raw = """
+            <scratchpad>Suy luận nội bộ cần ẩn</scratchpad>
+            === PHẦN 1: GÓC NHÌN PHẢN BIỆN & LỜI KHUYÊN ===
+            - [Nhẹ Nhàng]: Hôm nay ưu tiên chốt hợp đồng và kiểm tra tiến độ server.
+
+            === PHẦN 2: BẢNG ĐIỀU PHỐI NHIỆM VỤ ===
+            Nhiệm vụ phải làm (To-Do):
+            - [ ] Ký hợp đồng khách hàng A | Nguồn: Sếp Tuấn [#z4k9m] | Hạn: 16:00
+            Kế hoạch dự kiến:
+            - [ ] Họp tổng kết tuần | Nguồn: Nhóm Dev [#t8a2c] | Hạn: Thứ 6
+            Nhiệm vụ đã làm (Done):
+            - [x] Gửi bảng báo giá | Nguồn: Lan Anh [#m1p7x]
+        """.trimIndent()
+        val parsed = SummaryParser.parse(raw)
+
+        val clipVi = SummaryParser.formatForClipboard(parsed, isEnglish = false)
+        assertTrue(clipVi.contains("Hôm nay ưu tiên chốt hợp đồng và kiểm tra tiến độ server."))
+        assertTrue(clipVi.contains("📌 Việc cần làm"))
+        assertTrue(clipVi.contains("- Ký hợp đồng khách hàng A (⏰ 16:00) — Sếp Tuấn"))
+        assertTrue(clipVi.contains("🗓 Kế hoạch"))
+        assertTrue(clipVi.contains("- Họp tổng kết tuần (⏰ Thứ 6) — Nhóm Dev"))
+        assertTrue(clipVi.contains("✅ Đã xong"))
+        assertTrue(clipVi.contains("- Gửi bảng báo giá — Lan Anh"))
+        assertFalse(clipVi.contains("PHẦN"))
+        assertFalse(clipVi.contains("<scratchpad>"))
+        assertFalse(clipVi.contains("[#z4k9m]"))
+        assertFalse(clipVi.contains("[#t8a2c]"))
+        assertFalse(clipVi.contains("[#m1p7x]"))
+
+        val clipEn = SummaryParser.formatForClipboard(parsed, isEnglish = true)
+        assertTrue(clipEn.contains("📌 To-Do"))
+        assertTrue(clipEn.contains("🗓 Planned"))
+        assertTrue(clipEn.contains("✅ Done"))
+    }
+
+    @Test
+    fun testHasStructuredHeaders_detectsStructuredVsPlainChat() {
+        assertFalse(SummaryParser.hasStructuredHeaders("Chào bạn, hôm nay có 2 tin nhắn mới từ Sếp Hùng."))
+        assertTrue(
+            SummaryParser.hasStructuredHeaders(
+                """
+                    === PHẦN 1: LỜI KHUYÊN ===
+                    Cần kiểm tra email.
+                """.trimIndent()
+            )
+        )
+        assertTrue(
+            SummaryParser.hasStructuredHeaders(
+                """
+                    ### TO-DO TASKS
+                    - [ ] Reply client | Due: 17:00
+                """.trimIndent()
+            )
+        )
+    }
 }

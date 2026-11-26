@@ -268,17 +268,12 @@ class FloatingBubbleService : Service() {
     }
 
     private fun extractLiveStreamSnippet(raw: String): String {
-        var text = raw
-        for (tag in arrayOf("think", "scratchpad", "thought", "reasoning")) {
-            val closeIdx = text.lastIndexOf("</$tag>")
-            if (closeIdx != -1) {
-                text = text.substring(closeIdx + tag.length + 3)
-            } else {
-                val openIdx = text.indexOf("<$tag>")
-                if (openIdx != -1) text = text.substring(0, openIdx)
-            }
+        val isEn = try {
+            UserPreferences.getInstance(this).getAppLanguage() == com.orca.orcaauto.ui.locale.AppLanguage.ENGLISH
+        } catch (_: Exception) {
+            false
         }
-        return text.trim()
+        return SummaryParser.extractLiveAdvicePreview(raw, isEnglish = isEn)
     }
 
     private enum class SendBtnState {

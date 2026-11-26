@@ -110,6 +110,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -131,6 +132,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.orca.orcaauto.R
+import com.orca.orcaauto.data.local.getBestSummaryForSession
 import com.orca.orcaauto.data.preferences.SummarySessionConfig
 import com.orca.orcaauto.data.preferences.UserPreferences
 import com.orca.orcaauto.data.remote.ApiKeyConfig
@@ -292,7 +294,10 @@ private fun SettingsCategoryCard(
 }
 
 @Composable
-fun SettingsScreen(initialExpandedCategory: Int? = null) {
+fun SettingsScreen(
+    initialExpandedCategory: Int? = null,
+    onInitialCategoryConsumed: () -> Unit = {}
+) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
@@ -584,11 +589,12 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
             }
         }
 
-        var expandedSectionIndex by remember { mutableStateOf<Int?>(initialExpandedCategory) }
+        var expandedSectionIndex by rememberSaveable { mutableStateOf<Int?>(initialExpandedCategory) }
 
         androidx.compose.runtime.LaunchedEffect(initialExpandedCategory) {
             if (initialExpandedCategory != null) {
                 expandedSectionIndex = initialExpandedCategory
+                onInitialCategoryConsumed()
             }
         }
 
@@ -959,22 +965,33 @@ fun SettingsScreen(initialExpandedCategory: Int? = null) {
                     }
                 },
                 onRestartBubble = {
-                    scope.launch {
-                        val db = com.orca.orcaauto.data.local.AppDatabase.getDatabase(context)
-                        val selectedId = preferences.getSelectedSessionId()
-                        val sessionRecord = db.summaryDao().getLatestSummaryForSession(selectedId)
-                        val activeSession = preferences.getSelectedSession()
-                        val isEn = preferences.getAppLanguage() == com.orca.orcaauto.ui.locale.AppLanguage.ENGLISH
-                        val content = sessionRecord?.summaryContent?.ifBlank { null }
-                            ?: (if (isEn) "AItu floating bubble is ready! No summaries recorded yet for session ${activeSession.name}." else "Bong bóng chat AItu đã sẵn sàng! Chưa có bản tóm tắt nào cho ca ${activeSession.name}.")
-                        val model = sessionRecord?.modelInfo ?: "${activeSession.iconEmoji} ${activeSession.name}"
-                        FloatingBubbleService.show(
-                            context = context,
-                            summaryContent = content,
-                            modelInfo = model,
-                            sessionId = selectedId
-                        )
-                        Toast.makeText(context, if (isEn) "Opened chat bubble (${activeSession.name})!" else "Đã khởi động bong bóng chat (${activeSession.name})", Toast.LENGTH_SHORT).show()
+                    val isEn = preferences.getAppLanguage() == com.orca.orcaauto.ui.locale.AppLanguage.ENGLISH
+                    if (!FloatingBubbleService.isOverlayPermissionGranted(context)) {
+                        Toast.makeText(
+                            context,
+                            if (isEn) "Please grant 'Display over other apps' permission first." else "Vui lòng cấp quyền 'Hiển thị trên ứng dụng khác' trước khi mở bong bóng.",
+                            Toast.LENGTH_LONG
+                        ).show()
+                        try {
+                            context.startActivity(FloatingBubbleService.getOverlayPermissionIntent(context))
+                        } catch (_: Throwable) {}
+                    } else {
+                        scope.launch {
+                            val db = com.orca.orcaauto.data.local.AppDatabase.getDatabase(context)
+                            val selectedId = preferences.getSelectedSessionId()
+                            val sessionRecord = db.summaryDao().getBestSummaryForSession(selectedId)
+                            val activeSession = preferences.getSelectedSession()
+                            val content = sessionRecord?.summaryContent?.ifBlank { null }
+                                ?: (if (isEn) "AItu floating bubble is ready! No summaries recorded yet for session ${activeSession.name}." else "Bong bóng chat AItu đã sẵn sàng! Chưa có bản tóm tắt nào cho ca ${activeSession.name}.")
+                            val model = sessionRecord?.modelInfo ?: "${activeSession.iconEmoji} ${activeSession.name}"
+                            FloatingBubbleService.show(
+                                context = context,
+                                summaryContent = content,
+                                modelInfo = model,
+                                sessionId = selectedId
+                            )
+                            Toast.makeText(context, if (isEn) "Opened chat bubble (${activeSession.name})!" else "Đã khởi động bong bóng chat (${activeSession.name})", Toast.LENGTH_SHORT).show()
+                        }
                     }
                 }
             )

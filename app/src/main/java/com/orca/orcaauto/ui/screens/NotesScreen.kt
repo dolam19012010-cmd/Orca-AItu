@@ -1,5 +1,8 @@
 package com.orca.orcaauto.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
@@ -10,6 +13,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,6 +32,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.filled.Add
@@ -35,6 +41,7 @@ import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.DeleteSweep
@@ -63,22 +70,28 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.orca.orcaauto.data.local.SharedNoteEntity
+import com.orca.orcaauto.domain.filter.NotificationFilter
 import com.orca.orcaauto.domain.notes.SharedNoteRepositoryImpl
 import com.orca.orcaauto.ui.components.AssistantChatSheet
 import com.orca.orcaauto.ui.locale.AppLanguage
@@ -116,7 +129,8 @@ enum class NoteFilterMode {
 
 @Composable
 fun NotesScreen(
-    initialOpenAssistant: Boolean = false
+    initialOpenAssistant: Boolean = false,
+    onInitialAssistantConsumed: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -125,21 +139,40 @@ fun NotesScreen(
     val activeNotes by repository.getActiveNotesFlow().collectAsState(initial = emptyList())
     val trashNotes by repository.getTrashNotesFlow().collectAsState(initial = emptyList())
 
-    var filterMode by remember { mutableStateOf(NoteFilterMode.ALL) }
-    var searchQuery by remember { mutableStateOf("") }
-    var isSearchExpanded by remember { mutableStateOf(false) }
+    var filterModeName by rememberSaveable { mutableStateOf(NoteFilterMode.ALL.name) }
+    val filterMode = runCatching { NoteFilterMode.valueOf(filterModeName) }.getOrDefault(NoteFilterMode.ALL)
+    val setFilterMode: (NoteFilterMode) -> Unit = { filterModeName = it.name }
+
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    var isSearchExpanded by rememberSaveable { mutableStateOf(false) }
 
     var editingNote by remember { mutableStateOf<SharedNoteEntity?>(null) }
     var showEditDialog by remember { mutableStateOf(false) }
+    var previewTrashNote by remember { mutableStateOf<SharedNoteEntity?>(null) }
 
     var permanentDeleteTarget by remember { mutableStateOf<SharedNoteEntity?>(null) }
     var showClearTrashDialog by remember { mutableStateOf(false) }
 
-    var showAssistantSheet by remember { mutableStateOf(initialOpenAssistant) }
+    var showAssistantSheet by rememberSaveable { mutableStateOf(initialOpenAssistant) }
     val strings = LocalAppStrings.current
+    val searchFocusRequester = remember { FocusRequester() }
 
-    // Filter calculation
-    val displayedNotes = remember(filterMode, searchQuery, activeNotes, trashNotes) {
+    LaunchedEffect(initialOpenAssistant) {
+        if (initialOpenAssistant) {
+            showAssistantSheet = true
+            onInitialAssistantConsumed()
+        }
+    }
+
+    LaunchedEffect(isSearchExpanded) {
+        if (isSearchExpanded) {
+            runCatching { searchFocusRequester.requestFocus() }
+        }
+    }
+
+    // Accent-insensitive Filter calculation
+    val normQuery = remember(searchQuery) { NotificationFilter.normalize(searchQuery) }
+    val displayedNotes = remember(filterMode, normQuery, activeNotes, trashNotes) {
         val baseList = if (filterMode == NoteFilterMode.TRASH) trashNotes else activeNotes
         val categoryFiltered = when (filterMode) {
             NoteFilterMode.ALL -> baseList
@@ -147,13 +180,12 @@ fun NotesScreen(
             NoteFilterMode.NORMAL -> baseList.filter { !it.isPrivate }
             NoteFilterMode.TRASH -> baseList
         }
-        val query = searchQuery.trim()
-        if (query.isBlank()) {
+        if (normQuery.isBlank()) {
             categoryFiltered
         } else {
             categoryFiltered.filter { note ->
-                note.title.contains(query, ignoreCase = true) ||
-                    note.content.contains(query, ignoreCase = true)
+                NotificationFilter.normalize(note.title).contains(normQuery) ||
+                    NotificationFilter.normalize(note.content).contains(normQuery)
             }
         }
     }
@@ -179,10 +211,10 @@ fun NotesScreen(
                     if (!isSearchExpanded) searchQuery = ""
                 },
                 onToggleTrash = {
-                    filterMode = if (filterMode == NoteFilterMode.TRASH) {
-                        NoteFilterMode.ALL
+                    if (filterMode == NoteFilterMode.TRASH) {
+                        setFilterMode(NoteFilterMode.ALL)
                     } else {
-                        NoteFilterMode.TRASH
+                        setFilterMode(NoteFilterMode.TRASH)
                     }
                 },
                 onOpenAssistant = {
@@ -237,6 +269,7 @@ fun NotesScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 8.dp, bottom = 4.dp)
+                        .focusRequester(searchFocusRequester)
                 )
             }
 
@@ -249,7 +282,7 @@ fun NotesScreen(
                 privateCount = activeNotes.count { it.isPrivate },
                 normalCount = activeNotes.count { !it.isPrivate },
                 trashCount = trashNotes.size,
-                onModeSelected = { filterMode = it }
+                onModeSelected = { setFilterMode(it) }
             )
 
             // Trash Mode Banner
@@ -287,10 +320,17 @@ fun NotesScreen(
                             note = note,
                             isTrash = filterMode == NoteFilterMode.TRASH,
                             onClick = {
-                                if (filterMode != NoteFilterMode.TRASH) {
+                                if (filterMode == NoteFilterMode.TRASH) {
+                                    previewTrashNote = note
+                                } else {
                                     editingNote = note
                                     showEditDialog = true
                                 }
+                            },
+                            onCopy = {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                clipboard.setPrimaryClip(ClipData.newPlainText("Orca Note", "${note.title}\n\n${note.content}"))
+                                Toast.makeText(context, "Đã sao chép ghi chú", Toast.LENGTH_SHORT).show()
                             },
                             onTogglePin = {
                                 scope.launch {
@@ -369,6 +409,80 @@ fun NotesScreen(
                         Toast.makeText(context, "Đã lưu cập nhật ghi chú", Toast.LENGTH_SHORT).show()
                     }
                     showEditDialog = false
+                }
+            }
+        )
+    }
+
+    // Trash Note Read-Only Preview Dialog
+    if (previewTrashNote != null) {
+        val target = previewTrashNote!!
+        AlertDialog(
+            onDismissRequest = { previewTrashNote = null },
+            containerColor = SurfaceDark,
+            shape = RoundedCornerShape(20.dp),
+            title = {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = target.title,
+                        color = TextPrimaryDark,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 17.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(onClick = { previewTrashNote = null }, modifier = Modifier.size(28.dp)) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Đóng",
+                            tint = TextSecondaryDark,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    Text(
+                        text = target.content.ifBlank { "(Chưa có nội dung)" },
+                        color = if (target.content.isBlank()) TextMutedDark else TextSecondaryDark,
+                        fontSize = 13.5.sp,
+                        lineHeight = 19.sp
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            repository.restoreNote(target.id)
+                            previewTrashNote = null
+                            Toast.makeText(context, "Đã khôi phục ghi chú", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = AccentCyan, contentColor = BackgroundDark)
+                ) {
+                    Text("Khôi phục", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        val toDelete = target
+                        previewTrashNote = null
+                        permanentDeleteTarget = toDelete
+                    }
+                ) {
+                    Text("Xóa vĩnh viễn", color = AccentRose, fontWeight = FontWeight.SemiBold)
                 }
             }
         )
@@ -705,6 +819,7 @@ private fun NoteCardItem(
     note: SharedNoteEntity,
     isTrash: Boolean,
     onClick: () -> Unit,
+    onCopy: () -> Unit = {},
     onTogglePin: () -> Unit,
     onSoftDelete: () -> Unit,
     onRestore: () -> Unit,
@@ -731,7 +846,7 @@ private fun NoteCardItem(
         border = cardBorder,
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(enabled = !isTrash) { onClick() }
+            .clickable { onClick() }
     ) {
         Column(
             modifier = Modifier
@@ -875,6 +990,17 @@ private fun NoteCardItem(
                         }
                     } else {
                         IconButton(
+                            onClick = onCopy,
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ContentCopy,
+                                contentDescription = "Sao chép",
+                                tint = TextSecondaryDark,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                        IconButton(
                             onClick = onClick,
                             modifier = Modifier.size(32.dp)
                         ) {
@@ -912,7 +1038,8 @@ private fun EmptyNotesView(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(top = 80.dp),
+            .verticalScroll(rememberScrollState())
+            .padding(vertical = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
@@ -1033,7 +1160,9 @@ fun NoteEditDialog(
         },
         text = {
             Column(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 // Title field
@@ -1052,6 +1181,7 @@ fun NoteEditDialog(
                     ),
                     shape = RoundedCornerShape(12.dp),
                     singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                     modifier = Modifier.fillMaxWidth()
                 )
 
