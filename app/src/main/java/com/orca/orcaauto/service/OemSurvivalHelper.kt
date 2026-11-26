@@ -76,7 +76,7 @@ object OemSurvivalHelper {
             }
             manufacturer.contains("oppo") || manufacturer.contains("realme") -> {
                 intents.add(Intent().setComponent(ComponentName("com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity")))
-                intents.add(Intent().setComponent(ComponentName("com.coloros.oppoguardelf", "com.coloros.powermanager.fuelga设置ge.PowerUsageModelActivity")))
+                intents.add(Intent().setComponent(ComponentName("com.coloros.oppoguardelf", "com.coloros.powermanager.fuelgauge.PowerUsageModelActivity")))
             }
             manufacturer.contains("vivo") -> {
                 intents.add(Intent().setComponent(ComponentName("com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.BgStartUpManagerActivity")))

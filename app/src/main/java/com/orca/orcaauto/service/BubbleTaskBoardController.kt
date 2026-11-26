@@ -267,7 +267,9 @@ class BubbleTaskBoardController(
         val isCancelled = existingAlarm?.status == SmartAlarmStatus.CANCELLED
         val isCompleted = existingAlarm?.status == SmartAlarmStatus.COMPLETED || task.status == TaskStatus.DONE
         val isAlarmActive = existingAlarm?.status == SmartAlarmStatus.ACTIVE
+        val activeAlarmLabel = existingAlarm?.targetDateLabel?.takeIf { isAlarmActive && it.isNotBlank() }
         val proposedTime = parsedDt?.timeLabel ?: "Hẹn giờ"
+        val displayAlarmTime = activeAlarmLabel ?: proposedTime
 
         holder.boundTask = task
         holder.boundAlarmId = alarmId
@@ -431,7 +433,8 @@ class BubbleTaskBoardController(
             var currentAlarmActive = isAlarmActive
             val pill = TextView(context).apply {
                 fun updatePillVisuals(active: Boolean) {
-                    text = if (active) "✓ Đã đặt $proposedTime" else "🔔 Đặt $proposedTime"
+                    val activeText = holder.boundAlarm?.targetDateLabel?.takeIf { it.isNotBlank() } ?: displayAlarmTime
+                    text = if (active) "✓ Đã đặt $activeText" else "🔔 Đặt $proposedTime"
                     setTextColor(if (active) Color.parseColor("#10B981") else Color.parseColor("#38BDF8"))
                     background = GradientDrawable().apply {
                         setColor(if (active) Color.parseColor("#062E24") else Color.parseColor("#082F49"))
@@ -453,7 +456,6 @@ class BubbleTaskBoardController(
                     val curExisting = holder.boundAlarm ?: existingAlarm
 
                     if (currentAlarmActive) {
-                        SystemAlarmHelper.disarmAlarmHardwareOnly(context, curTitle, curAlarmId)
                         val disarmed = (curExisting ?: SmartAlarmEntity(
                             alarmId = curAlarmId,
                             taskTitle = curTitle,
@@ -461,17 +463,12 @@ class BubbleTaskBoardController(
                             targetDateLabel = proposedTime,
                             status = SmartAlarmStatus.PROPOSED
                         )).copy(status = SmartAlarmStatus.PROPOSED, updatedAt = System.currentTimeMillis())
+                        holder.boundAlarm = disarmed
                         alarmDbMap = alarmDbMap + (curAlarmId to disarmed) + (generatedAlarmId to disarmed)
                         alarmNormalizedTitleMap = alarmNormalizedTitleMap + (SystemAlarmHelper.normalizeTitle(curTitle) to disarmed)
                         currentAlarmActive = false
                         updatePillVisuals(false)
-                        serviceScope.launch {
-                            try {
-                                val dao = AppDatabase.getDatabase(context).smartAlarmDao()
-                                dao.updateStatus(curAlarmId, SmartAlarmStatus.PROPOSED)
-                                dao.updateStatusByTitle(curTitle, SmartAlarmStatus.PROPOSED)
-                            } catch (_: Exception) {}
-                        }
+                        SystemAlarmHelper.markTaskProposed(context, curTitle, curAlarmId, generatedAlarmId)
                         Toast.makeText(context, "Đã tắt chuông báo: ${curTitle.take(24)}...", Toast.LENGTH_SHORT).show()
                     } else {
                         val now = System.currentTimeMillis()
@@ -488,18 +485,26 @@ class BubbleTaskBoardController(
                             mode = AlarmCascadeMode.X1
                         )
                         result.onSuccess {
+                            val newAlarmId = SystemAlarmHelper.generateAlarmId(curTitle, effectiveCal)
+                            val savedLabel = String.format(Locale.getDefault(), "%02d:%02d (%s)", effectiveCal.get(Calendar.HOUR_OF_DAY), effectiveCal.get(Calendar.MINUTE), AlarmCascadeMode.X1.code)
                             val armed = (curExisting ?: SmartAlarmEntity(
-                                alarmId = curAlarmId,
+                                alarmId = newAlarmId,
                                 taskTitle = curTitle,
                                 targetTimeMillis = effectiveCal.timeInMillis,
-                                targetDateLabel = proposedTime,
+                                targetDateLabel = savedLabel,
                                 status = SmartAlarmStatus.ACTIVE
                             )).copy(
+                                alarmId = newAlarmId,
                                 targetTimeMillis = effectiveCal.timeInMillis,
+                                targetDateLabel = savedLabel,
+                                cascadeMode = AlarmCascadeMode.X1.code,
+                                intervalMinutes = 15,
                                 status = SmartAlarmStatus.ACTIVE,
                                 updatedAt = System.currentTimeMillis()
                             )
-                            alarmDbMap = alarmDbMap + (curAlarmId to armed) + (generatedAlarmId to armed)
+                            holder.boundAlarmId = newAlarmId
+                            holder.boundAlarm = armed
+                            alarmDbMap = alarmDbMap + (newAlarmId to armed) + (curAlarmId to armed) + (generatedAlarmId to armed)
                             alarmNormalizedTitleMap = alarmNormalizedTitleMap + (SystemAlarmHelper.normalizeTitle(curTitle) to armed)
                             currentAlarmActive = true
                             updatePillVisuals(true)

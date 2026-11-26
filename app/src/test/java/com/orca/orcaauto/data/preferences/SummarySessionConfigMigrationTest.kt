@@ -128,4 +128,26 @@ class SummarySessionConfigMigrationTest {
         assertEquals("en", s.safeAiLanguage)
         assertEquals(listOf("09:00", "17:00"), s.scheduledHours)
     }
+
+    @Test
+    fun testDeserializeExplicitEmptyScheduledHoursRemainsEmpty() {
+        val explicitEmptyJson = """
+            [
+                {
+                    "id": "session_main_default",
+                    "name": "Phi vụ",
+                    "isMain": true,
+                    "scheduledHours": []
+                }
+            ]
+        """.trimIndent()
+
+        val type = object : TypeToken<List<SummarySessionConfig>>() {}.type
+        val sessions: List<SummarySessionConfig> = gson.fromJson(explicitEmptyJson, type)
+
+        assertEquals(1, sessions.size)
+        val main = sessions[0]
+        assertEquals("Phi vụ", main.name)
+        assertTrue("Giờ ca cố ý để trống [] không bị reset về 12:00/18:00", main.scheduledHours.isEmpty())
+    }
 }

@@ -18,8 +18,6 @@ import java.util.concurrent.TimeUnit
 object WorkScheduler {
 
     private const val TAG = "WorkScheduler"
-    private const val WORK_12PM_NAME = "OrcaAuto_Summary_12PM"
-    private const val WORK_18PM_NAME = "OrcaAuto_Summary_18PM"
     private const val WORK_LIFECYCLE_NAME = "OrcaAuto_Data_Lifecycle"
     const val MANUAL_WORK_NAME = "OrcaAuto_Manual_Summary"
 
@@ -182,10 +180,18 @@ object WorkScheduler {
     }
 
     /**
-     * Cancels a specific scheduled summary worker when removed by the user.
+     * Cancels a specific scheduled summary worker ONLY if no active session (Main or Scheduled custom)
+     * still has [hourStr] configured.
      */
     fun cancelScheduledHour(context: Context, hourStr: String) {
-        val parts = hourStr.split(":")
+        val preferences = com.orca.orcaauto.data.preferences.UserPreferences.getInstance(context)
+        val activeHours = (preferences.getScheduledHours() + preferences.loadSessions().filter { it.isScheduled }.flatMap { it.scheduledHours })
+            .map { it.trim() }
+            .toSet()
+        val trimmed = hourStr.trim()
+        if (trimmed in activeHours) return
+
+        val parts = trimmed.split(":")
         if (parts.size == 2) {
             val hour = parts[0].toIntOrNull() ?: return
             val minute = parts[1].toIntOrNull() ?: return

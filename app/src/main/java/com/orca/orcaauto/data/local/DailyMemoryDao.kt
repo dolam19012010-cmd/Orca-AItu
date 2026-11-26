@@ -18,6 +18,9 @@ interface DailyMemoryDao {
     @Query("SELECT * FROM daily_memories ORDER BY timestamp DESC")
     suspend fun getAllDailyMemories(): List<DailyMemoryEntity>
 
+    @Query("SELECT * FROM daily_memories ORDER BY timestamp DESC LIMIT :limit")
+    suspend fun getRecentDailyMemories(limit: Int = 2): List<DailyMemoryEntity>
+
     @Query("SELECT * FROM daily_memories ORDER BY timestamp DESC")
     fun getAllDailyMemoriesFlow(): Flow<List<DailyMemoryEntity>>
 
@@ -26,4 +29,7 @@ interface DailyMemoryDao {
 
     @Query("DELETE FROM daily_memories WHERE id = :id")
     suspend fun deleteById(id: Long)
+
+    @Query("DELETE FROM daily_memories")
+    suspend fun clearAll()
 }

@@ -149,7 +149,7 @@ class SmartAlarmReceiver : BroadcastReceiver() {
                     if (alarm != null && alarm.status == SmartAlarmStatus.ACTIVE && !alarm.isClockAppStaged) {
                         val cal = Calendar.getInstance().apply { timeInMillis = alarm.targetTimeMillis }
                         val mode = AlarmCascadeMode.fromCode(alarm.cascadeMode)
-                        SystemAlarmHelper.scheduleSmartAlarms(context, alarm.taskTitle, cal, mode)
+                        SystemAlarmHelper.scheduleSmartAlarms(context, alarm.taskTitle, cal, mode, alarm.intervalMinutes)
                         dao.updateClockAppStaged(alarmId, true)
                     }
                 } catch (_: Exception) {} finally {
@@ -299,13 +299,27 @@ class SmartAlarmReceiver : BroadcastReceiver() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val titleText = if (isPrimary) "⏰ [ĐẾN HẠN CÔNG VIỆC]" else "🔔 [NHẮC CHUẨN BỊ]"
+        val isEn = try {
+            UserPreferences.getInstance(context).getAppLanguage() == com.orca.orcaauto.ui.locale.AppLanguage.ENGLISH
+        } catch (_: Throwable) {
+            false
+        }
+        val titleText = if (isPrimary) {
+            if (isEn) "⏰ [TASK DUE NOW]" else "⏰ [ĐẾN HẠN CÔNG VIỆC]"
+        } else {
+            if (isEn) "🔔 [UPCOMING REMINDER]" else "🔔 [NHẮC CHUẨN BỊ]"
+        }
+        val bodyText = if (isEn) {
+            "$label\n\n📌 Task: $taskTitle\n👉 Tap 'DISMISS' or open the chat bubble to silence."
+        } else {
+            "$label\n\n📌 Nhiệm vụ: $taskTitle\n👉 Bấm 'TẮT CHUÔNG' hoặc chạm mở bóng chat để tắt tiếng."
+        }
 
         val notification = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(titleText)
             .setContentText(taskTitle)
-            .setStyle(NotificationCompat.BigTextStyle().bigText("$label\n\n📌 Nhiệm vụ: $taskTitle\n👉 Bấm 'TẮT CHUÔNG' hoặc chạm mở bóng chat để tắt tiếng."))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(bodyText))
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
@@ -313,8 +327,8 @@ class SmartAlarmReceiver : BroadcastReceiver() {
             .setOngoing(false) // Không khóa thông báo để người dùng có thể gạt tắt tiếng
             .setContentIntent(contentPendingIntent)
             .setDeleteIntent(dismissPendingIntent) // Gạt thông báo cũng tắt chuông ngay lập tức!
-            .addAction(R.drawable.ic_notification, "✓ TẮT CHUÔNG", dismissPendingIntent)
-            .addAction(0, "⏰ BÁO LẠI 5P", snoozePendingIntent)
+            .addAction(R.drawable.ic_notification, if (isEn) "✓ DISMISS" else "✓ TẮT CHUÔNG", dismissPendingIntent)
+            .addAction(0, if (isEn) "⏰ SNOOZE 5M" else "⏰ BÁO LẠI 5P", snoozePendingIntent)
             .build()
 
         notificationManager.notify(notificationId, notification)

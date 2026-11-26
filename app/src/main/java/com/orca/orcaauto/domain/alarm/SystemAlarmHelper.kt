@@ -15,6 +15,8 @@ import com.orca.orcaauto.domain.filter.ParsedSummary
 import com.orca.orcaauto.receiver.SmartAlarmReceiver
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import java.util.Calendar
 import java.util.Locale
@@ -66,7 +68,8 @@ object SystemAlarmHelper {
 
     private const val TAG = "SystemAlarmHelper"
     const val CANCELLED_RETENTION_MS = 48L * 3600L * 1000L
-    private val scope = CoroutineScope(Dispatchers.IO)
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
 
     private val PREFIX_BULLET_NUMBER_REGEX = Regex("""^[\[\(\-•*\d.]+\s*""")
     private val NON_ALPHANUMERIC_VI_REGEX = Regex("""[^a-z0-9àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]""")
@@ -75,6 +78,9 @@ object SystemAlarmHelper {
     private val TIME_GIO_REGEX = Regex("""(?:^|\D)(\d{1,2})\s*(?:giờ|g)\s*(\d{2})?(?:\D|$)""")
     private val DATE_SLASH_REGEX = Regex("""(?:ngày\s*)?(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?""")
     private val DATE_TEXT_REGEX = Regex("""(?:ngày\s*)?(\d{1,2})\s*tháng\s*(\d{1,2})(?:\s*năm\s*(\d{4}))?""")
+    private val TOMORROW_KEYWORD_REGEX = Regex("""(?<![\p{L}\p{N}])(?:ng[aà]y\s+mai|s[aá]ng\s+mai|tr[uư]a\s+mai|chi[eề]u\s+mai|t[oố]i\s+mai|mai)(?![\p{L}\p{N}])""")
+    private val DAY_AFTER_KEYWORD_REGEX = Regex("""(?<![\p{L}\p{N}])(?:ng[aà]y\s+kia|ng[aà]y\s+m[oố]t|h[oô]m\s+m[oố]t|m[oố]t)(?![\p{L}\p{N}])""")
+    private val RATIO_24_7_REGEX = Regex("""(?<![\p{L}\p{N}])24/7(?![\p{L}\p{N}])""")
 
     fun cleanTaskTitle(title: String): String = title.replace(PREFIX_BULLET_NUMBER_REGEX, "").trim()
 
@@ -350,7 +356,14 @@ object SystemAlarmHelper {
         }
 
         // A. Specific Date: "dd/MM/yyyy", "dd/MM", "dd-MM"
-        val slashDateMatch = DATE_SLASH_REGEX.find(lower)
+        val slashDateMatch = DATE_SLASH_REGEX.findAll(lower).firstOrNull { match ->
+            val dCheck = match.groupValues[1].toIntOrNull()
+            val mCheck = match.groupValues[2].toIntOrNull()
+            val yCheck = match.groupValues.getOrNull(3).orEmpty()
+            val isRatio247 = (dCheck == 24 && mCheck == 7 && yCheck.isBlank() &&
+                RATIO_24_7_REGEX.containsMatchIn(lower) && !match.value.contains("ngày"))
+            !isRatio247
+        }
         val textDateMatch = DATE_TEXT_REGEX.find(lower)
 
         var matchedSpecificDate = false
@@ -380,19 +393,19 @@ object SystemAlarmHelper {
         }
 
         if (!matchedSpecificDate) {
-            // B. Relative keywords
+            // B. Relative keywords (word-boundary guarded so "email"/"gmail" never match "mai")
             when {
-                lower.contains("ngày kia") || lower.contains("ngày mốt") || lower.contains("hôm mốt") || lower.contains("mốt") -> {
+                DAY_AFTER_KEYWORD_REGEX.containsMatchIn(lower) -> {
                     targetCal.add(Calendar.DAY_OF_YEAR, 2)
                 }
-                lower.contains("ngày mai") || lower.contains("sáng mai") || lower.contains("chiều mai") || lower.contains("mai") -> {
+                TOMORROW_KEYWORD_REGEX.containsMatchIn(lower) -> {
                     targetCal.add(Calendar.DAY_OF_YEAR, 1)
                 }
                 lower.contains("tháng sau") -> {
                     targetCal.add(Calendar.MONTH, 1)
                 }
                 lower.contains("tuần sau") -> {
-                    // Check if day of week mentioned
+                    // Check if day of week mentioned (locale-independent ISO week math: Mon=1..Sun=7)
                     val dayOfWeek = when {
                         lower.contains("thứ 2") || lower.contains("thứ hai") -> Calendar.MONDAY
                         lower.contains("thứ 3") || lower.contains("thứ ba") -> Calendar.TUESDAY
@@ -404,8 +417,16 @@ object SystemAlarmHelper {
                         else -> null
                     }
                     if (dayOfWeek != null) {
-                        targetCal.add(Calendar.WEEK_OF_YEAR, 1)
-                        targetCal.set(Calendar.DAY_OF_WEEK, dayOfWeek)
+                        val curIso = when (baseCal.get(Calendar.DAY_OF_WEEK)) {
+                            Calendar.SUNDAY -> 7
+                            else -> baseCal.get(Calendar.DAY_OF_WEEK) - 1
+                        }
+                        val targetIso = when (dayOfWeek) {
+                            Calendar.SUNDAY -> 7
+                            else -> dayOfWeek - 1
+                        }
+                        val daysToAdd = (7 - curIso) + targetIso
+                        targetCal.add(Calendar.DAY_OF_YEAR, daysToAdd)
                     } else {
                         targetCal.add(Calendar.DAY_OF_YEAR, 7)
                     }
@@ -425,15 +446,17 @@ object SystemAlarmHelper {
         val diffMillis = targetCal.timeInMillis - baseCal.timeInMillis
         val isFarFuture = diffMillis > (28 * 3600 * 1000L) // beyond 28 hours (ngày kia, tuần sau...)
 
-        // Human-friendly date label
+        // Human-friendly date label using midnight-to-midnight diff (handles leap years & DST cleanly)
         val d = targetCal.get(Calendar.DAY_OF_MONTH)
         val m = targetCal.get(Calendar.MONTH) + 1
         val y = targetCal.get(Calendar.YEAR)
-        val curDayOfYear = baseCal.get(Calendar.DAY_OF_YEAR)
-        val targetDayOfYear = targetCal.get(Calendar.DAY_OF_YEAR)
-        val curYear = baseCal.get(Calendar.YEAR)
-
-        val dayDiff = (targetDayOfYear - curDayOfYear) + (y - curYear) * 365
+        val baseMidnight = (baseCal.clone() as Calendar).apply {
+            set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+        }
+        val targetMidnight = (targetCal.clone() as Calendar).apply {
+            set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+        }
+        val dayDiff = kotlin.math.round((targetMidnight.timeInMillis - baseMidnight.timeInMillis) / 86_400_000.0).toInt()
         val dateLabel = when (dayDiff) {
             0 -> "Hôm nay"
             1 -> "Ngày mai ($d/$m)"
@@ -585,12 +608,14 @@ object SystemAlarmHelper {
             cancelSinglePendingIntent(context, (alarmId.hashCode() and 0x7FFFFFFF))
 
             // 1. Persistent Storage in Room Database
+            val safeInterval = intervalMinutes.coerceIn(1, 120)
             val entity = SmartAlarmEntity(
                 alarmId = alarmId,
                 taskTitle = cleanTitle,
                 targetTimeMillis = targetCalendar.timeInMillis,
                 targetDateLabel = String.format(Locale.getDefault(), "%02d:%02d (%s)", targetCalendar.get(Calendar.HOUR_OF_DAY), targetCalendar.get(Calendar.MINUTE), mode.code),
                 cascadeMode = mode.code,
+                intervalMinutes = safeInterval,
                 status = SmartAlarmStatus.ACTIVE,
                 isClockAppStaged = true,
                 clockAppStageTimeMillis = targetCalendar.timeInMillis,
@@ -603,7 +628,7 @@ object SystemAlarmHelper {
                     // Dọn dẹp triệt để các bản ghi cũ trùng tiêu đề nhưng khác alarmId để không bị xung đột trạng thái
                     val oldAlarms = dao.getAllAlarms().filter { isTitleMatching(it.taskTitle, cleanTitle) && it.alarmId != alarmId }
                     for (old in oldAlarms) {
-                        cancelAlarmManagerIntents(context, old.alarmId)
+                        cancelAlarmManagerIntents(context, old.alarmId, old.intervalMinutes)
                         cancelSinglePendingIntent(context, (old.alarmId.hashCode() and 0x7FFFFFFF))
                         dao.deleteAlarmById(old.alarmId)
                     }
@@ -747,7 +772,7 @@ object SystemAlarmHelper {
 
                 matching.forEach { entity ->
                     dao.updateStatus(entity.alarmId, SmartAlarmStatus.PROPOSED)
-                    cancelAlarmManagerIntents(context, entity.alarmId)
+                    cancelAlarmManagerIntents(context, entity.alarmId, entity.intervalMinutes)
                 }
 
                 if (alarmId != null) {
@@ -764,9 +789,14 @@ object SystemAlarmHelper {
         return true
     }
 
-    fun cancelAlarmManagerIntents(context: Context, targetAlarmId: String) {
+    fun cancelAlarmManagerIntents(context: Context, targetAlarmId: String, entityIntervalMinutes: Int? = null) {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
-        val offsetsToClear = listOf(0, 5, 10, 15, 20, 30, 45, 60, 90, 120)
+        val baseOffsets = listOf(0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 60, 70, 80, 90, 100, 120)
+        val offsetsToClear = if (entityIntervalMinutes != null && entityIntervalMinutes > 0) {
+            (baseOffsets + listOf(entityIntervalMinutes, (entityIntervalMinutes * 2).coerceAtMost(240))).distinct()
+        } else {
+            baseOffsets
+        }
         for (offset in offsetsToClear) {
             val req = getAlarmRequestCode(targetAlarmId, offset)
             val intent = Intent(context, SmartAlarmReceiver::class.java).apply {
@@ -872,6 +902,33 @@ object SystemAlarmHelper {
     }
 
     /**
+     * Disarms hardware alarms and updates Room DB status to PROPOSED strictly inside SystemAlarmHelper's
+     * single-threaded DB coroutine queue so rapid arm/disarm calls never invert write order.
+     */
+    fun markTaskProposed(context: Context, taskTitle: String, alarmId: String? = null, extraAlarmId: String? = null) {
+        val cleanTitle = cleanTaskTitle(taskTitle)
+        disarmAlarmHardwareOnly(context, cleanTitle, alarmId)
+        if (!extraAlarmId.isNullOrBlank() && extraAlarmId != alarmId) {
+            cancelAlarmManagerIntents(context, extraAlarmId)
+        }
+        scope.launch {
+            try {
+                val dao = AppDatabase.getDatabase(context).smartAlarmDao()
+                if (!alarmId.isNullOrBlank()) {
+                    dao.getAlarmById(alarmId)?.let { cancelAlarmManagerIntents(context, it.alarmId, it.intervalMinutes) }
+                    dao.updateStatus(alarmId, SmartAlarmStatus.PROPOSED)
+                }
+                if (!extraAlarmId.isNullOrBlank() && extraAlarmId != alarmId) {
+                    dao.updateStatus(extraAlarmId, SmartAlarmStatus.PROPOSED)
+                }
+                dao.updateStatusByTitle(cleanTitle, SmartAlarmStatus.PROPOSED)
+            } catch (e: Exception) {
+                Log.e(TAG, "Lỗi đánh dấu PROPOSED: ${e.message}", e)
+            }
+        }
+    }
+
+    /**
      * Marks a task as COMPLETED in DB and clears its active alarm hardware triggers.
      */
     fun markTaskCompleted(context: Context, taskTitle: String, alarmId: String? = null) {
@@ -894,7 +951,7 @@ object SystemAlarmHelper {
 
                 // Cập nhật tất cả các bản ghi liên quan thành COMPLETED và hủy intent AlarmManager
                 matching.forEach { entity ->
-                    cancelAlarmManagerIntents(context, entity.alarmId)
+                    cancelAlarmManagerIntents(context, entity.alarmId, entity.intervalMinutes)
                     dao.updateStatus(entity.alarmId, SmartAlarmStatus.COMPLETED)
                 }
 
@@ -951,7 +1008,7 @@ object SystemAlarmHelper {
 
                 // Cập nhật tất cả các bản ghi liên quan thành CANCELLED và hủy intent AlarmManager
                 matching.forEach { entity ->
-                    cancelAlarmManagerIntents(context, entity.alarmId)
+                    cancelAlarmManagerIntents(context, entity.alarmId, entity.intervalMinutes)
                     dao.updateStatus(entity.alarmId, SmartAlarmStatus.CANCELLED)
                 }
 
@@ -1039,7 +1096,7 @@ object SystemAlarmHelper {
             for (alarm in unstaged) {
                 val cal = Calendar.getInstance().apply { timeInMillis = alarm.targetTimeMillis }
                 val mode = AlarmCascadeMode.fromCode(alarm.cascadeMode)
-                scheduleSmartAlarms(context, alarm.taskTitle, cal, mode)
+                scheduleSmartAlarms(context, alarm.taskTitle, cal, mode, alarm.intervalMinutes)
                 dao.updateClockAppStaged(alarm.alarmId, true)
                 Log.d(TAG, "Đã tự động nạp lịch trình cho nhiệm vụ đến hạn: ${alarm.taskTitle}")
             }

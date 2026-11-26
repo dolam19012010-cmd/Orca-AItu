@@ -154,6 +154,7 @@ class FloatingBubbleService : Service() {
     private var windowParams: WindowManager.LayoutParams? = null
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
+    @Volatile private var isDestroyedService = false
     private var isCallingAi = false
     private var activeStreamingJob: Job? = null
     private var activeWatchdogJob: Job? = null
@@ -350,6 +351,8 @@ class FloatingBubbleService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        isDestroyedService = false
+        activeInstance = WeakReference(this)
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
 
         // Setup Shake to Wake Sensor (Chạy trên HandlerThread riêng để bảo vệ 120Hz Main UI)
@@ -500,37 +503,64 @@ class FloatingBubbleService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val summary = intent?.getStringExtra(EXTRA_SUMMARY_CONTENT).orEmpty()
-        if (summary.isNotBlank()) {
-            latestSummaryText = summary
-        }
         val model = intent?.getStringExtra(EXTRA_MODEL_INFO).orEmpty()
+        val shouldWake = intent?.getBooleanExtra(EXTRA_WAKE_TO_STATE_1, false) == true ||
+                intent?.action == ACTION_WAKE_TO_STATE_1
+        val targetSessionId = intent?.getStringExtra(EXTRA_SESSION_ID)
+
+        if (!Settings.canDrawOverlays(this)) {
+            Log.w(TAG, "Chưa cấp quyền SYSTEM_ALERT_WINDOW!")
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
+        applyStartCommandData(
+            summary = summary,
+            model = model,
+            targetSessionId = targetSessionId,
+            shouldWake = shouldWake
+        )
+        return START_NOT_STICKY
+    }
+
+    private fun applyStartCommandData(
+        summary: String,
+        model: String,
+        targetSessionId: String?,
+        shouldWake: Boolean
+    ) {
+        if (isDestroyedService) return
         if (model.isNotBlank()) {
             latestModelInfo = model
         }
 
-        val shouldWake = intent?.getBooleanExtra(EXTRA_WAKE_TO_STATE_1, false) == true ||
-                intent?.action == ACTION_WAKE_TO_STATE_1
+        val prefs = UserPreferences.getInstance(this)
         if (shouldWake) {
-            UserPreferences.getInstance(this).setHasUnreadSummary(true)
+            prefs.setHasUnreadSummary(true)
         }
 
-        val targetSessionId = intent?.getStringExtra(EXTRA_SESSION_ID)
         if (!targetSessionId.isNullOrBlank()) {
-            if (UserPreferences.getInstance(this).getSelectedSessionId() != targetSessionId) {
+            if (prefs.getSelectedSessionId() != targetSessionId) {
                 cachedParsedSummary = null
             }
-            UserPreferences.getInstance(this).setSelectedSessionId(targetSessionId)
+            prefs.setSelectedSessionId(targetSessionId)
         }
 
-        val activeSessionId = UserPreferences.getInstance(this).getSelectedSessionId()
+        val activeSessionId = prefs.getSelectedSessionId()
         if (summary.isNotBlank()) {
-            latestSummaryText = summary
+            if (latestSummaryText != summary) {
+                cachedParsedSummary = null
+            }
+            updateSummaryTextAndParseEagerly(summary)
             if (model.isNotBlank()) latestModelInfo = model
             sessionSummaryCache[activeSessionId] = Pair(summary, model)
         } else {
             sessionSummaryCache[activeSessionId]?.let { cached ->
                 if (cached.first.isNotBlank()) {
-                    latestSummaryText = cached.first
+                    if (latestSummaryText != cached.first) {
+                        cachedParsedSummary = null
+                        updateSummaryTextAndParseEagerly(cached.first)
+                    }
                     latestModelInfo = cached.second
                 }
             }
@@ -540,7 +570,6 @@ class FloatingBubbleService : Service() {
         sessionSwitchJob?.cancel()
         sessionSwitchJob = serviceScope.launch {
             try {
-                val prefs = UserPreferences.getInstance(this@FloatingBubbleService)
                 val currentSessionId = prefs.getSelectedSessionId()
                 val db = AppDatabase.getDatabase(this@FloatingBubbleService)
                 val sessionRecord = db.summaryDao().getBestSummaryForSession(currentSessionId)
@@ -560,7 +589,10 @@ class FloatingBubbleService : Service() {
                 }
                 sessionSummaryCache[currentSessionId] = Pair(newSummary, newModel)
                 if (latestSummaryText != newSummary || latestModelInfo != newModel) {
-                    latestSummaryText = newSummary
+                    if (latestSummaryText != newSummary) {
+                        cachedParsedSummary = null
+                    }
+                    updateSummaryTextAndParseEagerly(newSummary)
                     latestModelInfo = newModel
                     withContext(Dispatchers.Main) {
                         if (isExpanded) updateBubbleContent()
@@ -582,12 +614,7 @@ class FloatingBubbleService : Service() {
                     transitionToBubbleState(BubbleState.STATE_1_ACTIVE, animate = true, activeDurationMs = 4000L)
                 }
             }
-        } else {
-            Log.w(TAG, "Chưa cấp quyền SYSTEM_ALERT_WINDOW!")
-            stopSelf()
         }
-
-        return START_NOT_STICKY
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -3437,6 +3464,10 @@ class FloatingBubbleService : Service() {
     }
 
     override fun onDestroy() {
+        isDestroyedService = true
+        if (activeInstance?.get() === this) {
+            activeInstance = null
+        }
         super.onDestroy()
         activeStreamingJob?.cancel()
         activeStreamingJob = null
@@ -3560,6 +3591,8 @@ class FloatingBubbleService : Service() {
 
     companion object {
         private const val TAG = "FloatingBubble"
+        @Volatile
+        private var activeInstance: WeakReference<FloatingBubbleService>? = null
         const val GLOBAL_REQUEST_TIMEOUT_MS = 120_000L
         const val SSE_WATCHDOG_TIMEOUT_MS = 28_000L
         const val INITIAL_CONNECTION_TIMEOUT_MS = 95_000L
@@ -3735,22 +3768,52 @@ class FloatingBubbleService : Service() {
             )
         }
 
-        fun wakeToState1(context: Context) {
-            if (!isOverlayPermissionGranted(context)) return
-            try {
+        fun wakeToState1(context: Context): Boolean {
+            if (!isOverlayPermissionGranted(context)) return false
+            val running = activeInstance?.get()
+            if (running != null && !running.isDestroyedService) {
+                Handler(Looper.getMainLooper()).post {
+                    if (!running.isDestroyedService) {
+                        running.applyStartCommandData(
+                            summary = "",
+                            model = "",
+                            targetSessionId = null,
+                            shouldWake = true
+                        )
+                    }
+                }
+                return true
+            }
+            return try {
                 val intent = Intent(context, FloatingBubbleService::class.java).apply {
                     action = ACTION_WAKE_TO_STATE_1
                     putExtra(EXTRA_WAKE_TO_STATE_1, true)
                 }
                 context.startService(intent)
+                true
             } catch (e: Exception) {
                 Log.w("FloatingBubbleService", "Không thể gọi startService cho wakeToState1: ${e.message}")
+                false
             }
         }
 
-        fun show(context: Context, summaryContent: String = "", modelInfo: String = "", sessionId: String = "", wakeToState1: Boolean = true) {
-            if (!isOverlayPermissionGranted(context)) return
-            try {
+        fun show(context: Context, summaryContent: String = "", modelInfo: String = "", sessionId: String = "", wakeToState1: Boolean = true): Boolean {
+            if (!isOverlayPermissionGranted(context)) return false
+            val running = activeInstance?.get()
+            if (running != null && !running.isDestroyedService) {
+                Handler(Looper.getMainLooper()).post {
+                    if (!running.isDestroyedService) {
+                        running.applyStartCommandData(
+                            summary = summaryContent,
+                            model = modelInfo,
+                            targetSessionId = sessionId.takeIf { it.isNotBlank() },
+                            shouldWake = wakeToState1
+                        )
+                    }
+                }
+                return true
+            }
+            return try {
                 val intent = Intent(context, FloatingBubbleService::class.java).apply {
                     putExtra(EXTRA_SUMMARY_CONTENT, summaryContent)
                     putExtra(EXTRA_MODEL_INFO, modelInfo)
@@ -3763,8 +3826,10 @@ class FloatingBubbleService : Service() {
                     }
                 }
                 context.startService(intent)
+                true
             } catch (e: Exception) {
                 Log.w("FloatingBubbleService", "Không thể gọi startService cho show: ${e.message}")
+                false
             }
         }
 

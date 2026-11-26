@@ -28,11 +28,14 @@
     <!-- Microphone permission for Voice-to-Text Dictation -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
-    <!-- Package visibility queries for Speech Recognition service on Android 11+ (API 30+) -->
+    <!-- Package visibility queries for Speech Recognition and monitored chat apps on Android 11+ (API 30+) -->
     <queries>
         <intent>
             <action android:name="android.speech.RecognitionService" />
         </intent>
+        <package android:name="com.zing.zalo" />
+        <package android:name="org.telegram.messenger" />
+        <package android:name="com.facebook.orca" />
     </queries>
 
     <application
@@ -67,6 +70,15 @@
             android:exported="false"
             android:theme="@android:style/Theme.Material.NoActionBar" />
 
+        <!-- Translucent trampoline to reliably wake/show Floating Bubble from notifications on Android 8+ -->
+        <activity
+            android:name=".service.BubbleWakeActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:launchMode="singleInstance"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
         <!-- Notification Listener Service for Zalo, Telegram, Messenger -->
         <service
@@ -78,12 +90,6 @@
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
         </service>
-
-        <!-- Keep-Alive Foreground Service: Vô hiệu hóa hoàn toàn để thanh thông báo luôn sạch sẽ -->
-        <service
-            android:name=".service.KeepAliveForegroundService"
-            android:enabled="false"
-            android:exported="false" />
 
         <!-- Floating Chat Bubble Service (Bong bóng nổi) -->
         <service

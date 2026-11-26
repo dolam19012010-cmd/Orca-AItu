@@ -25,12 +25,13 @@ class DataLifecycleWorker(
 
         Log.i(TAG, "DataLifecycleWorker bắt đầu chu kỳ dọn dẹp và nén bộ nhớ ngày...")
 
-        val now = Calendar.getInstance()
-        val dateFormat = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
+        val tz = com.orca.orcaauto.domain.assistant.ContextPacker.resolveTimeZone(preferences.getUserTimezone())
+        val now = Calendar.getInstance(tz)
+        val dateFormat = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).apply { timeZone = tz }
         val todayStr = dateFormat.format(now.time)
 
-        // 1. Calculate Start and End timestamps of Today
-        val startOfDay = Calendar.getInstance().apply {
+        // 1. Calculate Start and End timestamps of Today in user's configured timezone
+        val startOfDay = Calendar.getInstance(tz).apply {
             set(Calendar.HOUR_OF_DAY, 0)
             set(Calendar.MINUTE, 0)
             set(Calendar.SECOND, 0)
@@ -39,50 +40,66 @@ class DataLifecycleWorker(
 
         val endOfDay = System.currentTimeMillis()
 
-        // 2. Rollup: Create Executive Daily Memory from today's shift summaries
-        try {
-            val todaySummaries = database.summaryDao().getSummariesInRange(startOfDay, endOfDay)
-            val existingMemory = database.dailyMemoryDao().getMemoryByDate(todayStr)
+        // 2. Rollup: Create Contextual Memory digest from today's shift summaries (if enabled)
+        if (preferences.isContextualMemoryRollupEnabled()) {
+            try {
+                val todaySummaries = database.summaryDao().getSummariesInRange(startOfDay, endOfDay)
+                val existingMemory = database.dailyMemoryDao().getMemoryByDate(todayStr)
 
-            if (todaySummaries.isNotEmpty() && existingMemory == null && keyPool.isNotEmpty()) {
-                val totalMessages = todaySummaries.sumOf { it.messageCount }
-                val combinedText = todaySummaries.joinToString("\n\n---\n\n") {
-                    "【Ca: ${it.targetTimeSlot}】\n${it.summaryContent}"
-                }
+                if (todaySummaries.isNotEmpty() && existingMemory == null && keyPool.isNotEmpty()) {
+                    val totalMessages = todaySummaries.sumOf { it.messageCount }
+                    val combinedText = todaySummaries.joinToString("\n\n---\n\n") {
+                        "【Ca: ${it.targetTimeSlot}】\n${it.summaryContent}"
+                    }
 
-                val rollupPrompt = """
-                    Bạn là Thư ký Trưởng Cấp cao. Dưới đây là các bản tóm tắt công việc trong ngày $todayStr:
-                    $combinedText
-                    
-                    YÊU CẦU:
-                    Hãy cô đọng toàn bộ thành 1 "BẢN NHỚ NGÀY TỐI GIẢN" (Executive Daily Digest) tối đa 5-7 gạch đầu dòng:
-                    1. Việc quan trọng nhất đã giải quyết hôm nay
-                    2. Các đầu việc tồn đọng hoặc deadline khẩn cấp cần làm vào ngày mai
-                    3. Ghi chú đặc biệt (nếu có)
-                    Viết thật súc tích, mạch lạc, không rườm rà.
-                """.trimIndent()
+                    val isEn = preferences.getEffectiveAiLanguage() == com.orca.orcaauto.ui.locale.AppLanguage.ENGLISH
+                    val rollupPrompt = if (isEn) {
+                        """
+                        You are an Executive Chief Secretary. Below are today's ($todayStr) shift summaries:
+                        $combinedText
+                        
+                        REQUIREMENT:
+                        Condense everything into 1 minimalist "CONTEXTUAL MEMORY DIGEST" (5-7 concise bullets in English):
+                        1. Most important accomplishments today
+                        2. Remaining open tasks or urgent deadlines for tomorrow
+                        3. Special contextual notes (if any)
+                        """.trimIndent()
+                    } else {
+                        """
+                        Bạn là Thư ký Trưởng Cấp cao. Dưới đây là các bản tóm tắt công việc trong ngày $todayStr:
+                        $combinedText
+                        
+                        YÊU CẦU:
+                        Hãy cô đọng toàn bộ thành 1 "TRÍ NHỚ NGỮ CẢNH CUỐI NGÀY" tối giản (tối đa 5-7 gạch đầu dòng):
+                        1. Việc quan trọng nhất đã giải quyết hôm nay
+                        2. Các đầu việc tồn đọng hoặc deadline khẩn cấp cần làm tiếp
+                        3. Ghi chú ngữ cảnh đặc biệt cần nhớ (nếu có)
+                        Viết thật súc tích, mạch lạc, không rườm rà.
+                        """.trimIndent()
+                    }
 
-                val result = com.orca.orcaauto.domain.ai.SequentialAiQueue.execute(
-                    context = applicationContext,
-                    session = com.orca.orcaauto.data.preferences.SummarySessionConfig.createMainSession(),
-                    prompt = rollupPrompt
-                )
-
-                if (result.isSuccess) {
-                    val (condensed, _) = result.getOrThrow()
-                    val dailyEntity = DailyMemoryEntity(
-                        dateString = todayStr,
-                        timestamp = System.currentTimeMillis(),
-                        totalMessagesProcessed = totalMessages,
-                        shiftCount = todaySummaries.size,
-                        condensedMemory = condensed
+                    val result = com.orca.orcaauto.domain.ai.SequentialAiQueue.execute(
+                        context = applicationContext,
+                        session = com.orca.orcaauto.data.preferences.SummarySessionConfig.createMainSession(),
+                        prompt = rollupPrompt
                     )
-                    database.dailyMemoryDao().insert(dailyEntity)
-                    Log.i(TAG, "Đã tạo thành công Bản Nhớ Ngày (Daily Memory) cho $todayStr")
+
+                    if (result.isSuccess) {
+                        val (condensed, _) = result.getOrThrow()
+                        val dailyEntity = DailyMemoryEntity(
+                            dateString = todayStr,
+                            timestamp = System.currentTimeMillis(),
+                            totalMessagesProcessed = totalMessages,
+                            shiftCount = todaySummaries.size,
+                            condensedMemory = condensed
+                        )
+                        database.dailyMemoryDao().insert(dailyEntity)
+                        Log.i(TAG, "Đã tạo thành công Trí nhớ ngữ cảnh cho $todayStr")
+                    }
                 }
+            } catch (e: Exception) {
+                Log.e(TAG, "Lỗi khi tạo Trí nhớ ngữ cảnh: ${e.message}", e)
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Lỗi khi tạo Daily Memory: ${e.message}", e)
         }
 
         // 3. Clear Raw Notifications older than 24 hours that are already processed (TTL = 24h)

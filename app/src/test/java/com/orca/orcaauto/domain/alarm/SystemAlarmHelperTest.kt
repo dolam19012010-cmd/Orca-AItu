@@ -473,4 +473,55 @@ class SystemAlarmHelperTest {
         assertEquals("ALM_COMPLETED_NEW", match?.alarmId)
         assertTrue("isTaskCompletedFast phải trả về true khi bản ghi mới nhất là COMPLETED", SystemAlarmHelper.isTaskCompletedFast("Gửi báo cáo doanh thu tuần", map))
     }
+
+    @Test
+    fun testParseDateTime_emailDoesNotTriggerTomorrowAnd247RatioDoesNotTriggerJuly() {
+        val base = java.util.Calendar.getInstance().apply {
+            set(2026, java.util.Calendar.OCTOBER, 30, 10, 0, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+
+        val emailTask = SystemAlarmHelper.parseDateTimeFromText("Gửi email báo cáo lúc 15:00", base)
+        assertNotNull(emailTask)
+        assertEquals("Từ 'email' không được kích hoạt 'ngày mai'", 30, emailTask?.calendar?.get(java.util.Calendar.DAY_OF_MONTH))
+        assertEquals(java.util.Calendar.OCTOBER, emailTask?.calendar?.get(java.util.Calendar.MONTH))
+
+        val supportTask = SystemAlarmHelper.parseDateTimeFromText("Trực hỗ trợ 24/7 lúc 16:00", base)
+        assertNotNull(supportTask)
+        assertEquals("'24/7' không phải ngày 24/7", 30, supportTask?.calendar?.get(java.util.Calendar.DAY_OF_MONTH))
+        assertEquals(java.util.Calendar.OCTOBER, supportTask?.calendar?.get(java.util.Calendar.MONTH))
+
+        val realDateTask = SystemAlarmHelper.parseDateTimeFromText("Họp ngày 24/7 lúc 16:00", base)
+        assertNotNull(realDateTask)
+        assertEquals(24, realDateTask?.calendar?.get(java.util.Calendar.DAY_OF_MONTH))
+        assertEquals(java.util.Calendar.JULY, realDateTask?.calendar?.get(java.util.Calendar.MONTH))
+
+        val combinedTask = SystemAlarmHelper.parseDateTimeFromText("Trực 24/7 họp ngày 15/11 lúc 16:00", base)
+        assertNotNull(combinedTask)
+        assertEquals(15, combinedTask?.calendar?.get(java.util.Calendar.DAY_OF_MONTH))
+        assertEquals(java.util.Calendar.NOVEMBER, combinedTask?.calendar?.get(java.util.Calendar.MONTH))
+    }
+
+    @Test
+    fun testParseDateTime_nextWeekSundayAndLeapYearDateLabel() {
+        // Thursday, Nov 26, 2026 -> "chủ nhật tuần sau" must be Sunday, Dec 6, 2026 (10 days ahead)
+        val thursday = java.util.Calendar.getInstance().apply {
+            set(2026, java.util.Calendar.NOVEMBER, 26, 10, 0, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        val nextSun = SystemAlarmHelper.parseDateTimeFromText("Họp chủ nhật tuần sau lúc 09:00", thursday)
+        assertNotNull(nextSun)
+        assertEquals(java.util.Calendar.DECEMBER, nextSun?.calendar?.get(java.util.Calendar.MONTH))
+        assertEquals(6, nextSun?.calendar?.get(java.util.Calendar.DAY_OF_MONTH))
+
+        // Dec 31, 2028 (leap year: day 366) + "ngày mai" -> dateLabel must be "Ngày mai (1/1)", NOT "Hôm nay"
+        val leapDec31 = java.util.Calendar.getInstance().apply {
+            set(2028, java.util.Calendar.DECEMBER, 31, 10, 0, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        val jan1 = SystemAlarmHelper.parseDateTimeFromText("10:00 ngày mai", leapDec31)
+        assertNotNull(jan1)
+        assertEquals(2029, jan1?.calendar?.get(java.util.Calendar.YEAR))
+        assertTrue("Phải là Ngày mai chứ không phải Hôm nay", jan1?.dateLabel?.startsWith("Ngày mai") == true)
+    }
 }

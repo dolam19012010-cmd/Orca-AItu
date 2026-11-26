@@ -97,19 +97,22 @@ object LiveAiChatHelper {
             )
         }
 
-        // 1. Purge old notifications (>24h) and fetch recent messages within 24h
+        // 1. Purge old notifications (>24h) and fetch up to 300 messages so high-volume chats never starve quiet VIP sessions
         val cutoff24h = System.currentTimeMillis() - (24 * 60 * 60 * 1000L)
         notifDao.deleteOldNotifications(cutoff24h)
-        val allNotifications = notifDao.getNotificationsWithin24Hours(limit = 100)
+        val allNotifications = notifDao.getNotificationsWithin24Hours(limit = 300)
 
         // 2. Filter notifications according to the session rules
         val sessionNotifications = SessionMessageFilter.filter(allNotifications, session)
+
+        val latestSummaryRecord = db.summaryDao().getBestSummaryForSession(session.id)
+        val rawPreviousSummary = if (prefs.isRecentSummaryContextEnabled()) latestSummaryRecord?.summaryContent.orEmpty() else ""
 
         val isPureSummaryRequest = userQueryOrInstruction.isNullOrBlank() ||
                 userQueryOrInstruction.trim() == "Tóm tắt các tin nhắn quan trọng gần đây" ||
                 SessionSummaryIntentDetector.detect(userQueryOrInstruction, listOf(session), session).isSummaryRequest
 
-        if (sessionNotifications.isEmpty() && isPureSummaryRequest) {
+        if (sessionNotifications.isEmpty() && isPureSummaryRequest && rawPreviousSummary.isBlank()) {
             val detail = if (allNotifications.isEmpty()) {
                 "Chưa có tin nhắn nào được ghi nhận trong 24 giờ qua. Vui lòng kiểm tra quyền Đọc Thông Báo trong Cài đặt."
             } else {
@@ -117,6 +120,7 @@ object LiveAiChatHelper {
             }
             return@withContext Result.failure(IllegalStateException(detail))
         }
+        val activeAlarms = if (prefs.isLongTermTasksContextEnabled()) db.smartAlarmDao().getActiveAlarms() else emptyList()
 
         // Prepare effective instruction
         val instructionParts = mutableListOf<String>()
@@ -198,11 +202,22 @@ object LiveAiChatHelper {
         } else {
             prefs.getPromptPersona()
         }
-        val latestSummaryRecord = db.summaryDao().getBestSummaryForSession(session.id)
-        val rawPreviousSummary = if (prefs.isRecentSummaryContextEnabled()) latestSummaryRecord?.summaryContent.orEmpty() else ""
-        val activeAlarms = if (prefs.isLongTermTasksContextEnabled()) db.smartAlarmDao().getActiveAlarms() else emptyList()
         val cancelledTasks = SystemAlarmHelper.filterRecentCancelled(db.smartAlarmDao().getCancelledAlarms())
         val completedTasks = if (prefs.isLongTermTasksContextEnabled()) db.smartAlarmDao().getCompletedAlarms() else emptyList()
+
+        val contextualMemorySnippet = if (prefs.isContextualMemoryRollupEnabled() && prefs.isRecentSummaryContextEnabled()) {
+            try {
+                val recent = db.dailyMemoryDao().getRecentDailyMemories(limit = 1).firstOrNull()
+                val cutoff48h = System.currentTimeMillis() - (48L * 3600_000L)
+                if (recent != null && recent.timestamp >= cutoff48h) {
+                    "[${recent.dateString}]\n${recent.condensedMemory}"
+                } else ""
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                ""
+            }
+        } else ""
 
         val previousSummary = if (cancelledTasks.isNotEmpty() && rawPreviousSummary.isNotBlank()) {
             tagCancelledTasksInSummary(rawPreviousSummary, cancelledTasks)
@@ -228,7 +243,8 @@ object LiveAiChatHelper {
             timezoneId = prefs.getUserTimezone(),
             autoCompleteOverdue = session.autoCompleteOverdue,
             language = effectiveAiLang,
-            notesSnippet = notesSnippet
+            notesSnippet = notesSnippet,
+            contextualMemorySnippet = contextualMemorySnippet
         )
 
         // =========================================================================

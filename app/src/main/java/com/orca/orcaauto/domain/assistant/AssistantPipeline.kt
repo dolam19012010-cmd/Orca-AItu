@@ -182,6 +182,26 @@ class AssistantPipeline(
 
             val sessions = userPrefs?.loadSessions() ?: userPrefs?.sessionsFlow?.value ?: emptyList()
             val currentSession = sessions.find { it.id == targetSessionId }
+            val timezoneId = userPrefs?.getUserTimezone() ?: "Asia/Ho_Chi_Minh"
+            val effectiveLanguage = when (currentSession?.safeAiLanguage) {
+                "vi" -> com.orca.orcaauto.ui.locale.AppLanguage.VIETNAMESE
+                "en" -> com.orca.orcaauto.ui.locale.AppLanguage.ENGLISH
+                else -> userPrefs?.getEffectiveAiLanguage() ?: com.orca.orcaauto.ui.locale.AppLanguage.VIETNAMESE
+            }
+            val customFixedContext = currentSession?.customFixedContext?.takeIf { it.isNotBlank() }
+                ?: userPrefs?.getCustomFixedContext().orEmpty()
+            val recentContextualMemory = if (userPrefs == null || (userPrefs.isContextualMemoryRollupEnabled() && userPrefs.isRecentSummaryContextEnabled())) {
+                try {
+                    val recent = context?.let { AppDatabase.getDatabase(it).dailyMemoryDao().getRecentDailyMemories(limit = 1).firstOrNull() }
+                    val cutoff48h = System.currentTimeMillis() - (48L * 3600_000L)
+                    if (recent != null && recent.timestamp >= cutoff48h) "[${recent.dateString}]\n${recent.condensedMemory}" else ""
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Throwable) {
+                    ""
+                }
+            } else ""
+
             val activeKeyPool = if (currentSession != null) {
                 SequentialAiQueue.resolveKeysForSession(currentSession, keyPool).ifEmpty { keyPool }
             } else {
@@ -197,7 +217,11 @@ class AssistantPipeline(
                     stepDescription = "Đang tìm thông tin liên quan..."
                 )
             )
-            val packagedContext = contextPacker.pack(userPrompt)
+            val packagedContext = contextPacker.pack(
+                userPrompt = userPrompt,
+                timezoneId = timezoneId,
+                language = effectiveLanguage
+            )
 
             // =========================================================================
             // GIAI ĐOẠN 2: Điều hướng ngầm Vòng 1 (Round1Router)
@@ -273,7 +297,11 @@ class AssistantPipeline(
                 activeAlarms = activeAlarms,
                 previousSummary = previousSummary,
                 sessionInfo = sessionInfoStr,
-                session = currentSession
+                session = currentSession,
+                timezoneId = timezoneId,
+                language = effectiveLanguage,
+                customFixedContext = customFixedContext,
+                recentContextualMemory = recentContextualMemory
             )
 
             // =========================================================================

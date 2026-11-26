@@ -11,6 +11,7 @@ import com.orca.orcaauto.domain.filter.SessionMessageFilter
 import com.orca.orcaauto.domain.notes.RetrievedNote
 import com.orca.orcaauto.domain.notes.SharedNoteRepository
 import com.orca.orcaauto.domain.prompt.PromptPersona
+import com.orca.orcaauto.ui.locale.AppLanguage
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -34,12 +35,18 @@ class LocalRetriever(
 
     private val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
 
-    fun getRealTimeAnchorLine(timestamp: Long = System.currentTimeMillis()): String =
-        ContextPacker.getRealTimeAnchorLine(timestamp)
+    fun getRealTimeAnchorLine(
+        timestamp: Long = System.currentTimeMillis(),
+        timezoneId: String = "Asia/Ho_Chi_Minh",
+        language: AppLanguage = AppLanguage.VIETNAMESE
+    ): String = ContextPacker.getRealTimeAnchorLine(timestamp, timezoneId, language)
 
     companion object {
-        fun getRealTimeAnchorLine(timestamp: Long = System.currentTimeMillis()): String =
-            ContextPacker.getRealTimeAnchorLine(timestamp)
+        fun getRealTimeAnchorLine(
+            timestamp: Long = System.currentTimeMillis(),
+            timezoneId: String = "Asia/Ho_Chi_Minh",
+            language: AppLanguage = AppLanguage.VIETNAMESE
+        ): String = ContextPacker.getRealTimeAnchorLine(timestamp, timezoneId, language)
     }
 
     suspend fun retrieve(
@@ -51,8 +58,13 @@ class LocalRetriever(
         previousSummary: String? = null,
         sessionInfo: String? = null,
         notesCatalog: List<SharedNoteEntity> = emptyList(),
-        session: SummarySessionConfig? = null
+        session: SummarySessionConfig? = null,
+        timezoneId: String = "Asia/Ho_Chi_Minh",
+        language: AppLanguage = AppLanguage.VIETNAMESE,
+        customFixedContext: String = "",
+        recentContextualMemory: String = ""
     ): RetrievedContext {
+        timeFormat.timeZone = ContextPacker.resolveTimeZone(timezoneId)
         // 1. Retrieve notes from Room DB
         val retrievedNotes = try {
             noteRepository.retrieveNotesForAi(decision.neededNoteIds)
@@ -84,7 +96,7 @@ class LocalRetriever(
         val notificationsSnippet = buildNotificationsSnippet(relevantNotifications)
 
         // 7. Build system instructions and Round 2 prompt
-        val systemInstruction = buildSystemInstruction(persona)
+        val systemInstruction = buildSystemInstruction(persona, language)
         val assembledPrompt = buildRound2Prompt(
             userPrompt = userPrompt,
             notesSnippet = notesSnippet,
@@ -92,7 +104,11 @@ class LocalRetriever(
             activeAlarms = resolvedAlarms,
             previousSummary = previousSummary,
             sessionInfo = sessionInfo,
-            catalogSnippet = catalogSnippet
+            catalogSnippet = catalogSnippet,
+            timezoneId = timezoneId,
+            language = language,
+            customFixedContext = customFixedContext,
+            recentContextualMemory = recentContextualMemory
         )
 
         return RetrievedContext(
@@ -169,7 +185,7 @@ class LocalRetriever(
         session: SummarySessionConfig? = null
     ): List<NotificationEntity> {
         val all24h = try {
-            notificationDao.getNotificationsWithin24Hours(limit = 100)
+            notificationDao.getNotificationsWithin24Hours(limit = 300)
         } catch (e: Exception) {
             emptyList()
         }.filter { it.id !in excludedNotificationIds }
@@ -223,13 +239,21 @@ class LocalRetriever(
         return MessageCoalescer.formatForPrompt(coalesced, withTicketIds = false)
     }
 
-    private fun buildSystemInstruction(persona: PromptPersona = PromptPersona.GENTLE_ASSISTANT): String {
+    private fun buildSystemInstruction(
+        persona: PromptPersona = PromptPersona.GENTLE_ASSISTANT,
+        language: AppLanguage = AppLanguage.VIETNAMESE
+    ): String {
+        val languageDirective = if (language == AppLanguage.ENGLISH) {
+            "You MUST answer the user accurately, naturally, and politely in ENGLISH (unless the user explicitly asks to translate into another language)."
+        } else {
+            "Nhiệm vụ của bạn là trả lời câu hỏi của người dùng một cách chính xác, tự nhiên, lịch sự bằng tiếng Việt."
+        }
         return """
-        ${persona.systemRole}
-        Nhiệm vụ của bạn là trả lời câu hỏi của người dùng một cách chính xác, tự nhiên, lịch sự bằng tiếng Việt.
+        ${persona.getSystemRole(language)}
+        $languageDirective
         
         PHONG CÁCH VÀ THÁI ĐỘ:
-        ${persona.promptInstructions}
+        ${persona.getPromptInstructions(language)}
         - Hãy trả lời một cách tự nhiên, mạch lạc, trực tiếp vào trọng tâm câu hỏi của người dùng.
         - TUYỆT ĐỐI KHÔNG tự động chia tiêu đề cứng như 'Lời nhắn nhẹ nhàng' hay 'Lưu ý tinh tế' trừ khi người dùng yêu cầu tóm tắt phiên làm việc.
         
@@ -289,15 +313,31 @@ class LocalRetriever(
         activeAlarms: List<SmartAlarmEntity> = emptyList(),
         previousSummary: String? = null,
         sessionInfo: String? = null,
-        catalogSnippet: String = ""
+        catalogSnippet: String = "",
+        timezoneId: String = "Asia/Ho_Chi_Minh",
+        language: AppLanguage = AppLanguage.VIETNAMESE,
+        customFixedContext: String = "",
+        recentContextualMemory: String = ""
     ): String {
         return buildString {
-            appendLine(getRealTimeAnchorLine())
+            appendLine(getRealTimeAnchorLine(System.currentTimeMillis(), timezoneId, language))
             appendLine()
 
             if (!sessionInfo.isNullOrBlank()) {
                 appendLine("=== THÔNG TIN PHIÊN LÀM VIỆC HIỆN TẠI ===")
                 appendLine(sessionInfo.trim())
+                appendLine()
+            }
+
+            if (customFixedContext.isNotBlank()) {
+                appendLine("=== BỐI CẢNH CỐ ĐỊNH CỦA NGƯỜI DÙNG ===")
+                appendLine(customFixedContext.trim())
+                appendLine()
+            }
+
+            if (recentContextualMemory.isNotBlank()) {
+                appendLine("=== TRÍ NHỚ NGỮ CẢNH GẦN ĐÂY ===")
+                appendLine(recentContextualMemory.trim())
                 appendLine()
             }
 

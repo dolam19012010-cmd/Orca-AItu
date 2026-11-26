@@ -107,8 +107,12 @@ class SummarySessionConfigDeserializer : JsonDeserializer<SummarySessionConfig> 
         val isScheduled = obj.get("isScheduled")?.takeIf { !it.isJsonNull }?.asBoolean ?: true
 
         val scheduledHours = try {
-            obj.get("scheduledHours")?.takeIf { !it.isJsonNull }?.asJsonArray?.mapNotNull { it.asString }?.takeIf { it.isNotEmpty() }
-                ?: listOf("12:00", "18:00")
+            val elem = obj.get("scheduledHours")
+            if (elem == null || elem.isJsonNull) {
+                listOf("12:00", "18:00")
+            } else {
+                elem.asJsonArray.mapNotNull { it.asString }
+            }
         } catch (_: Throwable) {
             listOf("12:00", "18:00")
         }

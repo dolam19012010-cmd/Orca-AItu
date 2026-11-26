@@ -59,10 +59,10 @@ class SummaryWorker(
         }
 
         return try {
-            // 1. Purge notifications older than 24h and fetch messages within 24h (cap at 100)
+            // 1. Purge notifications older than 24h and fetch messages within 24h (cap at 300 so quiet VIP sessions aren't starved)
             val cutoff24h = System.currentTimeMillis() - (24 * 60 * 60 * 1000L)
             database.notificationDao().deleteOldNotifications(cutoff24h)
-            val notificationsIn24h = database.notificationDao().getNotificationsWithin24Hours(limit = 100)
+            val notificationsIn24h = database.notificationDao().getNotificationsWithin24Hours(limit = 300)
 
             if (notificationsIn24h.isEmpty()) {
                 Log.i(TAG, "Không có tin nhắn nào trong 24 giờ qua. Hoàn tất chu kỳ.")
@@ -124,9 +124,26 @@ class SummaryWorker(
             }
 
             if (anySessionSuccess && displaySummaryContent != null && displayModelInfo != null) {
-                // 3. Trigger Status Bar Notification if requested or if Floating Bubble is not available
+                // 3. Pop up Floating Chat Bubble first (in-process if alive; otherwise try startService)
                 val isOverlayActive = com.orca.orcaauto.service.FloatingBubbleService.isOverlayPermissionGranted(applicationContext)
-                val shouldShowStatusBarNotif = preferences.isSummaryStatusBarNotificationEnabled() || !isOverlayActive
+                var bubbleShown = false
+                try {
+                    preferences.setHasUnreadSummary(true)
+                    if (isOverlayActive) {
+                        bubbleShown = com.orca.orcaauto.service.FloatingBubbleService.show(
+                            context = applicationContext,
+                            summaryContent = displaySummaryContent,
+                            modelInfo = displayModelInfo,
+                            sessionId = displaySessionId,
+                            wakeToState1 = true
+                        )
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Không thể hiển thị Bong bóng nổi: ${e.message}")
+                }
+
+                // 4. Trigger Status Bar Notification if enabled, overlay missing, or Android blocked cold background service start
+                val shouldShowStatusBarNotif = preferences.isSummaryStatusBarNotificationEnabled() || !isOverlayActive || !bubbleShown
 
                 if (shouldShowStatusBarNotif) {
                     try {
@@ -144,22 +161,6 @@ class SummaryWorker(
                     } catch (e: Exception) {
                         Log.w(TAG, "Không thể gửi Heads-up Notification: ${e.message}")
                     }
-                }
-
-                // 4. Pop up Floating Chat Bubble (Bong bóng nổi) if permission is granted
-                try {
-                    preferences.setHasUnreadSummary(true)
-                    if (isOverlayActive) {
-                        com.orca.orcaauto.service.FloatingBubbleService.show(
-                            context = applicationContext,
-                            summaryContent = displaySummaryContent,
-                            modelInfo = displayModelInfo,
-                            sessionId = displaySessionId,
-                            wakeToState1 = true
-                        )
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Không thể hiển thị Bong bóng nổi: ${e.message}")
                 }
 
                 rescheduleNextOccurrenceIfNeeded()

@@ -10,17 +10,40 @@ import com.orca.orcaauto.domain.alarm.SystemAlarmHelper
 import com.orca.orcaauto.domain.prompt.AiLanguage
 import com.orca.orcaauto.domain.prompt.PromptPersona
 import com.orca.orcaauto.ui.locale.AppLanguage
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 
 class UserPreferences private constructor(context: Context) {
 
-    private val prefs: SharedPreferences = context.applicationContext.getSharedPreferences(
+    private val appContext: Context = context.applicationContext
+    private val snapshotScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val snapshotLock = Any()
+    @Volatile private var snapshotJob: Job? = null
+
+    private val prefs: SharedPreferences = appContext.getSharedPreferences(
         PREFS_FILENAME,
         Context.MODE_PRIVATE
     )
+
+    private fun scheduleAutoSnapshot() {
+        synchronized(snapshotLock) {
+            snapshotJob?.cancel()
+            snapshotJob = snapshotScope.launch {
+                delay(400L)
+                try {
+                    com.orca.orcaauto.data.backup.BackupManager.saveAutoSnapshot(appContext)
+                } catch (_: Throwable) {}
+            }
+        }
+    }
     private val gson: Gson = GsonBuilder()
         .registerTypeAdapter(SummarySessionConfig::class.java, SummarySessionConfigDeserializer())
         .create()
@@ -111,6 +134,12 @@ class UserPreferences private constructor(context: Context) {
     private val _assistantThinkingLevelFlow = MutableStateFlow(getAssistantThinkingLevel())
     val assistantThinkingLevelFlow: StateFlow<AssistantThinkingLevel> = _assistantThinkingLevelFlow.asStateFlow()
 
+    private val _summaryStatusBarNotifFlow = MutableStateFlow(isSummaryStatusBarNotificationEnabled())
+    val summaryStatusBarNotifFlow: StateFlow<Boolean> = _summaryStatusBarNotifFlow.asStateFlow()
+
+    private val _contextualMemoryEnabledFlow = MutableStateFlow(isContextualMemoryRollupEnabled())
+    val contextualMemoryEnabledFlow: StateFlow<Boolean> = _contextualMemoryEnabledFlow.asStateFlow()
+
     private fun loadKeyPool(): List<ApiKeyConfig> {
         val json = try {
             prefs.getString(KEY_API_KEY_POOL, null)
@@ -148,6 +177,7 @@ class UserPreferences private constructor(context: Context) {
         try {
             val json = gson.toJson(list)
             prefs.edit().putString(KEY_API_KEY_POOL, json).apply()
+            scheduleAutoSnapshot()
         } catch (e: Throwable) {
             android.util.Log.e("UserPreferences", "Không thể lưu KeyPool: ${e.message}")
         }
@@ -193,6 +223,7 @@ class UserPreferences private constructor(context: Context) {
     fun setCustomFixedContext(text: String) {
         try {
             prefs.edit().putString(KEY_CUSTOM_FIXED_CONTEXT, text.trim()).apply()
+            scheduleAutoSnapshot()
         } catch (e: Throwable) {
             android.util.Log.e("UserPreferences", "Lỗi setCustomFixedContext: ${e.message}")
         }
@@ -211,6 +242,7 @@ class UserPreferences private constructor(context: Context) {
     fun setPromptPersona(persona: PromptPersona) {
         try {
             prefs.edit().putString(KEY_PROMPT_PERSONA, persona.id).apply()
+            scheduleAutoSnapshot()
         } catch (e: Throwable) {
             android.util.Log.e("UserPreferences", "Lỗi setPromptPersona: ${e.message}")
         }
@@ -238,6 +270,7 @@ class UserPreferences private constructor(context: Context) {
         val sorted = hours.map { it.trim() }.filter { it.matches(Regex("^([01]?[0-9]|2[0-3]):[0-5][0-9]$")) }.sorted()
         try {
             prefs.edit().putString(KEY_SCHEDULED_HOURS, gson.toJson(sorted)).apply()
+            scheduleAutoSnapshot()
         } catch (e: Throwable) {
             android.util.Log.e("UserPreferences", "Lỗi setScheduledHours: ${e.message}")
         }
@@ -254,6 +287,7 @@ class UserPreferences private constructor(context: Context) {
         current.sort()
         try {
             prefs.edit().putString(KEY_SCHEDULED_HOURS, gson.toJson(current)).apply()
+            scheduleAutoSnapshot()
         } catch (e: Throwable) {
             android.util.Log.e("UserPreferences", "Lỗi addScheduledHour: ${e.message}")
         }
@@ -265,6 +299,7 @@ class UserPreferences private constructor(context: Context) {
         val current = getScheduledHours().filter { it != hourStr.trim() }
         try {
             prefs.edit().putString(KEY_SCHEDULED_HOURS, gson.toJson(current)).apply()
+            scheduleAutoSnapshot()
         } catch (e: Throwable) {
             android.util.Log.e("UserPreferences", "Lỗi removeScheduledHour: ${e.message}")
         }
@@ -457,6 +492,26 @@ class UserPreferences private constructor(context: Context) {
 
     fun setSummaryStatusBarNotificationEnabled(enabled: Boolean) {
         prefs.edit().putBoolean(KEY_SUMMARY_STATUS_BAR_NOTIF, enabled).apply()
+        _summaryStatusBarNotifFlow.value = enabled
+        scheduleAutoSnapshot()
+    }
+
+    fun isContextualMemoryRollupEnabled(): Boolean {
+        return try {
+            prefs.getBoolean(KEY_CONTEXTUAL_MEMORY_ENABLED, true)
+        } catch (_: Throwable) {
+            true
+        }
+    }
+
+    fun setContextualMemoryRollupEnabled(enabled: Boolean) {
+        try {
+            prefs.edit().putBoolean(KEY_CONTEXTUAL_MEMORY_ENABLED, enabled).apply()
+            _contextualMemoryEnabledFlow.value = enabled
+            scheduleAutoSnapshot()
+        } catch (e: Throwable) {
+            android.util.Log.e("UserPreferences", "Lỗi setContextualMemoryRollupEnabled: ${e.message}")
+        }
     }
 
     fun getBubbleDisplayMode(): BubbleDisplayMode = try {
@@ -613,6 +668,20 @@ class UserPreferences private constructor(context: Context) {
         return emptyMap()
     }
 
+    fun setTaskNotesMap(notes: Map<String, String>) {
+        try {
+            prefs.edit().putString(KEY_TASK_NOTES, gson.toJson(notes)).apply()
+        } catch (_: Throwable) {}
+    }
+
+    fun setPinnedTaskTitles(titles: Set<String>) {
+        try {
+            prefs.edit().putString(KEY_PINNED_TASKS, gson.toJson(titles)).apply()
+        } catch (_: Throwable) {}
+    }
+
+    fun getAllFilterRules(): Map<String, AppFilterRule> = _filterRulesFlow.value
+
     fun getAppFilterRule(packageName: String): AppFilterRule {
         val allRules = _filterRulesFlow.value
         return allRules[packageName] ?: AppFilterRule(appPackage = packageName)
@@ -624,6 +693,7 @@ class UserPreferences private constructor(context: Context) {
         val json = gson.toJson(allRules)
         try {
             prefs.edit().putString(KEY_APP_FILTER_RULES, json).apply()
+            scheduleAutoSnapshot()
         } catch (e: Throwable) {
             android.util.Log.e("UserPreferences", "Lỗi saveAppFilterRule: ${e.message}")
         }
@@ -690,7 +760,7 @@ class UserPreferences private constructor(context: Context) {
             s.copy(
                 promptPersonaId = if (s.promptPersonaId.isNullOrBlank()) "gentle_assistant" else s.promptPersonaId,
                 customFixedContext = s.customFixedContext ?: "",
-                scheduledHours = if (s.scheduledHours.isNullOrEmpty()) listOf("12:00", "18:00") else s.scheduledHours,
+                scheduledHours = s.scheduledHours ?: emptyList(),
                 aiLanguage = if (s.aiLanguage.isNullOrBlank()) "auto" else s.aiLanguage,
                 whitelist = s.whitelist ?: emptySet(),
                 banlist = s.banlist ?: emptySet(),
@@ -704,7 +774,7 @@ class UserPreferences private constructor(context: Context) {
             result.add(0, SummarySessionConfig.createMainSession())
         } else {
             val existingMain = result[mainIndex]
-            val safeName = if (existingMain.name.isBlank() || existingMain.name.contains("Phi")) "Phi\u00EAn ch\u00EDnh" else existingMain.name
+            val safeName = if (existingMain.name.isBlank() || existingMain.name.contains("?") || existingMain.name.contains("\uFFFD")) "Phi\u00EAn ch\u00EDnh" else existingMain.name
             val safeEmoji = if (existingMain.iconEmoji.isBlank() || existingMain.iconEmoji.contains("?") || existingMain.iconEmoji.length > 4) "\u26A1" else existingMain.iconEmoji
             result[mainIndex] = existingMain.copy(
                 isMain = true,
@@ -744,6 +814,7 @@ class UserPreferences private constructor(context: Context) {
                 cachedSessions = sorted
                 _sessionsFlow.value = sorted
                 prefs.edit().putString(KEY_SUMMARY_SESSIONS, gson.toJson(sorted)).apply()
+                scheduleAutoSnapshot()
             } catch (e: Throwable) {
                 android.util.Log.e("UserPreferences", "Lỗi saveSessions: ${e.message}")
             }
@@ -817,6 +888,7 @@ class UserPreferences private constructor(context: Context) {
         try {
             prefs.edit().putString(KEY_APP_LANGUAGE, language.code).apply()
             _appLanguageFlow.value = language
+            scheduleAutoSnapshot()
         } catch (e: Throwable) {
             android.util.Log.e("UserPreferences", "Lỗi setAppLanguage: ${e.message}")
         }
@@ -831,6 +903,7 @@ class UserPreferences private constructor(context: Context) {
         try {
             prefs.edit().putString(KEY_AI_LANGUAGE, language.code).apply()
             _aiLanguageFlow.value = language
+            scheduleAutoSnapshot()
         } catch (e: Throwable) {
             android.util.Log.e("UserPreferences", "Lỗi setAiLanguage: ${e.message}")
         }
@@ -870,6 +943,7 @@ class UserPreferences private constructor(context: Context) {
         private const val KEY_TASK_NOTES = "key_task_notes"
         private const val KEY_PINNED_TASKS = "key_pinned_tasks"
         private const val KEY_ASSISTANT_THINKING_LEVEL = "key_assistant_thinking_level"
+        private const val KEY_CONTEXTUAL_MEMORY_ENABLED = "key_contextual_memory_enabled"
 
         const val PACKAGE_ZALO = "com.zing.zalo"
         const val PACKAGE_TELEGRAM = "org.telegram.messenger"

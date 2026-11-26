@@ -276,10 +276,14 @@ class BubbleDialogRenderer(
         val targetCal = (parsedDateTime?.calendar?.clone() as? Calendar) ?: Calendar.getInstance().apply {
             add(Calendar.HOUR_OF_DAY, 1)
         }
+        existingAlarm?.takeIf {
+            (it.status == SmartAlarmStatus.ACTIVE || it.status == SmartAlarmStatus.PROPOSED) &&
+                it.targetTimeMillis > System.currentTimeMillis()
+        }?.let { targetCal.timeInMillis = it.targetTimeMillis }
         var hour = targetCal.get(Calendar.HOUR_OF_DAY)
         var minute = targetCal.get(Calendar.MINUTE)
-        var cascadeMode = AlarmCascadeMode.X1
-        var cascadeIntervalMinutes = 15
+        var cascadeMode = existingAlarm?.cascadeMode?.let { AlarmCascadeMode.fromCode(it) } ?: AlarmCascadeMode.X1
+        var cascadeIntervalMinutes = existingAlarm?.intervalMinutes?.coerceIn(5, 60) ?: 15
         var isAlarmEnabled = existingAlarm?.status == SmartAlarmStatus.ACTIVE
 
         val modalScrim = FrameLayout(context).apply {
@@ -496,6 +500,8 @@ class BubbleDialogRenderer(
             timeTv.text = String.format(Locale.getDefault(), "%02d:%02d", hour, minute)
             targetCal.set(Calendar.HOUR_OF_DAY, hour)
             targetCal.set(Calendar.MINUTE, minute)
+            targetCal.set(Calendar.SECOND, 0)
+            targetCal.set(Calendar.MILLISECOND, 0)
         }
 
         // Delta buttons (-15, -5, +5, +15)
@@ -603,7 +609,7 @@ class BubbleDialogRenderer(
             }
         }
 
-        val intervalOptions = listOf(5, 10, 15, 30)
+        val intervalOptions = listOf(5, 10, 15, 20, 30)
         val intervalViews = mutableListOf<TextView>()
         intervalOptions.forEach { minutes ->
             val intervalBtn = TextView(context).apply {
@@ -660,7 +666,6 @@ class BubbleDialogRenderer(
                 isClickable = true
                 setOnClickListener {
                     val activeAlarmId = existingAlarm?.alarmId ?: alarmId
-                    SystemAlarmHelper.disarmAlarmHardwareOnly(context, cleanTitle, activeAlarmId)
                     val proposedTime = parsedDateTime?.timeLabel ?: "Hẹn giờ"
                     val generatedAlarmId = SystemAlarmHelper.generateAlarmId(cleanTitle, targetCal)
                     val disarmed = (existingAlarm ?: SmartAlarmEntity(
@@ -678,13 +683,7 @@ class BubbleDialogRenderer(
                         entity = disarmed
                     )
 
-                    serviceScope.launch {
-                        try {
-                            val dao = AppDatabase.getDatabase(context).smartAlarmDao()
-                            dao.updateStatus(activeAlarmId, SmartAlarmStatus.PROPOSED)
-                            dao.updateStatusByTitle(cleanTitle, SmartAlarmStatus.PROPOSED)
-                        } catch (_: Exception) {}
-                    }
+                    SystemAlarmHelper.markTaskProposed(context, cleanTitle, activeAlarmId, generatedAlarmId)
                     isAlarmEnabled = false
                     checkTv.text = "☐"
                     checkTv.setTextColor(Color.parseColor("#94A3B8"))
@@ -754,15 +753,25 @@ class BubbleDialogRenderer(
                     )
                     res.onSuccess {
                         val activeAlarmId = existingAlarm?.alarmId ?: alarmId
-                        val proposedTime = parsedDateTime?.timeLabel ?: "Hẹn giờ"
+                        val savedTimeLabel = String.format(Locale.getDefault(), "%02d:%02d (%s)", targetCal.get(Calendar.HOUR_OF_DAY), targetCal.get(Calendar.MINUTE), cascadeMode.code)
                         val generatedAlarmId = SystemAlarmHelper.generateAlarmId(cleanTitle, targetCal)
                         val armed = (existingAlarm ?: SmartAlarmEntity(
-                            alarmId = activeAlarmId,
+                            alarmId = generatedAlarmId,
                             taskTitle = cleanTitle,
                             targetTimeMillis = targetCal.timeInMillis,
-                            targetDateLabel = proposedTime,
+                            targetDateLabel = savedTimeLabel,
+                            cascadeMode = cascadeMode.code,
+                            intervalMinutes = cascadeIntervalMinutes,
                             status = SmartAlarmStatus.ACTIVE
-                        )).copy(status = SmartAlarmStatus.ACTIVE, updatedAt = System.currentTimeMillis())
+                        )).copy(
+                            alarmId = generatedAlarmId,
+                            targetTimeMillis = targetCal.timeInMillis,
+                            targetDateLabel = savedTimeLabel,
+                            cascadeMode = cascadeMode.code,
+                            intervalMinutes = cascadeIntervalMinutes,
+                            status = SmartAlarmStatus.ACTIVE,
+                            updatedAt = System.currentTimeMillis()
+                        )
 
                         taskBoardController?.onAlarmStateUpdated(
                             alarmId = activeAlarmId,
@@ -772,14 +781,12 @@ class BubbleDialogRenderer(
                         )
 
                         val pinMsg = if (isPinned) " (Đã ghim ưu tiên)" else ""
-                        Toast.makeText(context, "Đã lên lịch báo thức$pinMsg (${parsedDateTime?.dateLabel ?: "Hôm nay"})!", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "Đã lên lịch báo thức$pinMsg ($savedTimeLabel)!", Toast.LENGTH_SHORT).show()
                     }.onFailure { err ->
                         Toast.makeText(context, "Lỗi đặt báo thức: ${err.message}", Toast.LENGTH_SHORT).show()
                     }
                 } else {
                     val activeAlarmId = existingAlarm?.alarmId ?: alarmId
-                    SystemAlarmHelper.disarmAlarmHardwareOnly(context, cleanTitle, activeAlarmId)
-
                     val proposedTime = parsedDateTime?.timeLabel ?: "Hẹn giờ"
                     val generatedAlarmId = SystemAlarmHelper.generateAlarmId(cleanTitle, targetCal)
                     val disarmed = (existingAlarm ?: SmartAlarmEntity(
@@ -797,13 +804,7 @@ class BubbleDialogRenderer(
                         entity = disarmed
                     )
 
-                    serviceScope.launch {
-                        try {
-                            val dao = AppDatabase.getDatabase(context).smartAlarmDao()
-                            dao.updateStatus(activeAlarmId, SmartAlarmStatus.PROPOSED)
-                            dao.updateStatusByTitle(cleanTitle, SmartAlarmStatus.PROPOSED)
-                        } catch (_: Exception) {}
-                    }
+                    SystemAlarmHelper.markTaskProposed(context, cleanTitle, activeAlarmId, generatedAlarmId)
 
                     val pinMsg = if (isPinned) "Đã ghim nhiệm vụ lên đầu!" else "Đã lưu thiết lập nhiệm vụ!"
                     Toast.makeText(context, pinMsg, Toast.LENGTH_SHORT).show()

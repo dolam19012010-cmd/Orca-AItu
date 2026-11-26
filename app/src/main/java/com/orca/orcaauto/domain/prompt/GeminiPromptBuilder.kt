@@ -30,7 +30,8 @@ object GeminiPromptBuilder {
         timezoneId: String = "Asia/Ho_Chi_Minh",
         autoCompleteOverdue: Boolean = false,
         language: AppLanguage = AppLanguage.VIETNAMESE,
-        notesSnippet: String = ""
+        notesSnippet: String = "",
+        contextualMemorySnippet: String = ""
     ): String {
         return if (language == AppLanguage.ENGLISH) {
             buildEnglishPrompt(
@@ -44,7 +45,8 @@ object GeminiPromptBuilder {
                 completedTasks = completedTasks,
                 timezoneId = timezoneId,
                 autoCompleteOverdue = autoCompleteOverdue,
-                notesSnippet = notesSnippet
+                notesSnippet = notesSnippet,
+                contextualMemorySnippet = contextualMemorySnippet
             )
         } else {
             buildVietnamesePrompt(
@@ -58,7 +60,8 @@ object GeminiPromptBuilder {
                 completedTasks = completedTasks,
                 timezoneId = timezoneId,
                 autoCompleteOverdue = autoCompleteOverdue,
-                notesSnippet = notesSnippet
+                notesSnippet = notesSnippet,
+                contextualMemorySnippet = contextualMemorySnippet
             )
         }
     }
@@ -74,7 +77,8 @@ object GeminiPromptBuilder {
         completedTasks: List<SmartAlarmEntity>,
         timezoneId: String,
         autoCompleteOverdue: Boolean,
-        notesSnippet: String
+        notesSnippet: String,
+        contextualMemorySnippet: String
     ): String {
         val tz = try { java.util.TimeZone.getTimeZone(timezoneId) } catch (_: Exception) { java.util.TimeZone.getDefault() }
         val localizedDateFormat = SimpleDateFormat("EEEE, 'ngày' dd/MM/yyyy 'lúc' HH:mm", Locale("vi", "VN")).apply {
@@ -135,6 +139,13 @@ object GeminiPromptBuilder {
         if (customFixedContext.isNotBlank()) {
             contentBuilder.append("=== BỐI CẢNH CỦA NGƯỜI DÙNG ===\n")
             contentBuilder.append(customFixedContext.trim())
+            contentBuilder.append("\n\n")
+        }
+
+        // 8. Recent Contextual Memory (condensed digest from recent days)
+        if (contextualMemorySnippet.isNotBlank()) {
+            contentBuilder.append("=== TRÍ NHỚ NGỮ CẢNH GẦN ĐÂY ===\n")
+            contentBuilder.append(contextualMemorySnippet.trim().take(1500))
             contentBuilder.append("\n\n")
         }
 
@@ -229,7 +240,8 @@ object GeminiPromptBuilder {
         completedTasks: List<SmartAlarmEntity>,
         timezoneId: String,
         autoCompleteOverdue: Boolean,
-        notesSnippet: String
+        notesSnippet: String,
+        contextualMemorySnippet: String
     ): String {
         val tz = try { java.util.TimeZone.getTimeZone(timezoneId) } catch (_: Exception) { java.util.TimeZone.getDefault() }
         val localizedDateFormat = SimpleDateFormat("EEEE, MMMM dd, yyyy 'at' HH:mm", Locale.US).apply {
@@ -289,6 +301,13 @@ object GeminiPromptBuilder {
         if (customFixedContext.isNotBlank()) {
             contentBuilder.append("=== USER CONTEXT ===\n")
             contentBuilder.append(customFixedContext.trim())
+            contentBuilder.append("\n\n")
+        }
+
+        // 8. Recent Contextual Memory
+        if (contextualMemorySnippet.isNotBlank()) {
+            contentBuilder.append("=== RECENT CONTEXTUAL MEMORY ===\n")
+            contentBuilder.append(contextualMemorySnippet.trim().take(1500))
             contentBuilder.append("\n\n")
         }
 

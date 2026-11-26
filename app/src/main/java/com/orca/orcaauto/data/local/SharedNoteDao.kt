@@ -37,6 +37,9 @@ interface SharedNoteDao {
     @Query("SELECT * FROM shared_notes WHERE isDeleted = 0 ORDER BY isPinned DESC, updatedAt DESC")
     suspend fun getActiveNotes(): List<SharedNoteEntity>
 
+    @Query("SELECT * FROM shared_notes ORDER BY updatedAt DESC")
+    suspend fun getAllNotesIncludingTrash(): List<SharedNoteEntity>
+
     @Query("SELECT * FROM shared_notes WHERE isDeleted = 1 ORDER BY updatedAt DESC")
     fun getTrashNotesFlow(): Flow<List<SharedNoteEntity>>
 

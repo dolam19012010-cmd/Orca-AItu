@@ -129,7 +129,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.orca.orcaauto.data.local.AppDatabase
-import com.orca.orcaauto.data.local.DailyMemoryEntity
 import com.orca.orcaauto.data.local.NotificationEntity
 import com.orca.orcaauto.data.local.SmartAlarmEntity
 import com.orca.orcaauto.data.local.SmartAlarmStatus
@@ -1266,6 +1265,7 @@ fun TwoPartSummaryCard(
             task = task,
             currentAlarmState = stateText,
             currentAlarmId = alarmId,
+            currentAlarmEntity = existingAlarm,
             onDismiss = { selectedTaskForAlarm = null },
             onAlarmSet = { _ ->
                 pinVersion++
@@ -1652,6 +1652,7 @@ fun TaskAlarmConfigDialog(
     task: TaskItem,
     currentAlarmState: String? = null,
     currentAlarmId: String? = null,
+    currentAlarmEntity: SmartAlarmEntity? = null,
     onDismiss: () -> Unit,
     onAlarmSet: (String) -> Unit,
     onAlarmCancelled: () -> Unit = {},
@@ -1668,14 +1669,30 @@ fun TaskAlarmConfigDialog(
         mutableStateOf(currentAlarmState != null)
     }
 
-    val parsedDateTime = remember(task.deadline) {
-        SystemAlarmHelper.parseDateTimeFromText(task.deadline)
+    val parsedDateTime = remember(task.deadline, currentAlarmEntity?.targetTimeMillis) {
+        val base = SystemAlarmHelper.parseDateTimeFromText(task.deadline)
+        val existingMillis = currentAlarmEntity?.targetTimeMillis ?: 0L
+        if (currentAlarmEntity != null && existingMillis > System.currentTimeMillis()) {
+            val cal = Calendar.getInstance().apply { timeInMillis = existingMillis }
+            val timeLbl = String.format(Locale.getDefault(), "%02d:%02d", cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE))
+            if (base != null) {
+                base.copy(calendar = cal, timeLabel = timeLbl)
+            } else {
+                com.orca.orcaauto.domain.alarm.ParsedDateTime(cal, false, if (isEn) "Today" else "Hôm nay", timeLbl)
+            }
+        } else {
+            base
+        }
     }
 
     var hour by remember { mutableIntStateOf(parsedDateTime?.calendar?.get(Calendar.HOUR_OF_DAY) ?: 9) }
     var minute by remember { mutableIntStateOf(parsedDateTime?.calendar?.get(Calendar.MINUTE) ?: 0) }
-    var cascadeMode by remember { mutableStateOf(AlarmCascadeMode.X1) }
-    var cascadeIntervalMinutes by remember { mutableIntStateOf(15) }
+    var cascadeMode by remember {
+        mutableStateOf(currentAlarmEntity?.cascadeMode?.let { AlarmCascadeMode.fromCode(it) } ?: AlarmCascadeMode.X1)
+    }
+    var cascadeIntervalMinutes by remember {
+        mutableIntStateOf(currentAlarmEntity?.intervalMinutes?.coerceIn(5, 60) ?: 15)
+    }
 
     val targetCalendar = remember(hour, minute, parsedDateTime) {
         val cal = (parsedDateTime?.calendar?.clone() as? Calendar) ?: Calendar.getInstance().apply {
@@ -2279,80 +2296,6 @@ fun RawNotificationCard(
                         )
                     }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-fun DailyMemoryCard(
-    memory: DailyMemoryEntity,
-    onCopy: () -> Unit
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .border(1.dp, AccentEmerald.copy(alpha = 0.5f), RoundedCornerShape(16.dp)),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = SurfaceDark)
-    ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .background(AccentEmerald.copy(alpha = 0.2f), RoundedCornerShape(8.dp)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Bookmark,
-                            contentDescription = null,
-                            tint = AccentEmerald,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Column {
-                        Text(
-                            text = "Bản Nhớ Ngày: ${memory.dateString}",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = AccentEmerald
-                        )
-                        Text(
-                            text = "Tổng hợp từ ${memory.shiftCount} ca (${memory.totalMessagesProcessed} tin) • Lưu vĩnh viễn",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = TextSecondaryDark
-                        )
-                    }
-                }
-
-                IconButton(onClick = onCopy) {
-                    Icon(
-                        imageVector = Icons.Default.ContentCopy,
-                        contentDescription = "Sao chép",
-                        tint = AccentEmerald
-                    )
-                }
-            }
-
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(SurfaceVariantDark.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
-                    .padding(12.dp)
-            ) {
-                Text(
-                    text = memory.condensedMemory,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = TextPrimaryDark,
-                    lineHeight = 20.sp
-                )
             }
         }
     }

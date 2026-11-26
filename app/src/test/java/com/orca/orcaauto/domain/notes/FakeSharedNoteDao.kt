@@ -62,6 +62,10 @@ class FakeSharedNoteDao : SharedNoteDao {
             .sortedWith(compareByDescending<SharedNoteEntity> { it.isPinned }.thenByDescending { it.updatedAt })
     }
 
+    override suspend fun getAllNotesIncludingTrash(): List<SharedNoteEntity> = synchronized(lock) {
+        _notesFlow.value.values.sortedByDescending { it.updatedAt }
+    }
+
     override fun getTrashNotesFlow(): Flow<List<SharedNoteEntity>> {
         return _notesFlow.map { map ->
             map.values

@@ -52,15 +52,16 @@ object SummaryNotificationHelper {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        // 2. PendingIntent for popping up Floating Bubble
-        val bubbleIntent = Intent(context, FloatingBubbleService::class.java).apply {
+        // 2. PendingIntent via BubbleWakeActivity trampoline so Android 8+ never blocks background service launch
+        val bubbleIntent = Intent(context, BubbleWakeActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             putExtra(FloatingBubbleService.EXTRA_SUMMARY_CONTENT, rawSummary.ifBlank { parsed.rawCleanText })
             putExtra(FloatingBubbleService.EXTRA_MODEL_INFO, modelInfo)
             if (sessionId.isNotBlank()) {
                 putExtra(FloatingBubbleService.EXTRA_SESSION_ID, sessionId)
             }
         }
-        val bubblePendingIntent = PendingIntent.getService(
+        val bubblePendingIntent = PendingIntent.getActivity(
             context,
             NOTIFICATION_ID + 1,
             bubbleIntent,

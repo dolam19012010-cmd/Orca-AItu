@@ -46,7 +46,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.orca.orcaauto.data.preferences.UserPreferences
 import com.orca.orcaauto.service.FloatingBubbleService
-import com.orca.orcaauto.service.KeepAliveForegroundService
 import com.orca.orcaauto.service.OemSurvivalHelper
 import com.orca.orcaauto.ui.components.AppWallpaperBackground
 import com.orca.orcaauto.ui.components.OnboardingGuideDialog
@@ -181,9 +180,6 @@ fun MainAppNavHost(
                     // Tự động xóa chấm đỏ thông báo khi người dùng mở ứng dụng xem
                     preferences.setHasUnreadSummary(false)
 
-                    // Đảm bảo dừng triệt để Foreground Service thường trực để không hiển thị thông báo dai dẳng
-                    KeepAliveForegroundService.stop(context)
-
                     val notifGranted = OemSurvivalHelper.isNotificationAccessGranted(context)
                     val batteryIgnored = OemSurvivalHelper.isBatteryOptimizationIgnored(context)
                     val overlayGranted = FloatingBubbleService.isOverlayPermissionGranted(context)
@@ -205,14 +201,9 @@ fun MainAppNavHost(
     // Request POST_NOTIFICATIONS permission safely in Compose after first frame
     val notificationPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
-    ) { _ ->
-        // Không tự động bật KeepAliveForegroundService để giữ thanh thông báo sạch sẽ
-    }
+    ) { _ -> }
 
     androidx.compose.runtime.LaunchedEffect(Unit) {
-        // Dừng Foreground Service thường trực ngay khi khởi động app
-        KeepAliveForegroundService.stop(context)
-
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED

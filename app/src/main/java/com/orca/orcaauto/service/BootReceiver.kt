@@ -38,7 +38,7 @@ class BootReceiver : BroadcastReceiver() {
                         for (alarm in activeAlarms) {
                             val cal = java.util.Calendar.getInstance().apply { timeInMillis = alarm.targetTimeMillis }
                             val mode = com.orca.orcaauto.domain.alarm.AlarmCascadeMode.fromCode(alarm.cascadeMode)
-                            com.orca.orcaauto.domain.alarm.SystemAlarmHelper.scheduleSmartAlarms(context, alarm.taskTitle, cal, mode)
+                            com.orca.orcaauto.domain.alarm.SystemAlarmHelper.scheduleSmartAlarms(context, alarm.taskTitle, cal, mode, alarm.intervalMinutes)
                         }
                         Log.i(TAG, "Đã khôi phục ${activeAlarms.size} báo thức ACTIVE sau khi khởi động máy.")
                     } catch (e: Exception) {

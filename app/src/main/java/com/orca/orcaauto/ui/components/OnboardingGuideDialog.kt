@@ -210,7 +210,7 @@ fun OnboardingGuideDialog(
                                 title = "🔒 Cam kết quyền riêng tư & Bảo mật PII",
                                 steps = listOf(
                                     "AItu chạy hoàn toàn cục bộ trên máy bạn (Local-First).",
-                                    "Bộ lọc PII Sanitizer tự động che giấu số điện thoại, email, địa chỉ trước khi gửi đến AI.",
+                                    "Bộ lọc PII Sanitizer tự động che giấu số điện thoại, email, CCCD/CMND, thẻ/STK ngân hàng và mã OTP/mật khẩu trước khi gửi đến AI (đồng thời giữ nguyên địa chỉ giao hàng/họp để không mất thông tin công việc).",
                                     "Tin nhắn thô không lưu trên bất kỳ máy chủ bên ngoài nào."
                                 )
                             )

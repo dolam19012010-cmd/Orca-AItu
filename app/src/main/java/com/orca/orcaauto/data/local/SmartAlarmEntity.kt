@@ -30,6 +30,7 @@ data class SmartAlarmEntity(
     val targetTimeMillis: Long,             // Exact timestamp in ms
     val targetDateLabel: String,            // Human readable: e.g. "15:30 Hôm nay", "10:00 Ngày mai (31/10)"
     val cascadeMode: String = "x2",         // "x1", "x2", "x3"
+    val intervalMinutes: Int = 15,          // Spacing between cascade pre-alarms (e.g. 5, 10, 15, 20, 30)
     val status: SmartAlarmStatus = SmartAlarmStatus.ACTIVE,
     val isClockAppStaged: Boolean = false,  // true if already injected into Native Phone Clock App
     val clockAppStageTimeMillis: Long = 0L, // when it enters < 24h window (target - 23.5 hours)

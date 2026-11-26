@@ -5,6 +5,7 @@ import com.orca.orcaauto.data.local.NotificationEntity
 import com.orca.orcaauto.domain.filter.NotificationFilter
 import com.orca.orcaauto.domain.notes.NoteCatalogItem
 import com.orca.orcaauto.domain.notes.SharedNoteRepository
+import com.orca.orcaauto.ui.locale.AppLanguage
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -36,8 +37,14 @@ class ContextPacker(
 
     suspend fun pack(
         userPrompt: String,
-        preloadedNotifications: List<NotificationEntity>? = null
+        preloadedNotifications: List<NotificationEntity>? = null,
+        timezoneId: String = "Asia/Ho_Chi_Minh",
+        language: AppLanguage = AppLanguage.VIETNAMESE
     ): PackagedContext {
+        val tz = resolveTimeZone(timezoneId)
+        dateFormat.timeZone = tz
+        timeFormat.timeZone = tz
+
         val catalogItems = try {
             noteRepository.getCatalogForAi()
         } catch (e: Exception) {
@@ -45,7 +52,7 @@ class ContextPacker(
         }
 
         val rawNotifications = preloadedNotifications ?: try {
-            notificationDao.getNotificationsWithin24Hours(limit = 100)
+            notificationDao.getNotificationsWithin24Hours(limit = 300)
         } catch (e: Exception) {
             emptyList()
         }
@@ -82,7 +89,7 @@ class ContextPacker(
         val ticketedDetail = MessageCoalescer.formatForPrompt(coalesceResult, withTicketIds = true)
 
         val fullPrompt = buildString {
-            appendLine(getRealTimeAnchorLine())
+            appendLine(getRealTimeAnchorLine(System.currentTimeMillis(), timezoneId, language))
             appendLine()
             appendLine("=== DANH MỤC KHO GHI CHÚ (MỤC LỤC NHẸ - 0 BYTE NỘI DUNG RIÊNG TƯ) ===")
             appendLine(catalogText)
@@ -160,17 +167,42 @@ class ContextPacker(
         val vnLocale = Locale("vi", "VN")
         val vnTimeZone: TimeZone = TimeZone.getTimeZone("Asia/Ho_Chi_Minh")
 
-        fun getRealTimeAnchorLine(timestamp: Long = System.currentTimeMillis()): String {
-            val date = Date(timestamp)
-            val dayFormat = SimpleDateFormat("EEEE", vnLocale).apply { timeZone = vnTimeZone }
-            val restFormat = SimpleDateFormat("'ngày' dd/MM/yyyy 'lúc' HH:mm", vnLocale).apply { timeZone = vnTimeZone }
-
-            val rawDay = dayFormat.format(date)
-            val capitalizedDay = rawDay.split(" ").joinToString(" ") { word ->
-                word.replaceFirstChar { if (it.isLowerCase()) it.titlecase(vnLocale) else it.toString() }
+        fun resolveTimeZone(timezoneId: String): TimeZone {
+            val clean = timezoneId.trim()
+            if (clean.isBlank()) return vnTimeZone
+            return try {
+                val tz = TimeZone.getTimeZone(clean)
+                if (tz.id.equals("GMT", ignoreCase = true) && !clean.equals("GMT", ignoreCase = true) && !clean.equals("UTC", ignoreCase = true)) {
+                    vnTimeZone
+                } else {
+                    tz
+                }
+            } catch (_: Exception) {
+                vnTimeZone
             }
-            val rest = restFormat.format(date)
-            return "⏰ Thời điểm hiện tại: $capitalizedDay, $rest (Múi giờ: Asia/Ho_Chi_Minh)"
+        }
+
+        fun getRealTimeAnchorLine(
+            timestamp: Long = System.currentTimeMillis(),
+            timezoneId: String = "Asia/Ho_Chi_Minh",
+            language: AppLanguage = AppLanguage.VIETNAMESE
+        ): String {
+            val tz = resolveTimeZone(timezoneId)
+            val date = Date(timestamp)
+            return if (language == AppLanguage.ENGLISH) {
+                val enFormat = SimpleDateFormat("EEEE, MMMM dd, yyyy 'at' HH:mm", Locale.US).apply { timeZone = tz }
+                "⏰ Current Time: ${enFormat.format(date)} (Timezone: ${tz.id})"
+            } else {
+                val dayFormat = SimpleDateFormat("EEEE", vnLocale).apply { timeZone = tz }
+                val restFormat = SimpleDateFormat("'ngày' dd/MM/yyyy 'lúc' HH:mm", vnLocale).apply { timeZone = tz }
+
+                val rawDay = dayFormat.format(date)
+                val capitalizedDay = rawDay.split(" ").joinToString(" ") { word ->
+                    word.replaceFirstChar { if (it.isLowerCase()) it.titlecase(vnLocale) else it.toString() }
+                }
+                val rest = restFormat.format(date)
+                "⏰ Thời điểm hiện tại: $capitalizedDay, $rest (Múi giờ: ${tz.id})"
+            }
         }
 
         fun shouldCompress(totalCount: Int, processedCount: Int): Boolean {

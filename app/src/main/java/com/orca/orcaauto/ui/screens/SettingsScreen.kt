@@ -302,6 +302,8 @@ fun SettingsScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     val preferences = remember { UserPreferences.getInstance(context) }
+    val strings = LocalAppStrings.current
+    val isEnUi = strings.language == AppLanguage.ENGLISH
 
     val keyPool by preferences.keyPoolFlow.collectAsState()
     val zaloEnabled by preferences.zaloEnabledFlow.collectAsState()
@@ -314,6 +316,11 @@ fun SettingsScreen(
     val userTimezone by preferences.userTimezoneFlow.collectAsState()
     val isRecentSummaryContextEnabled by preferences.recentSummaryContextEnabledFlow.collectAsState()
     val isLongTermTasksContextEnabled by preferences.longTermTasksContextEnabledFlow.collectAsState()
+    val isContextualMemoryEnabled by preferences.contextualMemoryEnabledFlow.collectAsState()
+    val summaryStatusBarNotifEnabled by preferences.summaryStatusBarNotifFlow.collectAsState()
+    val contextualMemories by remember {
+        com.orca.orcaauto.data.local.AppDatabase.getDatabase(context).dailyMemoryDao().getAllDailyMemoriesFlow()
+    }.collectAsState(initial = emptyList())
     val wallpaperPath by preferences.wallpaperPathFlow.collectAsState()
     val wallpaperMode by preferences.wallpaperModeFlow.collectAsState()
     val filterRules by preferences.filterRulesFlow.collectAsState()
@@ -371,6 +378,48 @@ fun SettingsScreen(
     var showRestoreDialog by remember { mutableStateOf(false) }
     var restoreJsonInput by remember { mutableStateOf("") }
     var isRestoring by remember { mutableStateOf(false) }
+    var showContextualMemoryDialog by remember { mutableStateOf(false) }
+
+    val backupExportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri: Uri? ->
+        if (uri != null) {
+            isBackingUp = true
+            scope.launch {
+                val res = com.orca.orcaauto.data.backup.BackupManager.exportBackupToUri(context, uri)
+                isBackingUp = false
+                if (res.isSuccess) {
+                    clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(res.getOrThrow()))
+                    Toast.makeText(context, "Đã xuất file sao lưu JSON và sao chép Clipboard!", Toast.LENGTH_LONG).show()
+                } else {
+                    Toast.makeText(context, "Lỗi xuất file: ${res.exceptionOrNull()?.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        } else {
+            scope.launch {
+                val json = com.orca.orcaauto.data.backup.BackupManager.exportBackupJson(context)
+                clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(json))
+                isBackingUp = false
+                Toast.makeText(context, "Đã sao chép toàn bộ mã sao lưu vào Clipboard!", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    val restoreImportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            scope.launch {
+                val res = com.orca.orcaauto.data.backup.BackupManager.readBackupFromUri(context, uri)
+                if (res.isSuccess) {
+                    restoreJsonInput = res.getOrThrow()
+                    Toast.makeText(context, "Đã nạp file sao lưu! Bấm 'Tiến Hành Phục Hồi' để áp dụng.", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(context, "Không thể đọc file: ${res.exceptionOrNull()?.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
 
     // System Permissions tracking
     var isNotificationAccessGranted by remember { mutableStateOf(false) }
@@ -598,7 +647,6 @@ fun SettingsScreen(
             }
         }
 
-        val strings = LocalAppStrings.current
         val appLanguage by preferences.appLanguageFlow.collectAsState()
         val aiLanguage by preferences.aiLanguageFlow.collectAsState()
 
@@ -626,9 +674,9 @@ fun SettingsScreen(
             onToggle = { expandedSectionIndex = if (expandedSectionIndex == 0) null else 0 },
             icon = Icons.Default.Notifications,
             iconBgColor = Color(0xFF3B82F6),
-            title = "Ứng Dụng Quét Thông Báo",
+            title = strings.catFilterTitle,
             subtitle = "${currentSession.name}: Zalo, Telegram, Facebook Messenger",
-            badgeText = "${listOf(zaloEnabled, telegramEnabled, messengerEnabled).count { it }}/3 Bật"
+            badgeText = "${listOf(currentSession.zaloEnabled, currentSession.telegramEnabled, currentSession.messengerEnabled).count { it }}/3 " + if (isEnUi) "On" else "Bật"
         ) {
             AppMonitoredSection(
                 zaloEnabled = currentSession.zaloEnabled,
@@ -660,28 +708,65 @@ fun SettingsScreen(
             onToggle = { expandedSectionIndex = if (expandedSectionIndex == 1) null else 1 },
             icon = Icons.Default.Schedule,
             iconBgColor = Color(0xFF10B981),
-            title = "Khung Gi\u1EDD T\u00F3m T\u1EAFt T\u1EF1 \u0110\u1ED9ng",
-            subtitle = "L\u00EAn l\u1ECBch AI qu\u00E9t th\u00F4ng b\u00E1o cho [${currentSession.name}]",
-            badgeText = "${currentSession.scheduledHours.size} m\u1ED1c (${currentSession.name})"
+            title = strings.catScheduleTitle,
+            subtitle = if (isEnUi) "Schedule AI notification digests for [${currentSession.name}]" else "Lên lịch AI quét thông báo cho [${currentSession.name}]",
+            badgeText = "${currentSession.scheduledHours.size} " + if (isEnUi) "slots" else "mốc (${currentSession.name})"
         ) {
-            ScheduledHoursSection(
-                scheduledHours = currentSession.scheduledHours,
-                onAddHourClick = {
-                    newHourInput = ""
-                    showAddHourDialog = true
-                },
-                onRemoveHour = { hourStr ->
-                    val updatedHours = currentSession.scheduledHours.filterNot { it == hourStr }
-                    val updated = currentSession.copy(scheduledHours = updatedHours)
-                    preferences.saveSession(updated)
-                    if (currentSession.isMain) {
-                        preferences.removeScheduledHour(hourStr)
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                ScheduledHoursSection(
+                    scheduledHours = currentSession.scheduledHours,
+                    onAddHourClick = {
+                        newHourInput = ""
+                        showAddHourDialog = true
+                    },
+                    onRemoveHour = { hourStr ->
+                        val updatedHours = currentSession.scheduledHours.filterNot { it == hourStr }
+                        val updated = currentSession.copy(scheduledHours = updatedHours)
+                        preferences.saveSession(updated)
+                        if (currentSession.isMain) {
+                            preferences.removeScheduledHour(hourStr)
+                        }
                         WorkScheduler.cancelScheduledHour(context, hourStr)
+                        WorkScheduler.scheduleDailySummaries(context)
+                        Toast.makeText(context, "\u0110\u00E3 x\u00F3a m\u1ED1c gi\u1EDD $hourStr c\u1EE7a [${currentSession.name}]", Toast.LENGTH_SHORT).show()
                     }
-                    WorkScheduler.scheduleDailySummaries(context)
-                    Toast.makeText(context, "\u0110\u00E3 x\u00F3a m\u1ED1c gi\u1EDD $hourStr c\u1EE7a [${currentSession.name}]", Toast.LENGTH_SHORT).show()
+                )
+
+                HorizontalDivider(color = GlassBorderSubtle)
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(SurfaceVariantDark.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                        .border(1.dp, CardBorder, RoundedCornerShape(10.dp))
+                        .padding(10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = if (isEnUi) "Show report on status bar" else "Hiện thông báo kết quả trên thanh trạng thái",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold,
+                            color = TextPrimaryDark
+                        )
+                        Text(
+                            text = if (isEnUi) "Also post heads-up summary alerts to Android notification shade" else "Gửi thêm thẻ tóm tắt lên thanh thông báo khi hoàn tất mỗi ca",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = TextSecondaryDark,
+                            fontSize = 11.sp
+                        )
+                    }
+                    Switch(
+                        checked = summaryStatusBarNotifEnabled,
+                        onCheckedChange = { preferences.setSummaryStatusBarNotificationEnabled(it) },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = BackgroundDark,
+                            checkedTrackColor = PrimaryIndigo
+                        )
+                    )
                 }
-            )
+            }
         }
 
         // Category 2: Universal AI Key & Mô hình AI
@@ -690,8 +775,8 @@ fun SettingsScreen(
             onToggle = { expandedSectionIndex = if (expandedSectionIndex == 2) null else 2 },
             icon = Icons.Default.Key,
             iconBgColor = Color(0xFFF59E0B),
-            title = "Universal AI Key & Mô Hình",
-            subtitle = "Gemini, Groq, OpenRouter • Nhấn giữ sửa Model",
+            title = strings.catApiKeyTitle,
+            subtitle = if (isEnUi) "Gemini, Groq, OpenRouter • Long press to switch Model" else "Gemini, Groq, OpenRouter • Nhấn giữ sửa Model",
             badgeText = "${keyPool.size} key"
         ) {
             MultiKeyPoolSection(
@@ -733,19 +818,26 @@ fun SettingsScreen(
             onToggle = { expandedSectionIndex = if (expandedSectionIndex == 99) null else 99 },
             icon = Icons.Default.FilterAlt,
             iconBgColor = Color(0xFF8B5CF6),
-            title = "Qu\u1EA3n L\u00FD \u0110a Phi\u00EAn (App Cloning)",
-            subtitle = "Nh\u00E2n b\u1EA3n c\u1EA5u h\u00ECnh \u0111\u1ED9c l\u1EADp, B\u1ED9 l\u1ECDc ng\u01B0\u1EDDi g\u1EEDi & \u01AFu ti\u00EAn Key",
-            badgeText = "${sessions.size} phi\u00EAn"
+            title = strings.catMultiSessionTitle,
+            subtitle = strings.catMultiSessionSubtitle,
+            badgeText = "${sessions.size} " + if (isEnUi) "sessions" else "phiên"
         ) {
             MultiSessionManagementSection(
                 sessions = sessions,
                 keyPool = keyPool,
                 recentSenders = allRecentSenders,
                 onSaveSession = { session ->
+                    val previousHours = sessions.find { it.id == session.id }?.scheduledHours.orEmpty()
                     preferences.saveSession(session)
+                    previousHours.filterNot { it in session.scheduledHours }.forEach { WorkScheduler.cancelScheduledHour(context, it) }
+                    if (!session.isScheduled) {
+                        session.scheduledHours.forEach { WorkScheduler.cancelScheduledHour(context, it) }
+                    }
+                    WorkScheduler.scheduleDailySummaries(context)
                     Toast.makeText(context, "\u0110\u00E3 l\u01B0u phi\u00EAn '${session.name}'!", Toast.LENGTH_SHORT).show()
                 },
                 onDeleteSession = { sessionId ->
+                    val removedSession = sessions.find { it.id == sessionId }
                     scope.launch {
                         try {
                             com.orca.orcaauto.data.local.AppDatabase.getDatabase(context).summaryDao().deleteBySessionId(sessionId)
@@ -755,6 +847,8 @@ fun SettingsScreen(
                     }
                     val deleted = preferences.deleteSession(sessionId)
                     if (deleted) {
+                        removedSession?.scheduledHours?.forEach { WorkScheduler.cancelScheduledHour(context, it) }
+                        WorkScheduler.scheduleDailySummaries(context)
                         Toast.makeText(context, "\u0110\u00E3 x\u00F3a phi\u00EAn th\u00E0nh c\u00F4ng!", Toast.LENGTH_SHORT).show()
                     }
                 }
@@ -768,8 +862,8 @@ fun SettingsScreen(
             onToggle = { expandedSectionIndex = if (expandedSectionIndex == 3) null else 3 },
             icon = Icons.Default.Psychology,
             iconBgColor = Color(0xFF27272A),
-            title = "Phong C\u00E1ch V\u0103n Phong AI",
-            subtitle = "Chu \u0111\u00E1o, Nghi\u00EAm t\u00FAc, T\u1ED1i gi\u1EA3n, H\u00F3m h\u1EC9nh...",
+            title = strings.catPersonaTitle,
+            subtitle = strings.catPersonaSubtitle,
             badgeText = "${currentSessionPersona.title} (${currentSession.name})"
         ) {
             PersonaStyleSection(
@@ -916,6 +1010,57 @@ fun SettingsScreen(
                         Toast.makeText(context, "\u0110\u00E3 l\u01B0u b\u1ED1i c\u1EA3nh cho [${currentSession.name}]!", Toast.LENGTH_SHORT).show()
                     }
                 )
+
+                HorizontalDivider(color = GlassBorderSubtle)
+
+                // Toggle 4: Trí nhớ ngữ cảnh cô đọng cuối ngày (ẩn sâu trong mục Trí nhớ ngữ cảnh)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(SurfaceVariantDark.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                        .border(1.dp, CardBorder, RoundedCornerShape(10.dp))
+                        .padding(10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = if (isEnUi) "Contextual Memory (23:50 digest)" else "Trí nhớ ngữ cảnh tự động (23:50)",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold,
+                            color = TextPrimaryDark
+                        )
+                        Text(
+                            text = if (isEnUi) "Condense daily work into long-term contextual memory for AI" else "Tổng hợp ngữ cảnh quan trọng cuối ngày để AI ghi nhớ dài hạn qua các ca sau",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = TextSecondaryDark,
+                            fontSize = 11.sp
+                        )
+                    }
+                    Switch(
+                        checked = isContextualMemoryEnabled,
+                        onCheckedChange = { preferences.setContextualMemoryRollupEnabled(it) },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = BackgroundDark,
+                            checkedTrackColor = PrimaryIndigo
+                        )
+                    )
+                }
+
+                OutlinedButton(
+                    onClick = { showContextualMemoryDialog = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentCyan),
+                    border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.45f))
+                ) {
+                    Text(
+                        text = if (isEnUi) "🧠 Manage Contextual Memory Archive (${contextualMemories.size})" else "🧠 Xem & Quản Lý Trí Nhớ Ngữ Cảnh (${contextualMemories.size})",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = AccentCyan
+                    )
+                }
             }
         }
 
@@ -950,9 +1095,9 @@ fun SettingsScreen(
             onToggle = { expandedSectionIndex = if (expandedSectionIndex == 6) null else 6 },
             icon = Icons.Default.Visibility,
             iconBgColor = Color(0xFF27272A),
-            title = "Bong Bóng Chat Nổi AItu",
-            subtitle = "Chu trình 3 trạng thái thông minh & Đánh thức chạm đúp cạnh màn hình",
-            badgeText = "3 Trạng thái",
+            title = strings.catBubbleTitle,
+            subtitle = strings.catBubbleSubtitle,
+            badgeText = if (isEnUi) "3 States" else "3 Trạng thái",
             badgeColor = PrimaryIndigo
         ) {
             BubbleConfigSection(
@@ -1022,8 +1167,8 @@ fun SettingsScreen(
             onToggle = { expandedSectionIndex = if (expandedSectionIndex == 8) null else 8 },
             icon = Icons.Default.Public,
             iconBgColor = Color(0xFF27272A),
-            title = "Múi Giờ & Sao Lưu Dữ Liệu",
-            subtitle = "Múi giờ hệ thống AI, Sao lưu & Khôi phục JSON",
+            title = strings.catTimezoneTitle,
+            subtitle = strings.catTimezoneSubtitle,
             badgeText = userTimezone
         ) {
             TimezoneAndBackupSection(
@@ -1034,19 +1179,8 @@ fun SettingsScreen(
                 },
                 isBackingUp = isBackingUp,
                 onBackupClick = {
-                    isBackingUp = true
-                    scope.launch {
-                        val filePath = com.orca.orcaauto.data.backup.BackupManager.saveBackupToFile(context)
-                        val json = com.orca.orcaauto.data.backup.BackupManager.exportBackupJson(context)
-                        clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(json))
-                        isBackingUp = false
-                        val msg = if (filePath != null) {
-                            "Đã lưu file sao lưu vào Downloads và sao chép vào Clipboard!"
-                        } else {
-                            "Đã sao chép toàn bộ mã sao lưu vào Clipboard!"
-                        }
-                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
-                    }
+                    val timeStamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault()).format(java.util.Date())
+                    backupExportLauncher.launch("AItu_Backup_$timeStamp.json")
                 },
                 onRestoreClick = {
                     restoreJsonInput = ""
@@ -1061,12 +1195,12 @@ fun SettingsScreen(
             onToggle = { expandedSectionIndex = if (expandedSectionIndex == 9) null else 9 },
             icon = Icons.Default.Info,
             iconBgColor = Color(0xFF14B8A6),
-            title = "Hướng Dẫn Sử Dụng Chi Tiết",
-            subtitle = "Lấy API key miễn phí, Cử chỉ nhiệm vụ, Báo thức"
+            title = if (isEnUi) "Detailed User Guide" else "Hướng Dẫn Sử Dụng Chi Tiết",
+            subtitle = if (isEnUi) "Free API keys, task swipe gestures, smart alarms" else "Lấy API key miễn phí, Cử chỉ nhiệm vụ, Báo thức"
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    text = "Cẩm nang hướng dẫn lấy API key miễn phí, cấp quyền hệ thống và các thao tác cử chỉ.",
+                    text = if (isEnUi) "Interactive manual for obtaining free AI API keys, granting system permissions, and gesture controls." else "Cẩm nang hướng dẫn lấy API key miễn phí, cấp quyền hệ thống và các thao tác cử chỉ.",
                     style = MaterialTheme.typography.bodySmall,
                     color = TextSecondaryDark
                 )
@@ -1079,7 +1213,7 @@ fun SettingsScreen(
                 ) {
                     Icon(imageVector = Icons.Default.Info, contentDescription = null, modifier = Modifier.size(16.dp), tint = AccentCyan)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("\uD83D\uDCD6 M\u1EDF C\u1EA9m Nang H\u01B0\u1EDBng D\u1EABn Chi Ti\u1EBFt", fontSize = 12.5.sp, color = TextPrimaryDark)
+                    Text(if (isEnUi) "📖 Open Detailed Guide" else "\uD83D\uDCD6 M\u1EDF C\u1EA9m Nang H\u01B0\u1EDBng D\u1EABn Chi Ti\u1EBFt", fontSize = 12.5.sp, color = TextPrimaryDark)
                 }
             }
         }
@@ -1090,8 +1224,8 @@ fun SettingsScreen(
             onToggle = { expandedSectionIndex = if (expandedSectionIndex == 10) null else 10 },
             icon = Icons.Default.Info,
             iconBgColor = Color(0xFF64748B),
-            title = "Thông Tin Ứng Dụng",
-            subtitle = "CS Orca • v2.4.0 (Build 2026.11.01-Release)"
+            title = strings.catAboutTitle,
+            subtitle = strings.catAboutSubtitle
         ) {
             AppInfoSection()
         }
@@ -1256,6 +1390,7 @@ fun SettingsScreen(
                         )
                         preferences.saveSession(newSession)
                         preferences.setSelectedSessionId(newSession.id)
+                        WorkScheduler.scheduleDailySummaries(context)
                         showCreateSessionDialog = false
                         Toast.makeText(context, "\u0110\u00E3 t\u1EA1o v\u00E0 chuy\u1EC3n sang [${newSession.name}]!", Toast.LENGTH_SHORT).show()
                     },
@@ -1345,26 +1480,42 @@ fun SettingsScreen(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = "Dán đoạn mã sao lưu JSON hoặc bấm nút 'Dán Từ Clipboard' để nạp cấu hình:",
+                        text = "Dán đoạn mã sao lưu JSON, chọn file .json hoặc bấm 'Dán Từ Clipboard' để khôi phục toàn bộ (Key, Ghi chú, Phiên, Bộ lọc, Lịch sử):",
                         style = MaterialTheme.typography.bodySmall,
                         color = TextSecondaryDark
                     )
-                    OutlinedButton(
-                        onClick = {
-                            val clipText = clipboardManager.getText()?.text.orEmpty()
-                            if (clipText.isNotBlank()) {
-                                restoreJsonInput = clipText
-                                Toast.makeText(context, "\u0110\u00E3 d\u00E1n t\u1EEB b\u1ED9 nh\u1EDB t\u1EA1m!", Toast.LENGTH_SHORT).show()
-                            } else {
-                                Toast.makeText(context, "B\u1ED9 nh\u1EDB t\u1EA1m \u0111ang tr\u1ED1ng!", Toast.LENGTH_SHORT).show()
-                            }
-                        },
+                    Row(
                         modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(8.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentCyan),
-                        border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.6f))
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text("\uD83D\uDCCB D\u00E1n T\u1EEB Clipboard", fontSize = 12.sp, color = AccentCyan, fontWeight = FontWeight.Bold)
+                        OutlinedButton(
+                            onClick = {
+                                restoreImportLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
+                            },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentEmerald),
+                            border = BorderStroke(1.dp, AccentEmerald.copy(alpha = 0.6f))
+                        ) {
+                            Text("📂 Chọn File .json", fontSize = 11.5.sp, color = AccentEmerald, fontWeight = FontWeight.Bold)
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                val clipText = clipboardManager.getText()?.text.orEmpty()
+                                if (clipText.isNotBlank()) {
+                                    restoreJsonInput = clipText
+                                    Toast.makeText(context, "\u0110\u00E3 d\u00E1n t\u1EEB b\u1ED9 nh\u1EDB t\u1EA1m!", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    Toast.makeText(context, "B\u1ED9 nh\u1EDB t\u1EA1m \u0111ang tr\u1ED1ng!", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentCyan),
+                            border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.6f))
+                        ) {
+                            Text("\uD83D\uDCCB D\u00E1n Clipboard", fontSize = 11.5.sp, color = AccentCyan, fontWeight = FontWeight.Bold)
+                        }
                     }
                     OutlinedTextField(
                         value = restoreJsonInput,
@@ -1417,6 +1568,112 @@ fun SettingsScreen(
             dismissButton = {
                 TextButton(onClick = { showRestoreDialog = false }, enabled = !isRestoring) {
                     Text("Hủy", color = TextSecondaryDark)
+                }
+            },
+            containerColor = SurfaceDark
+        )
+    }
+
+    if (showContextualMemoryDialog) {
+        AlertDialog(
+            onDismissRequest = { showContextualMemoryDialog = false },
+            title = {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "🧠 Kho Trí Nhớ Ngữ Cảnh",
+                        fontWeight = FontWeight.Bold,
+                        color = TextPrimaryDark,
+                        fontSize = 16.sp
+                    )
+                    if (contextualMemories.isNotEmpty()) {
+                        TextButton(
+                            onClick = {
+                                scope.launch(Dispatchers.IO) {
+                                    com.orca.orcaauto.data.local.AppDatabase.getDatabase(context).dailyMemoryDao().clearAll()
+                                }
+                                Toast.makeText(context, "Đã dọn sạch kho trí nhớ ngữ cảnh!", Toast.LENGTH_SHORT).show()
+                            }
+                        ) {
+                            Text("Xóa hết", color = AccentRose, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            },
+            text = {
+                if (contextualMemories.isEmpty()) {
+                    Text(
+                        text = "Chưa có bản trí nhớ ngữ cảnh nào được tổng hợp. Hệ thống tự động cô đọng vào 23:50 mỗi ngày khi bật tính năng này.",
+                        color = TextSecondaryDark,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 380.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        items(contextualMemories, key = { it.id }) { memory ->
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .border(1.dp, AccentEmerald.copy(alpha = 0.35f), RoundedCornerShape(10.dp)),
+                                shape = RoundedCornerShape(10.dp),
+                                colors = CardDefaults.cardColors(containerColor = GlassSurfaceInner)
+                            ) {
+                                Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "📅 ${memory.dateString} • ${memory.shiftCount} ca (${memory.totalMessagesProcessed} tin)",
+                                            color = AccentEmerald,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 11.5.sp
+                                        )
+                                        Row {
+                                            IconButton(
+                                                onClick = {
+                                                    clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(memory.condensedMemory))
+                                                    Toast.makeText(context, "Đã sao chép trí nhớ ngữ cảnh!", Toast.LENGTH_SHORT).show()
+                                                },
+                                                modifier = Modifier.size(28.dp)
+                                            ) {
+                                                Icon(Icons.Default.Check, contentDescription = "Sao chép", tint = AccentCyan, modifier = Modifier.size(15.dp))
+                                            }
+                                            IconButton(
+                                                onClick = {
+                                                    scope.launch(Dispatchers.IO) {
+                                                        com.orca.orcaauto.data.local.AppDatabase.getDatabase(context).dailyMemoryDao().deleteById(memory.id)
+                                                    }
+                                                },
+                                                modifier = Modifier.size(28.dp)
+                                            ) {
+                                                Icon(Icons.Default.Delete, contentDescription = "Xóa", tint = AccentRose, modifier = Modifier.size(15.dp))
+                                            }
+                                        }
+                                    }
+                                    Text(
+                                        text = memory.condensedMemory,
+                                        color = TextPrimaryDark,
+                                        fontSize = 12.sp,
+                                        lineHeight = 17.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showContextualMemoryDialog = false }) {
+                    Text(strings.close, color = AccentCyan, fontWeight = FontWeight.Bold)
                 }
             },
             containerColor = SurfaceDark
@@ -3288,12 +3545,13 @@ private fun AppChatFilterDialog(
                     ) {
                         Text("+ Th\u00EAm", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = BackgroundDark)
                     }
+                }
+
                 Text(
                     text = "💡 Mẹo: Dùng dấu * ở 2 đầu (vd: *Dự Án*) để tìm bao quát bất kể icon. Gõ không có dấu * (vd: Chi) để chặn đích danh 1 người.",
                     color = TextMutedDark,
                     fontSize = 10.5.sp
                 )
-                }
 
                 val unaddedRecents = recentSenders.filter { !chatNamesList.contains(it) }
                 if (unaddedRecents.isNotEmpty()) {
